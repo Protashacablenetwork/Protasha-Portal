@@ -943,8 +943,8 @@ export function AyByayPortal({
       return false;
     }
     try {
-      // 1. Soft delete by setting isDeleted flag in the main collection
-      await safeSetDoc(doc(staffDb, 'transactions', id), { isDeleted: true }, { merge: true });
+      // 1. Delete document directly from Firestore so it doesn't auto-return
+      await safeDeleteDoc(doc(staffDb, 'transactions', id));
       
       try {
         // 2. Update local state and safeStorage immediately

@@ -54,17 +54,36 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
   const isStaffLocked = serviceStatuses.staffManager?.isActive === false || String(serviceStatuses.staffManager?.isActive) === 'false';
   const isLedgerLocked = serviceStatuses.ledger?.isActive === false || String(serviceStatuses.ledger?.isActive) === 'false';
 
+  const normalizeMethodName = (rawMethod: string | undefined): string => {
+    if (!rawMethod) return '';
+    const m = String(rawMethod).trim().toLowerCase();
+    if (m.includes('bkash') || m.includes('বিকাশ')) return 'বিকাশ';
+    if (m.includes('rocket') || m.includes('রকেট')) return 'রকেট';
+    if (m.includes('cash') || m.includes('ক্যাশ')) return 'ক্যাশ';
+    if (m.includes('nagad') || m.includes('নগদ')) return 'নগদ';
+    if (m.includes('bank') || m.includes('ব্যাংক') || m.includes('চেক') || m.includes('check')) return 'ব্যাংক';
+    return String(rawMethod).trim();
+  };
+
   const filteredTransactions = transactions.filter(t => {
     if (!t || t.isDeleted === true || (t as any).isDeleted === 'true') return false;
-    if (!t.date) return false;
-    const parts = t.date.split('-');
-    if (parts.length >= 2) {
-      const year = parseInt(parts[0], 10);
-      const month = parseInt(parts[1], 10) - 1;
-      return month === currentMonthIndex && year === currentYear;
+    
+    const rawDate = t.date || (t as any).createdAt || (t as any).created;
+    if (!rawDate) return true;
+    
+    if (typeof rawDate === 'string' && rawDate.includes('-')) {
+      const parts = rawDate.split('T')[0].split('-');
+      if (parts.length >= 2) {
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1;
+        return month === currentMonthIndex && year === currentYear;
+      }
     }
-    const d = new Date(t.date);
-    return !isNaN(d.getTime()) && d.getMonth() === currentMonthIndex && d.getFullYear() === currentYear;
+    const d = new Date(rawDate);
+    if (!isNaN(d.getTime())) {
+      return d.getMonth() === currentMonthIndex && d.getFullYear() === currentYear;
+    }
+    return true;
   });
 
   const balances: Record<string, number> = {};
@@ -73,13 +92,22 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
   });
 
   filteredTransactions.forEach(trx => {
-    const m = trx.method;
+    const rawMethod = trx.method || (trx as any).paymentMethod;
+    const targetChannel = normalizeMethodName(rawMethod);
     const amt = Number(trx.amount) || 0;
-    if (balances[m] !== undefined) {
-      if (trx.type === 'income') {
-        balances[m] += amt;
+    const isIncome = trx.type === 'income' || (trx as any).categoryType === 'income';
+
+    if (balances[targetChannel] !== undefined) {
+      if (isIncome) {
+        balances[targetChannel] += amt;
       } else {
-        balances[m] -= amt;
+        balances[targetChannel] -= amt;
+      }
+    } else if (rawMethod && balances[rawMethod] !== undefined) {
+      if (isIncome) {
+        balances[rawMethod] += amt;
+      } else {
+        balances[rawMethod] -= amt;
       }
     }
   });

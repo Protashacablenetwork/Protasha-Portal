@@ -197,16 +197,18 @@ export default function App() {
     return initialQuickHisabOwners;
   });
 
-  // Transactions State
+  // Transactions State (Loaded strictly from Database, never fall back to mock demo data)
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
     try {
       const saved = safeStorage.getItem('protyasha_transactions') || safeStorage.getItem('isp_cache_txns');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter(t => t && t.id && !String(t.id).startsWith('txn-init-') && !t.isDeleted);
+        }
       }
     } catch {}
-    return initialTransactions;
+    return [];
   });
 
   // Helper to sanitize banners (cleans auto-fallback text from uploaded custom banners)
@@ -228,19 +230,19 @@ export default function App() {
     });
   };
 
-  // Dynamic Homepage Banners (Admin Controllable, 5-7 ads with Broadband Internet theme)
+  // Dynamic Homepage Banners (Loaded strictly from Database, no demo fallback)
   const [banners, setBanners] = useState<BannerAd[]>(() => {
     const saved = safeStorage.getItem('protyasha_banners');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return sanitizeBanners(parsed);
-        return initialBanners;
-      } catch {
-        return initialBanners;
-      }
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed.filter(b => b && b.id && !String(b.id).startsWith('banner-broadband-'));
+          return sanitizeBanners(cleaned);
+        }
+      } catch {}
     }
-    return initialBanners;
+    return [];
   });
 
   // Helper to filter out legacy dummy/demo notifications
@@ -346,21 +348,17 @@ export default function App() {
       const q = collection(staffDb, 'staff');
       let unsubscribe: (() => void) | null = null;
       unsubscribe = onSnapshot(q, (snapshot) => {
-        if (!snapshot.empty) {
-          const cloudStaff: StaffAccount[] = [];
-          snapshot.forEach(docSnap => {
-            const data = docSnap.data() as StaffAccount;
-            if (data && data.id && data.name) {
-              cloudStaff.push(data);
-            }
-          });
-          if (cloudStaff.length > 0) {
-            setStaffAccounts(cloudStaff);
-            try {
-              safeStorage.setItem('protyasha_staff', JSON.stringify(cloudStaff));
-            } catch {}
+        const cloudStaff: StaffAccount[] = [];
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data() as StaffAccount;
+          if (data && data.id && data.name) {
+            cloudStaff.push(data);
           }
-        }
+        });
+        setStaffAccounts(cloudStaff);
+        try {
+          safeStorage.setItem('protyasha_staff', JSON.stringify(cloudStaff));
+        } catch {}
       }, (err) => {
         // If quota exceeded, detach listener to stop background retry lag
         const wasQuota = handleFirestoreError(err, OperationType.LIST, 'staff');
@@ -388,9 +386,10 @@ export default function App() {
         if (snap.exists()) {
           const data = snap.data();
           if (data && Array.isArray(data.banners)) {
-            setBanners(data.banners);
+            const clean = data.banners.filter((b: any) => b && b.id && !String(b.id).startsWith('banner-broadband-'));
+            setBanners(clean);
             try {
-              safeStorage.setItem('protyasha_banners', JSON.stringify(data.banners));
+              safeStorage.setItem('protyasha_banners', JSON.stringify(clean));
             } catch {}
           }
         }
@@ -399,21 +398,17 @@ export default function App() {
       });
 
       unsubColl = onSnapshot(collection(db, 'banners'), (snapshot) => {
-        if (!snapshot.empty) {
-          const cloudBanners: BannerAd[] = [];
-          snapshot.forEach(dSnap => {
-            const b = dSnap.data() as BannerAd;
-            if (b && b.id) {
-              cloudBanners.push(b);
-            }
-          });
-          if (cloudBanners.length > 0) {
-            setBanners(cloudBanners);
-            try {
-              safeStorage.setItem('protyasha_banners', JSON.stringify(cloudBanners));
-            } catch {}
+        const cloudBanners: BannerAd[] = [];
+        snapshot.forEach(dSnap => {
+          const b = dSnap.data() as BannerAd;
+          if (b && b.id && !String(b.id).startsWith('banner-broadband-')) {
+            cloudBanners.push(b);
           }
-        }
+        });
+        setBanners(cloudBanners);
+        try {
+          safeStorage.setItem('protyasha_banners', JSON.stringify(cloudBanners));
+        } catch {}
       }, (err) => {
         handleFirestoreError(err, OperationType.LIST, 'banners');
       });
@@ -438,7 +433,7 @@ export default function App() {
       unsubDoc = onSnapshot(doc(db, 'settings', 'quick_hisab_owners_data'), (snap) => {
         if (snap.exists()) {
           const data = snap.data();
-          if (data && Array.isArray(data.owners) && data.owners.length > 0) {
+          if (data && Array.isArray(data.owners)) {
             setQuickHisabOwners(data.owners);
             try {
               safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(data.owners));
@@ -450,21 +445,17 @@ export default function App() {
       });
 
       unsubColl = onSnapshot(collection(db, 'quick_hisab_owners'), (snapshot) => {
-        if (!snapshot.empty) {
-          const cloudOwners: QuickHisabOwner[] = [];
-          snapshot.forEach(dSnap => {
-            const o = dSnap.data() as QuickHisabOwner;
-            if (o && o.name) {
-              cloudOwners.push({ ...o, id: o.id || dSnap.id });
-            }
-          });
-          if (cloudOwners.length > 0) {
-            setQuickHisabOwners(cloudOwners);
-            try {
-              safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(cloudOwners));
-            } catch {}
+        const cloudOwners: QuickHisabOwner[] = [];
+        snapshot.forEach(dSnap => {
+          const o = dSnap.data() as QuickHisabOwner;
+          if (o && o.name) {
+            cloudOwners.push({ ...o, id: o.id || dSnap.id });
           }
-        }
+        });
+        setQuickHisabOwners(cloudOwners);
+        try {
+          safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(cloudOwners));
+        } catch {}
       }, (err) => {
         handleFirestoreError(err, OperationType.LIST, 'quick_hisab_owners');
       });
@@ -585,10 +576,10 @@ export default function App() {
         if (!cloudDoc || !cloudDoc.data) return;
         const data = cloudDoc.data;
 
-        if (data.transactions) {
-          const allTxs = data.transactions || [];
-          const income = allTxs.filter((t: any) => t.type === 'income' && !t.isDeleted).reduce((sum: number, t: any) => sum + (t.amount || 0), 0);
-          const expense = allTxs.filter((t: any) => t.type === 'expense' && !t.isDeleted).reduce((sum: number, t: any) => sum + (t.amount || 0), 0);
+        if (data.transactions && Array.isArray(data.transactions)) {
+          const allTxs = data.transactions.filter((t: any) => t && t.id && !t.isDeleted && !String(t.id).startsWith('txn-init-'));
+          const income = allTxs.filter((t: any) => t.type === 'income').reduce((sum: number, t: any) => sum + (Number(t.amount) || 0), 0);
+          const expense = allTxs.filter((t: any) => t.type === 'expense').reduce((sum: number, t: any) => sum + (Number(t.amount) || 0), 0);
           
           setServerTotals({
             income,
@@ -600,9 +591,9 @@ export default function App() {
           setTransactions(allTxs);
         }
 
-        if (data.notifications) setNotifications(cleanDemoNotifications(data.notifications));
-        if (data.banners && Array.isArray(data.banners) && data.banners.length > 0) {
-          setBanners(data.banners);
+        if (data.banners && Array.isArray(data.banners)) {
+          const cleanBanners = data.banners.filter((b: any) => b && b.id && !String(b.id).startsWith('banner-broadband-'));
+          setBanners(cleanBanners);
         }
         if (data.channels) setChannels(cleanChannelLogos(data.channels));
         if (data.staffAccounts) setStaffAccounts(data.staffAccounts);
@@ -1139,7 +1130,7 @@ export default function App() {
         const cloudTxs: Transaction[] = [];
         snapshot.forEach(docSnap => {
           const data = docSnap.data() as Transaction;
-          if (data && data.id) {
+          if (data && data.id && !data.isDeleted && !String(data.id).startsWith('txn-init-')) {
             cloudTxs.push(data);
           }
         });
@@ -1148,8 +1139,8 @@ export default function App() {
         setTransactions(cloudTxs);
         
         // Compute totals from live collection
-        const income = cloudTxs.filter(t => t.type === 'income' && !t.isDeleted).reduce((sum, t) => sum + (t.amount || 0), 0);
-        const expense = cloudTxs.filter(t => t.type === 'expense' && !t.isDeleted).reduce((sum, t) => sum + (t.amount || 0), 0);
+        const income = cloudTxs.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+        const expense = cloudTxs.filter(t => t.type === 'expense').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
         
         setServerTotals({
           income,
@@ -1182,10 +1173,11 @@ export default function App() {
           if (!cloudDoc || !cloudDoc.data) return;
           const d = cloudDoc.data;
 
-          // Note: Transactions are now handled by direct collection listener above
+          // Note: Transactions are handled by direct collection listener above
           
-          if (Array.isArray(d.banners) && d.banners.length > 0) {
-            setBanners(d.banners);
+          if (Array.isArray(d.banners)) {
+            const clean = d.banners.filter((b: any) => b && b.id && !String(b.id).startsWith('banner-broadband-'));
+            setBanners(clean);
           }
           if (Array.isArray(d.channels) && d.channels.length > 0) {
             setChannels(cleanChannelLogos(d.channels));
@@ -1399,7 +1391,8 @@ export default function App() {
       .filter(t => !t.isDeleted && (t as any).isDeleted !== 'true')
       .reduce((acc, curr) => {
         const amt = Number(curr.amount) || 0;
-        return curr.type === 'income' ? acc + amt : acc - amt;
+        const isIncome = curr.type === 'income' || (curr as any).categoryType === 'income';
+        return isIncome ? acc + amt : acc - amt;
       }, 0);
   }, [transactions]);
 
@@ -1719,17 +1712,26 @@ export default function App() {
 
   const confirmDelete = () => {
     if (!deleteTrx) return;
-    const updatedTransactions = transactions.map(t => (t.id === deleteTrx.id ? { ...t, isDeleted: true } : t));
+    const updatedTransactions = transactions.filter(t => t.id !== deleteTrx.id);
     setTransactions(updatedTransactions);
+    try {
+      safeStorage.setItem('protyasha_transactions', JSON.stringify(updatedTransactions));
+      safeStorage.setItem('isp_cache_txns', JSON.stringify(updatedTransactions));
+    } catch {}
     if (selectedTransaction?.id === deleteTrx.id) {
       setSelectedTransaction(null);
     }
-    logAction('Moved to Trash', 'রিসাইকেল বিনে প্রেরণ', `${deleteTrx.person} - #${deleteTrx.trxId}`);
+    logAction('Deleted Transaction', 'লেনদেন মুছে ফেলা হয়েছে', `${deleteTrx.person} - #${deleteTrx.trxId}`);
     
-    syncServerData({ transactions: updatedTransactions });
+    // Actually delete the document from Cloud Firestore!
+    safeDeleteDoc(doc(db, 'transactions', deleteTrx.id)).catch(() => {});
 
-    // Sync deletion to Cloud Firestore
-    safeSetDoc(doc(db, 'transactions', deleteTrx.id), { isDeleted: true }, { merge: true }).catch(() => {});
+    // Also update server_data immediate snapshot
+    safeSetDoc(doc(db, 'settings', 'server_data'), {
+      data: { transactions: updatedTransactions }
+    }, { merge: true }).catch(() => {});
+
+    syncServerData({ transactions: updatedTransactions });
     setDeleteTrx(null);
   };
 
@@ -1755,8 +1757,15 @@ export default function App() {
     if (confirm(lang === 'bn' ? 'স্থায়ীভাবে মুছে ফেলতে চান?' : 'Delete permanently?')) {
       const updatedTransactions = transactions.filter(t => t.id !== id);
       setTransactions(updatedTransactions);
-      syncToServer({ transactions: updatedTransactions });
+      try {
+        safeStorage.setItem('protyasha_transactions', JSON.stringify(updatedTransactions));
+        safeStorage.setItem('isp_cache_txns', JSON.stringify(updatedTransactions));
+      } catch {}
       safeDeleteDoc(doc(db, 'transactions', id)).catch(() => {});
+      safeSetDoc(doc(db, 'settings', 'server_data'), {
+        data: { transactions: updatedTransactions }
+      }, { merge: true }).catch(() => {});
+      syncServerData({ transactions: updatedTransactions });
       if (selectedTransaction?.id === id) {
         setSelectedTransaction(null);
       }
@@ -1868,24 +1877,29 @@ export default function App() {
   };
 
   const handleSaveBanners = (updated: BannerAd[]) => {
-    setBanners(updated);
+    const cleanBanners = updated.filter(b => b && b.id && !String(b.id).startsWith('banner-broadband-'));
+    setBanners(cleanBanners);
     try {
-      safeStorage.setItem('protyasha_banners', JSON.stringify(updated));
+      safeStorage.setItem('protyasha_banners', JSON.stringify(cleanBanners));
     } catch {}
 
     // Dedicated Firestore snapshot document
     safeSetDoc(doc(db, 'settings', 'app_banners'), {
-      banners: updated,
+      banners: cleanBanners,
       updatedAt: new Date().toISOString()
     }).catch(() => {});
 
     // Save each individual banner to collection 'banners'
-    updated.forEach(b => {
+    cleanBanners.forEach(b => {
       safeSetDoc(doc(db, 'banners', String(b.id)), b).catch(() => {});
     });
 
-    syncServerData({ banners: updated });
-    logAction('Updated Banners', 'বিজ্ঞাপন ব্যানার পরিবর্তন', `সক্রিয় বিজ্ঞাপন সংখ্যা: ${updated.length}`);
+    safeSetDoc(doc(db, 'settings', 'server_data'), {
+      data: { banners: cleanBanners }
+    }, { merge: true }).catch(() => {});
+
+    syncServerData({ banners: cleanBanners });
+    logAction('Updated Banners', 'বিজ্ঞাপন ব্যানার পরিবর্তন', `সক্রিয় বিজ্ঞাপন সংখ্যা: ${cleanBanners.length}`);
   };
 
   const handleDeleteBanner = (bannerId: string) => {
@@ -1903,6 +1917,10 @@ export default function App() {
       banners: updated,
       updatedAt: new Date().toISOString()
     }).catch(() => {});
+
+    safeSetDoc(doc(db, 'settings', 'server_data'), {
+      data: { banners: updated }
+    }, { merge: true }).catch(() => {});
 
     syncServerData({ banners: updated });
     logAction('Deleted Banner', 'বিজ্ঞাপন ব্যানার মুছে ফেলা হয়েছে', `ব্যানার আইডি: ${bannerId}`);

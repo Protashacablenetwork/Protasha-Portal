@@ -22,8 +22,7 @@ export const PromoCarousel: React.FC<PromoCarouselProps> = ({
   onOpenBannerManager
 }) => {
   const activeBanners = useMemo(() => {
-    const filtered = banners.filter(b => b.isActive !== false);
-    return filtered.length > 0 ? filtered : banners;
+    return (banners || []).filter(b => b && b.isActive !== false);
   }, [banners]);
 
   const isSingle = activeBanners.length <= 1;
@@ -178,6 +177,31 @@ export const PromoCarousel: React.FC<PromoCarouselProps> = ({
     setDragOffset(0);
     dragStartXRef.current = null;
   };
+
+  if (activeBanners.length === 0) {
+    if (user?.role === 'admin') {
+      return (
+        <div className="px-4 py-2 select-none">
+          <div className="border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl p-4 text-center bg-slate-50 dark:bg-slate-800/40 flex flex-col items-center justify-center gap-2">
+            <Sparkles className="w-5 h-5 text-slate-400" />
+            <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+              {lang === 'bn' ? 'ডাটাবেসে কোনো সক্রিয় বিজ্ঞাপন নেই' : 'No active ads in database'}
+            </p>
+            <button
+              onClick={() => {
+                sounds.playTap();
+                onOpenBannerManager();
+              }}
+              className="text-xs font-bold text-white bg-[#E52E2E] hover:bg-rose-700 px-3.5 py-1.5 rounded-full shadow-sm active:scale-95 transition-all cursor-pointer"
+            >
+              {lang === 'bn' ? '+ নতুন বিজ্ঞাপন যোগ করুন' : '+ Add New Ad'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  }
 
   // Safe track calculations
   const trackWidthPercent = isSingle ? 100 : clonedList.length * 100;
