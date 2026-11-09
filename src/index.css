@@ -1,0 +1,110 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --brand-primary: #E52E2E;
+    --brand-primary-dark: #B71C1C;
+    --brand-primary-light: #FDE8E8;
+    --brand-accent: #FF9800;
+  }
+
+  body {
+    font-family: 'Hind Siliguri', 'Plus Jakarta Sans', 'Poppins', sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body[data-lang="en"] {
+    font-family: 'Plus Jakarta Sans', 'Poppins', sans-serif;
+  }
+}
+
+/* Custom smooth transitions and animations */
+@keyframes pulseSubtle {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-pulse-subtle {
+  animation: pulseSubtle 3s ease-in-out infinite;
+}
+
+/* Hide scrollbar for tabs */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Print Receipt & Report Styles */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #printable-receipt, #printable-receipt *,
+  #printable-staff-report, #printable-staff-report * {
+    visibility: visible;
+  }
+  #printable-receipt {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 80mm;
+    margin: 0 auto;
+    padding: 10px;
+    background: white;
+    color: black;
+    font-family: monospace;
+    box-shadow: none;
+  }
+  #printable-staff-report {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 20px;
+    background: white;
+    color: #0f172a;
+    font-family: 'Hind Siliguri', 'Plus Jakarta Sans', sans-serif;
+  }
+}
+
+@keyframes cloudDrift {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(140vw); }
+}
+.rain-container {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.raindrop {
+  position: absolute;
+  top: -30px;
+  width: 1.5px;
+  height: 24px;
+  background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(186, 230, 253, 0.7));
+  border-radius: 9999px;
+  animation: rainFall 1s linear infinite;
+}
+@keyframes rainFall {
+  0% { transform: translateY(-30px); opacity: 0; }
+  30% { opacity: 0.8; }
+  100% { transform: translateY(105vh); opacity: 0.2; }
+}
+@keyframes lightning {
+  0%, 94%, 98%, 100% { opacity: 0; }
+  95%, 97% { opacity: 0.45; }
+}
+@keyframes spinSlow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

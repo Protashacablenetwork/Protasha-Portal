@@ -1,11 +1,69 @@
-<div align="center">
+# প্রত্যাশা ক্যাবল নেটওয়ার্ক ও আইএসপি ম্যানেজমেন্ট সিস্টেম (Protyasha Cable Network)
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+একটি পূর্ণাঙ্গ রিয়েল-টাইম ক্যাবল টিভি ও ইন্টারনেট সার্ভিস প্রোভাইডার (ISP) ম্যানেজমেন্ট, বিলিং ও আয়-ব্যয় প্ল্যাটফর্ম।
 
-  <h1>Built with AI Studio</h2>
+---
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+## 📁 প্রজেক্ট স্ট্রাকচার ও ফাইল ডিরেক্টরি (Project Structure)
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+GitHub-এ সম্পূর্ণ সোর্স কোড মডিউলার আর্কিটেকচারে সাজানো হয়েছে:
 
-</div>
+- **`src/`** - অ্যাপ্লিকেশনের মূল সোর্স কোড (Core Application Source Code):
+  - **`src/App.tsx`** - মূল অ্যাপ্লিকেশন এন্ট্রি পয়েন্ট এবং স্টেট ম্যানেজমেন্ট
+  - **`src/components/`** - ড্যাশবোর্ড ও অ্যাপ্লিকেশনের সকল ইউজার ইন্টারফেস কম্পোনেন্ট:
+    - `QuickHisabModal.tsx` - কুইক হিসাব ও লভ্যাংশ বণ্টন ড্যাশবোর্ড (রিয়েল-টাইম আয়-ব্যয় সিঙ্ক)
+    - `DriveBackupModal.tsx` - সেন্ট্রালাইজড গুগল ড্রাইভ ব্যাকআপ ও রিস্টোর
+    - `LoginView.tsx` - কাস্টমার ও এডমিন অথেনটিকেশন ও লগইন ভিউ
+    - `ProfileView.tsx` - ব্যবহারকারী ও সিস্টেম প্রোফাইল সেটিংস
+    - `StaffManagerModal.tsx` - স্টাফ ও কর্মী একাউন্ট ম্যানেজমেন্ট
+    - `UserManagementModal.tsx` - কাস্টমার তালিকা ও রোল নিয়ন্ত্রণ
+    - `NotificationsModal.tsx` - গ্রাহক বার্তা ও নোটিফিকেশন ব্রডকাস্ট
+    - `DailyIncomeExpenseChart.tsx` - আয়-ব্যয় অ্যানালিটিক্স চার্ট
+    - `QuranViewer.tsx`, `HadithViewer.tsx`, `PrayerTimesModal.tsx` - ইসলামিক ফিচারসমূহ
+  - **`src/portals/ayByay/`** - সম্পূর্ণ স্বতন্ত্র **আয়-ব্যয় ও ইনভেন্টরি ম্যানেজমেন্ট পোর্টাল**:
+    - `App.tsx` - আয়-ব্যয় পোর্টালের মূল লজিক ও রিয়েল-টাইম ফায়ারবেস ডেটাবেস
+    - `components/InventoryManager.tsx` - অপটিক্যাল ফাইবার, কেবল ও ওএনইউ স্টক ট্র্যাকিং
+    - `components/StaffSalaryManager.tsx` - কর্মকর্তা-কর্মচারীদের মাসিক বেতন বণ্টন
+    - `components/TransactionForm.tsx` - নতুন আয় ও ব্যয়ের ডিজিটাল ভাউচার এন্ট্রি
+    - `components/DashboardOverview.tsx` - মাসিক আর্থিক বিশ্লেষণ ও ক্যাশফ্লো
+  - **`src/utils/`** - প্রয়োজনীয় ইউটিলিটি ও ক্লাউড সার্ভিসেস:
+    - `firebase.ts` - গুগল ক্লাউড ফায়ারস্টোর ও অথেনটিকেশন সেটআপ
+    - `googleDrive.ts` - গুগল ড্রাইভ ক্লাউড ব্যাকআপ এপিআই
+    - `formatters.ts` - বাংলা মুদ্রা ও সংখ্যা ফরম্যাটার
+    - `audio.ts` - সিস্টেম সাউন্ড ও ফিডব্যাক অডিও
+- **`public/`** - স্ট্যাটিক অ্যাসেটস ও এইচটিএমএল পেজ
+- **`server.ts`** - ব্যাকএন্ড এক্সপ্রেস প্রক্সি সার্ভার
+- **`server_data.json`** - লোকাল ফলব্যাক ডেটাবেস স্ন্যাপশট
+- **`package.json`** - প্রজেক্টের ডিপেন্ডেন্সি ও স্ক্রিপ্টসমূহ
+- **`vite.config.ts`** - Vite ও Tailwind CSS কনফিগারেশন
+
+---
+
+## 🚀 কীভাবে লোকাল কম্পিউটারে রান করবেন (How to Run Locally)
+
+১. রিপোজিটরিটি ক্লোন করুন:
+```bash
+git clone https://github.com/<your-username>/<repo-name>.git
+cd <repo-name>
+```
+
+২. ডিপেন্ডেন্সি ইনস্টল করুন:
+```bash
+npm install
+```
+
+৩. ডেভেলপমেন্ট সার্ভার চালু করুন:
+```bash
+npm run dev
+```
+
+৪. প্রোডাকশন বিল্ড তৈরি করতে:
+```bash
+npm run build
+```
+
+---
+
+## 🔒 নিরাপত্তা ও কনফিগারেশন
+প্রজেক্টটি Firebase Firestore এবং Google Cloud API ব্যবহার করে নিরাপদভাবে পরিচালিত।
+`node_modules/` এবং লোকাল ক্যাশ ফাইলগুলো Git স্ট্যান্ডার্ড অনুযায়ী `.gitignore`-এ রাখা হয়েছে।

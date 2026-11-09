@@ -1,0 +1,109 @@
+{
+  "entities": {
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial income or expense transaction",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "note": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "type", "description", "category", "amount", "date"]
+    },
+    "Staff": {
+      "title": "Staff",
+      "description": "Staff member information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "designation": { "type": "string" },
+        "phone": { "type": "string" },
+        "joinDate": { "type": "string" },
+        "baseSalary": { "type": "number" },
+        "status": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "designation", "phone", "baseSalary", "status"]
+    },
+    "SalaryPayment": {
+      "title": "SalaryPayment",
+      "description": "Salary payment record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "staffId": { "type": "string" },
+        "staffName": { "type": "string" },
+        "staffDesignation": { "type": "string" },
+        "month": { "type": "string" },
+        "baseSalary": { "type": "number" },
+        "bonusOrAllowance": { "type": "number" },
+        "deductionOrAdvance": { "type": "number" },
+        "netSalary": { "type": "number" },
+        "paymentStatus": { "type": "string" },
+        "paymentDate": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "voucherNumber": { "type": "string" },
+        "note": { "type": "string" },
+        "transactionId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "staffId", "month", "baseSalary", "netSalary", "paymentStatus"]
+    },
+    "InventoryItem": {
+      "title": "InventoryItem",
+      "description": "Inventory item definition",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "unit": { "type": "string" },
+        "currentStock": { "type": "number" },
+        "minStockAlert": { "type": "number" },
+        "unitCost": { "type": "number" },
+        "supplier": { "type": "string" },
+        "location": { "type": "string" },
+        "notes": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "category", "unit", "currentStock", "unitCost"]
+    },
+    "InventoryLog": {
+      "title": "InventoryLog",
+      "description": "Inventory movement log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "itemId": { "type": "string" },
+        "itemName": { "type": "string" },
+        "type": { "type": "string" },
+        "quantity": { "type": "number" },
+        "date": { "type": "string" },
+        "recipientOrSource": { "type": "string" },
+        "costPerUnit": { "type": "number" },
+        "totalCost": { "type": "number" },
+        "addedToExpense": { "type": "boolean" },
+        "transactionId": { "type": "string" },
+        "note": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "itemId", "type", "quantity", "date"]
+    }
+  },
+  "firestore": {
+    "/ayByay/transactions": { "schema": "Transaction", "description": "All transactions" },
+    "/ayByay/staff": { "schema": "Staff", "description": "All staff" },
+    "/ayByay/salaries": { "schema": "SalaryPayment", "description": "Salary payments" },
+    "/ayByay/inventory": { "schema": "InventoryItem", "description": "Inventory items" },
+    "/ayByay/inventoryLogs": { "schema": "InventoryLog", "description": "Inventory logs" }
+  }
+}

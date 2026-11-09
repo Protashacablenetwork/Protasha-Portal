@@ -1,0 +1,1954 @@
+{
+  "users": [
+    {
+      "role": "admin",
+      "name": "প্রত্যাশা অ্যাডমিন",
+      "createdAt": "2026-10-27T19:59:19.000Z",
+      "phone": "01777877207",
+      "pin": "12588",
+      "id": "admin-primary",
+      "avatarUrl": "",
+      "status": "active"
+    },
+    {
+      "status": "active",
+      "id": "user-demo-1",
+      "createdAt": "2026-10-27T19:59:19.000Z",
+      "phone": "01884542812",
+      "name": "মো: রিয়াদ মিয়া",
+      "role": "user",
+      "pin": "1234",
+      "avatarUrl": ""
+    }
+  ],
+  "test": "hello",
+  "banners": [
+    {
+      "titleEn": "Superfast Optical Fiber Broadband Internet",
+      "priority": 1,
+      "imageUrl": "https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&w=1000&q=80",
+      "id": "banner-broadband-1",
+      "isActive": true,
+      "titleBn": "সুপারফাস্ট ফাইবার অপটিক ইন্টারনেট সংযোগ",
+      "badgeBn": "৫০ Mbps প্যাকেজ",
+      "subtitleEn": "Bufferless YouTube, Facebook and 4K Ultra HD video streaming",
+      "badgeEn": "50 Mbps Package",
+      "linkUrl": "#offer",
+      "subtitleBn": "বাফারিংহীন ইউটিউব, ফেসবুক ও ৪K আল্ট্রা এইচডি ভিডিও স্ট্রিমিং"
+    },
+    {
+      "subtitleEn": "Free optical fiber line setup and home installation",
+      "linkUrl": "#offer",
+      "badgeEn": "Free Router Offer",
+      "subtitleBn": "বিনা খরচে অপটিক্যাল ফাইবার ওয়্যারিং ও ইনস্টলেশন সুবিধা",
+      "badgeBn": "ফ্রি রাউটার অফার",
+      "titleBn": "নতুন সংযোগে ফ্রি ডুয়াল-ব্যান্ড গিগাবিট রাউটার!",
+      "id": "banner-broadband-2",
+      "isActive": true,
+      "priority": 2,
+      "imageUrl": "https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=1000&q=80",
+      "titleEn": "Free Dual-Band Gigabit Router on New Connection!"
+    },
+    {
+      "linkUrl": "#portal:bill-manager",
+      "badgeEn": "Gaming & Work",
+      "badgeBn": "গেমিং ও ফ্রিল্যান্সিং",
+      "id": "banner-broadband-3",
+      "isActive": true,
+      "priority": 3,
+      "imageUrl": "https://images.unsplash.com/photo-1520869562399-e772f142f422?auto=format&fit=crop&w=1000&q=80",
+      "titleEn": "Dedicated Low-Latency Bandwidth for Gamers & Freelancers",
+      "subtitleBn": "ডেডিকেটেড রিয়েল আইপি ও নিরবচ্ছিন্ন আল্ট্রা ফাস্ট আপলোড স্পিড",
+      "titleBn": "ফ্রিল্যান্সিং ও অনলাইন গেমিংয়ে জিরো ল্যাগ পিং",
+      "subtitleEn": "Dedicated real IP with ultra-fast upload speed and zero latency"
+    },
+    {
+      "subtitleBn": "কোনো ফেয়ার ইউসেজ লিমিট (FUP) নেই, ১০০% আনলিমিটেড ব্যবহার",
+      "linkUrl": "#store",
+      "badgeEn": "100% Unlimited",
+      "badgeBn": "১০০% আনলিমিটেড",
+      "subtitleEn": "No FUP or data caps, 100% truly unlimited high-speed browsing",
+      "titleBn": "আনলিমিটেড হোম ও কর্পোরেট ব্রডব্যান্ড ওয়াইফাই",
+      "imageUrl": "https://images.unsplash.com/photo-1517430816045-df4b7de11d1d?auto=format&fit=crop&w=1000&q=80",
+      "priority": 4,
+      "id": "banner-broadband-4",
+      "isActive": true,
+      "titleEn": "Unlimited Home & Office Broadband Wi-Fi"
+    },
+    {
+      "titleBn": "২৪/৭ সার্বক্ষণিক টেকনিক্যাল সাপোর্ট ও দ্রুত সেবা",
+      "id": "banner-broadband-5",
+      "titleEn": "24/7 Dedicated Technical Support & Instant Fiber Service",
+      "imageUrl": "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1000&q=80",
+      "subtitleBn": "ইসলামপুর ও জামালপুর অঞ্চলে যে কোনো সমস্যায় তাৎক্ষণিক সমাধান",
+      "priority": 5,
+      "badgeBn": "২৪/৭ হেল্পলাইন",
+      "isActive": true,
+      "linkUrl": "tel:01777877207",
+      "badgeEn": "24/7 Support",
+      "subtitleEn": "Instant problem resolution in Islampur & Jamalpur coverage areas"
+    },
+    {
+      "subtitleBn": "ঘরে বসেই কয়েক সেকেন্ডে নিরাপদ ও দ্রুত ক্যাবল বিল জমা দিন",
+      "titleBn": "বিকাশ ও নগদে মাসিক ইন্টারনেট বিল পরিশোধে ক্যাশব্যাক",
+      "priority": 6,
+      "imageUrl": "https://images.unsplash.com/photo-1556742049-0a67c5574f73?auto=format&fit=crop&w=1000&q=80",
+      "id": "banner-broadband-6",
+      "subtitleEn": "Pay your monthly broadband cable bill instantly from home",
+      "titleEn": "Instant Cashback on Monthly Bill Pay via bKash & Nagad",
+      "isActive": true,
+      "badgeEn": "Cashback Offer",
+      "linkUrl": "#category:bill",
+      "badgeBn": "ক্যাশব্যাক অফার"
+    }
+  ],
+  "channels": [
+    {
+      "labelBn": "নগদ ওয়ালেট",
+      "border": "border-orange-200 dark:border-orange-900/40",
+      "name": "নগদ",
+      "isDefault": true,
+      "bg": "bg-orange-50 dark:bg-orange-950/30",
+      "color": "text-[#E52E2E]",
+      "icon": "💵",
+      "labelEn": "Nagad Wallet",
+      "id": "ch-nagad"
+    },
+    {
+      "isDefault": true,
+      "icon": "📱",
+      "labelBn": "বিকাশ একাউন্ট",
+      "border": "border-pink-200 dark:border-pink-900/40",
+      "id": "ch-bkash",
+      "name": "বিকাশ",
+      "color": "text-[#D81B60]",
+      "labelEn": "bKash Account",
+      "bg": "bg-pink-50 dark:bg-pink-950/30"
+    },
+    {
+      "labelEn": "Rocket DBBL",
+      "color": "text-[#8E24AA]",
+      "bg": "bg-purple-50 dark:bg-purple-950/30",
+      "name": "রকেট",
+      "isDefault": true,
+      "border": "border-purple-200 dark:border-purple-900/40",
+      "labelBn": "রকেট ডিবিবিএল",
+      "id": "ch-rocket",
+      "icon": "🚀"
+    },
+    {
+      "icon": "🏦",
+      "color": "text-[#2563EB]",
+      "border": "border-blue-200 dark:border-blue-900/40",
+      "bg": "bg-blue-50 dark:bg-blue-950/30",
+      "labelBn": "ব্যাংক হিসাব (সব ব্যাংক)",
+      "name": "ব্যাংক",
+      "labelEn": "Bank Accounts (All Banks)",
+      "id": "ch-bank",
+      "isDefault": true
+    },
+    {
+      "name": "ক্যাশ",
+      "labelEn": "Cash on Hand",
+      "isDefault": true,
+      "id": "ch-cash",
+      "labelBn": "হাতে নগদ ক্যাশ",
+      "icon": "💰",
+      "border": "border-emerald-200 dark:border-emerald-900/40",
+      "bg": "bg-emerald-50 dark:bg-emerald-950/30",
+      "color": "text-[#2E7D32]"
+    }
+  ],
+  "staffAccounts": [],
+  "footerConfig": null,
+  "adminProfile": {
+    "phone": "01777877207",
+    "avatarUrl": "data:image/jpeg;base64,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GMjktt1sL5aLTWVVFufq6Ke33qmt1ZHUyUvCyKR4BlyIRgFpJB6cir7tt1uFQXClffdZXLVelxOJKy3U0IgmwHZHmjPaAHGRkE4Wzbq6Ivl2qxqnRooX1lVTNgr7bXx4grYgcsyCPNeD39QuU10o31MXns4D2AFudtjloIJ36sZwsBrgwrXbbVU98fqGgsm7erbrUWqlke9kxpn09QOA5xwxAubnkcEH1rCWmvptN7WaXu1/3T1nR1VwpAaegovk8j39BwsDoi7HTqVsm1ugtYwVtwueo7bZLM0Wma32+3WsBrQZDkvdgnOcDqV9bloqsO0WjaOq0kbrfbYYosQ1fYTUgJJe9r/Hk3lzXS6tomT+RD2ubxN5Bn8Ls74xjPM+7K5Na4gLC7K3jWl83SqqG8XrVtJbaW3trqamuboDJUAv4cv4Ym4b15DnkdV0TjHJRZozTOpLbu/XXi61Ar6CSyspKescR2r+GXixIB+0AcZ7+qlIevqoZquohnq2mENDeEfhAxy7l3wg4OVciIogu1ERERFQqqLk13CUVMJhVRc/KnGCmVTCYVUXEvKKiKqIXkrCphMKqJxlZVMJhVROM9SKmEVUQvJ5oVTCYVUTjKKmEVUWC4nmiomFVE4jyRUwiqi5CQhFTCYVUWOMoqYTCqiz5QoqYTCqixxlFTBRVRYLkyqYTCqizxIqYTCqiwXZRUwiqi5NeW8kVEwqohkJ5oqYTCqiGQlFTCYVUXHiTKphFVFkPI3RUwmFVFguJRERFxRERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERERf/9k=",
+    "name": "প্রত্যাশা অ্যাডমিন"
+  },
+  "notifications": [
+    {
+      "id": "weather-slot-noon-jamalpur-2026-11-05",
+      "timeBn": "৫ নভেম্বর, ১২:০৪ PM",
+      "titleEn": "🌤️ Noon Weather & Heat Bulletin: Jamalpur (29°C)",
+      "isWeatherAlert": true,
+      "titleBn": "🌤️ দুপুরের আবহাওয়া ও তাপদাহ বুলেটিন: জামালপুর (২৯°C)",
+      "isGlobal": false,
+      "messageBn": "【জামালপুর আবহাওয়া বুলেটিন】\n• আকাশ: রোদ ঝলমলে পরিষ্কার আকাশ\n• বর্তমান তাপমাত্রা: ২৯°C (সর্বোচ্চ: ৩০°C / সর্বনিম্ন: ২১°C)\n• বাতাসের বেগ: ৮ কিমি/ঘণ্টা | আর্দ্রতা: ৫৯%\n• বৃষ্টির সম্ভাবনা: ০%\n\nপরামর্শ: পরামর্শ: অনুকূল আবহাওয়ার সুযোগ নিয়ে প্রয়োজনীয় সংযোগ ও মেরামতের কাজ সম্পন্ন করুন।",
+      "date": "৫ নভেম্বর",
+      "districtEn": "Jamalpur",
+      "bodyEn": "【Jamalpur Weather Bulletin】\nCondition: Clear Sky | Temp: 29°C (H: 30°C / L: 21°C) | Wind: 8 km/h | Humidity: 59%.",
+      "bodyBn": "【জামালপুর আবহাওয়া বুলেটিন】\n• আকাশ: রোদ ঝলমলে পরিষ্কার আকাশ\n• বর্তমান তাপমাত্রা: ২৯°C (সর্বোচ্চ: ৩০°C / সর্বনিম্ন: ২১°C)\n• বাতাসের বেগ: ৮ কিমি/ঘণ্টা | আর্দ্রতা: ৫৯%\n• বৃষ্টির সম্ভাবনা: ০%\n\nপরামর্শ: পরামর্শ: অনুকূল আবহাওয়ার সুযোগ নিয়ে প্রয়োজনীয় সংযোগ ও মেরামতের কাজ সম্পন্ন করুন।",
+      "isRead": false,
+      "readBy": [
+        "user-demo-1"
+      ],
+      "timeEn": "12:04 PM",
+      "districtBn": "জামালপুর",
+      "messageEn": "【Jamalpur Weather Bulletin】\nCondition: Clear Sky | Temp: 29°C (H: 30°C / L: 21°C) | Wind: 8 km/h | Humidity: 59%.",
+      "type": "weather"
+    },
+    {
+      "messageBn": "【জামালপুর যোহরের সময়সূচি】\n• যোহরের ওয়াক্ত: ১১:৪৫ AM\n• আসরের সম্ভাব্য সময়: ০৩:৪০ PM\n\nদুপুরের কর্মব্যস্ততার মাঝে যোহরের সালাত জামাতে আদায় করুন। সালাতে রয়েছে অফুরন্ত শান্তি ও রিজিকের বরকত।",
+      "timeBn": "৫ নভেম্বর, ১১:৫৫ AM",
+      "districtEn": "Jamalpur",
+      "date": "৫ নভেম্বর",
+      "titleEn": "🕌 Dhuhr Prayer Alert: Jamalpur",
+      "readBy": [
+        "user-demo-1"
+      ],
+      "isRead": false,
+      "bodyBn": "【জামালপুর যোহরের সময়সূচি】\n• যোহরের ওয়াক্ত: ১১:৪৫ AM\n• আসরের সম্ভাব্য সময়: ০৩:৪০ PM\n\nদুপুরের কর্মব্যস্ততার মাঝে যোহরের সালাত জামাতে আদায় করুন। সালাতে রয়েছে অফুরন্ত শান্তি ও রিজিকের বরকত।",
+      "bodyEn": "【Jamalpur Schedule】\nDhuhr: ১১:৪৫ AM | Asr: ০৩:৪০ PM",
+      "titleBn": "🕌 যোহরের সালাতের ওয়াক্ত: জামালপুর",
+      "id": "prayer_dhuhr_jamalpur_2026-11-05",
+      "messageEn": "【Jamalpur Schedule】\nDhuhr: ১১:৪৫ AM | Asr: ০৩:৪০ PM",
+      "timeEn": "11:55 AM",
+      "isPrayerAlert": true,
+      "type": "info",
+      "districtBn": "জামালপুর"
+    },
+    {
+      "date": "৫ নভেম্বর",
+      "districtEn": "Jamalpur",
+      "messageBn": "【জামালপুর চাশতের সময়সূচি】\n• চাশত (দুহা) ওয়াক্ত: ০৮:১১ AM থেকে যোহরের পূর্ব পর্যন্ত\n• যোহরের সম্ভাব্য সময়: ১১:৪৫ AM\n\nচাশতের সালাত শরীরের ৩৬০টি অঙ্গ-প্রত্যঙ্গের সদকা স্বরূপ। ব্যবসায় ও উপার্জনে বরকতের জন্য দোয়া করুন।",
+      "timeEn": "08:48 AM",
+      "bodyEn": "【Jamalpur Schedule】\nChasht / Dhuha: ০৮:১১ AM | Dhuhr: ১১:৪৫ AM",
+      "bodyBn": "【জামালপুর চাশতের সময়সূচি】\n• চাশত (দুহা) ওয়াক্ত: ০৮:১১ AM থেকে যোহরের পূর্ব পর্যন্ত\n• যোহরের সম্ভাব্য সময়: ১১:৪৫ AM\n\nচাশতের সালাত শরীরের ৩৬০টি অঙ্গ-প্রত্যঙ্গের সদকা স্বরূপ। ব্যবসায় ও উপার্জনে বরকতের জন্য দোয়া করুন।",
+      "districtBn": "জামালপুর",
+      "id": "prayer_chasht_jamalpur_2026-11-05",
+      "type": "info",
+      "readBy": [
+        "user-demo-1"
+      ],
+      "isRead": false,
+      "messageEn": "【Jamalpur Schedule】\nChasht / Dhuha: ০৮:১১ AM | Dhuhr: ১১:৪৫ AM",
+      "timeBn": "৫ নভেম্বর, ০৮:৪৮ AM",
+      "titleBn": "☀️ চাশত (দুহা) সালাত বার্তা: জামালপুর",
+      "isPrayerAlert": true,
+      "titleEn": "☀️ Chasht / Dhuha Alert: Jamalpur"
+    },
+    {
+      "messageBn": "【জামালপুর আবহাওয়া বুলেটিন】\n• আকাশ: রোদ ঝলমলে পরিষ্কার আকাশ\n• বর্তমান তাপমাত্রা: ২৬°C (সর্বোচ্চ: ৩০°C / সর্বনিম্ন: ২১°C)\n• বাতাসের বেগ: ৭ কিমি/ঘণ্টা | আর্দ্রতা: ৭৬%\n• বৃষ্টির সম্ভাবনা: ০%\n\nপরামর্শ: সুসংবাদ: আজকের আবহাওয়া ভালো। নিরাপদভাবে পরিকল্পিত লাইন মেরামতের কাজ করতে পারেন।",
+      "districtBn": "জামালপুর",
+      "timeEn": "08:48 AM",
+      "type": "weather",
+      "titleEn": "🌤️ Mid-Morning Weather Update: Jamalpur (26°C)",
+      "timeBn": "৫ নভেম্বর, ০৮:৪৮ AM",
+      "messageEn": "【Jamalpur Weather Bulletin】\nCondition: Clear Sky | Temp: 26°C (H: 30°C / L: 21°C) | Wind: 7 km/h | Humidity: 76%.",
+      "districtEn": "Jamalpur",
+      "titleBn": "🌤️ সকালের আবহাওয়া আপডেট: জামালপুর (২৬°C)",
+      "id": "weather-slot-mid_morning-jamalpur-2026-11-05",
+      "isWeatherAlert": true,
+      "bodyBn": "【জামালপুর আবহাওয়া বুলেটিন】\n• আকাশ: রোদ ঝলমলে পরিষ্কার আকাশ\n• বর্তমান তাপমাত্রা: ২৬°C (সর্বোচ্চ: ৩০°C / সর্বনিম্ন: ২১°C)\n• বাতাসের বেগ: ৭ কিমি/ঘণ্টা | আর্দ্রতা: ৭৬%\n• বৃষ্টির সম্ভাবনা: ০%\n\nপরামর্শ: সুসংবাদ: আজকের আবহাওয়া ভালো। নিরাপদভাবে পরিকল্পিত লাইন মেরামতের কাজ করতে পারেন।",
+      "bodyEn": "【Jamalpur Weather Bulletin】\nCondition: Clear Sky | Temp: 26°C (H: 30°C / L: 21°C) | Wind: 7 km/h | Humidity: 76%.",
+      "date": "৫ নভেম্বর",
+      "isRead": false,
+      "isGlobal": false,
+      "readBy": [
+        "01777877207",
+        "user-demo-1"
+      ]
+    },
+    {
+      "type": "info",
+      "bodyEn": "【Jamalpur Schedule】\nIsha: ০৬:৩৪ PM",
+      "titleBn": "🕌 ইশা ও বিতর সালাতের ওয়াক্ত: জামালপুর",
+      "bodyBn": "【জামালপুর ইশার সময়সূচি】\n• ইশার ওয়াক্ত: ০৬:৩৪ PM\n• বিতর সালাতের সময়: ইশার পর ঘুমানোর পূর্বে\n\nদিনের শেষ ফরজ সালাত ইশা জামাতে আদায় করে শান্তিময় ঘুমে যান। আল্লাহ আপনার রাত বরকতময় করুন।",
+      "messageEn": "【Jamalpur Schedule】\nIsha: ০৬:৩৪ PM",
+      "readBy": [
+        "user-demo-1"
+      ],
+      "districtEn": "Jamalpur",
+      "isRead": false,
+      "titleEn": "🕌 Isha & Witr Prayer Alert: Jamalpur",
+      "timeBn": "৪ নভেম্বর, ১০:৫৭ PM",
+      "isPrayerAlert": true,
+      "messageBn": "【জামালপুর ইশার সময়সূচি】\n• ইশার ওয়াক্ত: ০৬:৩৪ PM\n• বিতর সালাতের সময়: ইশার পর ঘুমানোর পূর্বে\n\nদিনের শেষ ফরজ সালাত ইশা জামাতে আদায় করে শান্তিময় ঘুমে যান। আল্লাহ আপনার রাত বরকতময় করুন।",
+      "date": "৪ নভেম্বর",
+      "districtBn": "জামালপুর",
+      "id": "prayer_isha_jamalpur_2026-11-04",
+      "timeEn": "10:57 PM"
+    },
+    {
+      "titleBn": "🌙 রাতের আবহাওয়া ও আগামীকালের পূর্বাভাস: জামালপুর (২৩°C)",
+      "bodyEn": "【Jamalpur Weather Bulletin】\nCondition: Clear Night Sky | Temp: 23°C (H: 28°C / L: 22°C) | Wind: 6 km/h | Humidity: 88%.",
+      "bodyBn": "【জামালপুর আবহাওয়া বুলেটিন】\n• আকাশ: মেঘমুক্ত পরিষ্কার রাতের আকাশ\n• বর্তমান তাপমাত্রা: ২৩°C (সর্বোচ্চ: ২৮°C / সর্বনিম্ন: ২২°C)\n• বাতাসের বেগ: ৬ কিমি/ঘণ্টা | আর্দ্রতা: ৮৮%\n• বৃষ্টির সম্ভাবনা: ৪%\n\nপরামর্শ: পরামর্শ: কাজ শুরু করার আগে আবহাওয়ার পূর্বাভাস দেখে পরিকল্পনা করুন।",
+      "isRead": false,
+      "isGlobal": false,
+      "readBy": [
+        "user-demo-1"
+      ],
+      "titleEn": "🌙 Night Weather & Tomorrow Preview: Jamalpur (23°C)",
+      "type": "weather",
+      "timeBn": "৪ নভেম্বর, ১০:৫৭ PM",
+      "districtBn": "জামালপুর",
+      "messageBn": "【জামালপুর আবহাওয়া বুলেটিন】\n• আকাশ: মেঘমুক্ত পরিষ্কার রাতের আকাশ\n• বর্তমান তাপমাত্রা: ২৩°C (সর্বোচ্চ: ২৮°C / সর্বনিম্ন: ২২°C)\n• বাতাসের বেগ: ৬ কিমি/ঘণ্টা | আর্দ্রতা: ৮৮%\n• বৃষ্টির সম্ভাবনা: ৪%\n\nপরামর্শ: পরামর্শ: কাজ শুরু করার আগে আবহাওয়ার পূর্বাভাস দেখে পরিকল্পনা করুন।",
+      "isWeatherAlert": true,
+      "districtEn": "Jamalpur",
+      "date": "৪ নভেম্বর",
+      "id": "weather-slot-night-jamalpur-2026-11-04",
+      "timeEn": "10:57 PM",
+      "messageEn": "【Jamalpur Weather Bulletin】\nCondition: Clear Night Sky | Temp: 23°C (H: 28°C / L: 22°C) | Wind: 6 km/h | Humidity: 88%."
+    },
+    {
+      "messageBn": "【শেরপুর আবহাওয়া বুলেটিন】\n• আকাশ: মেঘমুক্ত পরিষ্কার রাতের আকাশ\n• বর্তমান তাপমাত্রা: ২৩°C (সর্বোচ্চ: ২৯°C / সর্বনিম্ন: ২২°C)\n• বাতাসের বেগ: ৬ কিমি/ঘণ্টা | আর্দ্রতা: ৮৬%\n• বৃষ্টির সম্ভাবনা: ৪%\n\nপরামর্শ: পরামর্শ: কাজ শুরু করার আগে আবহাওয়ার পূর্বাভাস দেখে পরিকল্পনা করুন।",
+      "isWeatherAlert": true,
+      "timeBn": "৪ নভেম্বর, ১০:৫১ PM",
+      "bodyBn": "【শেরপুর আবহাওয়া বুলেটিন】\n• আকাশ: মেঘমুক্ত পরিষ্কার রাতের আকাশ\n• বর্তমান তাপমাত্রা: ২৩°C (সর্বোচ্চ: ২৯°C / সর্বনিম্ন: ২২°C)\n• বাতাসের বেগ: ৬ কিমি/ঘণ্টা | আর্দ্রতা: ৮৬%\n• বৃষ্টির সম্ভাবনা: ৪%\n\nপরামর্শ: পরামর্শ: কাজ শুরু করার আগে আবহাওয়ার পূর্বাভাস দেখে পরিকল্পনা করুন।",
+      "titleEn": "🌙 Night Weather & Tomorrow Preview: Sherpur (23°C)",
+      "bodyEn": "【Sherpur Weather Bulletin】\nCondition: Clear Night Sky | Temp: 23°C (H: 29°C / L: 22°C) | Wind: 6 km/h | Humidity: 86%.",
+      "titleBn": "🌙 রাতের আবহাওয়া ও আগামীকালের পূর্বাভাস: শেরপুর (২৩°C)",
+      "districtEn": "Sherpur",
+      "isRead": false,
+      "date": "৪ নভেম্বর",
+      "readBy": [
+        "user-demo-1"
+      ],
+      "messageEn": "【Sherpur Weather Bulletin】\nCondition: Clear Night Sky | Temp: 23°C (H: 29°C / L: 22°C) | Wind: 6 km/h | Humidity: 86%.",
+      "isGlobal": false,
+      "timeEn": "10:51 PM",
+      "id": "weather-slot-night-sherpur-2026-11-04",
+      "districtBn": "শেরপুর",
+      "type": "weather"
+    },
+    {
+      "titleEn": "🕌 Isha & Witr Prayer Alert: Sherpur",
+      "timeEn": "08:05 PM",
+      "type": "info",
+      "titleBn": "🕌 ইশা ও বিতর সালাতের ওয়াক্ত: শেরপুর",
+      "districtEn": "Sherpur",
+      "id": "prayer_isha_sherpur_2026-11-04",
+      "messageEn": "【Sherpur Schedule】\nIsha: ০৬:৩৪ PM",
+      "isPrayerAlert": true,
+      "timeBn": "৪ নভেম্বর, ০৮:০৫ PM",
+      "date": "৪ নভেম্বর",
+      "districtBn": "শেরপুর",
+      "messageBn": "【শেরপুর ইশার সময়সূচি】\n• ইশার ওয়াক্ত: ০৬:৩৪ PM\n• বিতর সালাতের সময়: ইশার পর ঘুমানোর পূর্বে\n\nদিনের শেষ ফরজ সালাত ইশা জামাতে আদায় করে শান্তিময় ঘুমে যান। আল্লাহ আপনার রাত বরকতময় করুন।",
+      "readBy": [
+        "admin-master",
+        "user-demo-1"
+      ],
+      "isRead": false,
+      "bodyBn": "【শেরপুর ইশার সময়সূচি】\n• ইশার ওয়াক্ত: ০৬:৩৪ PM\n• বিতর সালাতের সময়: ইশার পর ঘুমানোর পূর্বে\n\nদিনের শেষ ফরজ সালাত ইশা জামাতে আদায় করে শান্তিময় ঘুমে যান। আল্লাহ আপনার রাত বরকতময় করুন।",
+      "bodyEn": "【Sherpur Schedule】\nIsha: ০৬:৩৪ PM"
+    },
+    {
+      "timeBn": "৪ নভেম্বর, ০৮:০৫ PM",
+      "type": "weather",
+      "districtBn": "শেরপুর",
+      "bodyEn": "【Sherpur Weather Bulletin】\nCondition: Overcast | Temp: 25°C (H: 29°C / L: 22°C) | Wind: 5 km/h | Humidity: 75%.",
+      "isWeatherAlert": true,
+      "bodyBn": "【শেরপুর আবহাওয়া বুলেটিন】\n• আকাশ: মেঘলা ও গুমোট আকাশ\n• বর্তমান তাপমাত্রা: ২৫°C (সর্বোচ্চ: ২৯°C / সর্বনিম্ন: ২২°C)\n• বাতাসের বেগ: ৫ কিমি/ঘণ্টা | আর্দ্রতা: ৭৫%\n• বৃষ্টির সম্ভাবনা: ০%\n\nপরামর্শ: পরামর্শ: প্রতিকূল আবহাওয়ায় কাজ করার সময় প্রয়োজনীয় নিরাপত্তা ব্যবস্থা নিশ্চিত করুন।",
+      "messageBn": "【শেরপুর আবহাওয়া বুলেটিন】\n• আকাশ: মেঘলা ও গুমোট আকাশ\n• বর্তমান তাপমাত্রা: ২৫°C (সর্বোচ্চ: ২৯°C / সর্বনিম্ন: ২২°C)\n• বাতাসের বেগ: ৫ কিমি/ঘণ্টা | আর্দ্রতা: ৭৫%\n• বৃষ্টির সম্ভাবনা: ০%\n\nপরামর্শ: পরামর্শ: প্রতিকূল আবহাওয়ায় কাজ করার সময় প্রয়োজনীয় নিরাপত্তা ব্যবস্থা নিশ্চিত করুন।",
+      "isRead": false,
+      "readBy": [
+        "admin-master",
+        "user-demo-1"
+      ],
+      "id": "weather-slot-evening-sherpur-2026-11-04",
+      "isGlobal": false,
+      "titleEn": "🌙 Evening Weather Bulletin: Sherpur (25°C)",
+      "titleBn": "🌙 সন্ধ্যার আবহাওয়া বুলেটিন: শেরপুর (২৫°C)",
+      "timeEn": "08:05 PM",
+      "districtEn": "Sherpur",
+      "date": "৪ নভেম্বর",
+      "messageEn": "【Sherpur Weather Bulletin】\nCondition: Overcast | Temp: 25°C (H: 29°C / L: 22°C) | Wind: 5 km/h | Humidity: 75%."
+    },
+    {
+      "type": "info",
+      "districtEn": "Jamalpur",
+      "messageBn": "【জামালপুর আসরের সময়সূচি】\n• আসরের ওয়াক্ত: ০৩:৪০ PM\n• সূর্যাস্ত: ০৫:১৬ PM\n\nআসরের সালাত (সালাতুল উস্তা) হেফাজত করুন। সূর্যাস্তের পূর্বে সময়মতো আসরের সালাত আদায় নিশ্চিত করুন।",
+      "timeEn": "03:43 PM",
+      "titleEn": "🕌 Asr Prayer Alert: Jamalpur",
+      "titleBn": "🕌 আসরের সালাতের ওয়াক্ত: জামালপুর",
+      "timeBn": "৪ নভেম্বর, ০৩:৪৩ PM",
+      "districtBn": "জামালপুর",
+      "date": "৪ নভেম্বর",
+      "messageEn": "【Jamalpur Schedule】\nAsr: ০৩:৪০ PM | Sunset: ০৫:১৬ PM",
+      "isPrayerAlert": true,
+      "bodyEn": "【Jamalpur Schedule】\nAsr: ০৩:৪০ PM | Sunset: ০৫:১৬ PM",
+      "bodyBn": "【জামালপুর আসরের সময়সূচি】\n• আসরের ওয়াক্ত: ০৩:৪০ PM\n• সূর্যাস্ত: ০৫:১৬ PM\n\nআসরের সালাত (সালাতুল উস্তা) হেফাজত করুন। সূর্যাস্তের পূর্বে সময়মতো আসরের সালাত আদায় নিশ্চিত করুন।",
+      "readBy": [
+        "01777877207",
+        "admin-master",
+        "user-demo-1"
+      ],
+      "id": "prayer_asr_jamalpur_2026-11-04",
+      "isRead": false
+    },
+    {
+      "id": "weather-slot-afternoon-jamalpur-2026-11-04",
+      "timeBn": "৪ নভেম্বর, ০৩:৪৩ PM",
+      "type": "weather",
+      "readBy": [
+        "admin-master",
+        "user-demo-1"
+      ],
+      "isRead": false,
+      "isWeatherAlert": true,
+      "districtEn": "Jamalpur",
+      "bodyBn": "【জামালপুর আবহাওয়া বুলেটিন】\n• আকাশ: মেঘলা ও গুমোট আকাশ\n• বর্তমান তাপমাত্রা: ২৭°C (সর্বোচ্চ: ২৮°C / সর্বনিম্ন: ২২°C)\n• বাতাসের বেগ: ৬ কিমি/ঘণ্টা | আর্দ্রতা: ৭১%\n• বৃষ্টির সম্ভাবনা: ০%\n\nপরামর্শ: পরামর্শ: প্রতিকূল আবহাওয়ায় কাজ করার সময় প্রয়োজনীয় নিরাপত্তা ব্যবস্থা নিশ্চিত করুন।",
+      "messageEn": "【Jamalpur Weather Bulletin】\nCondition: Overcast | Temp: 27°C (H: 28°C / L: 22°C) | Wind: 6 km/h | Humidity: 71%.",
+      "bodyEn": "【Jamalpur Weather Bulletin】\nCondition: Overcast | Temp: 27°C (H: 28°C / L: 22°C) | Wind: 6 km/h | Humidity: 71%.",
+      "timeEn": "03:43 PM",
+      "isGlobal": false,
+      "date": "৪ নভেম্বর",
+      "titleEn": "🌤️ Afternoon Weather Update: Jamalpur (27°C)",
+      "districtBn": "জামালপুর",
+      "messageBn": "【জামালপুর আবহাওয়া বুলেটিন】\n• আকাশ: মেঘলা ও গুমোট আকাশ\n• বর্তমান তাপমাত্রা: ২৭°C (সর্বোচ্চ: ২৮°C / সর্বনিম্ন: ২২°C)\n• বাতাসের বেগ: ৬ কিমি/ঘণ্টা | আর্দ্রতা: ৭১%\n• বৃষ্টির সম্ভাবনা: ০%\n\nপরামর্শ: পরামর্শ: প্রতিকূল আবহাওয়ায় কাজ করার সময় প্রয়োজনীয় নিরাপত্তা ব্যবস্থা নিশ্চিত করুন।",
+      "titleBn": "🌤️ বিকালের আবহাওয়া আপডেট: জামালপুর (২৭°C)"
+    }
+  ],
+  "auditLogs": [
+    {
+      "actionBn": "ভিজিটর মোড",
+      "user": "Admin",
+      "id": "log-1794079095170",
+      "time": 1794079095170,
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login"
+    },
+    {
+      "time": 1794078670046,
+      "user": "Admin",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1794078670046",
+      "action": "User Login"
+    },
+    {
+      "details": "সেশন সমাপ্ত ও সরাসরি লগইন পেইজে স্থানান্তর",
+      "id": "log-1794078644849",
+      "actionBn": "লগআউট",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1794078644849,
+      "action": "Logout"
+    },
+    {
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login",
+      "id": "log-1794074681109",
+      "user": "Admin",
+      "time": 1794074681109,
+      "details": "সম্মানিত ভিজিটর (01777877207)"
+    },
+    {
+      "actionBn": "এডমিন লগইন",
+      "id": "log-1794030515451",
+      "time": 1794030515451,
+      "action": "User Login",
+      "details": "প্রত্যাশা অ্যাডমিন (01777877207)",
+      "user": "সম্মানিত ভিজিটর"
+    },
+    {
+      "id": "log-1794030280841",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login",
+      "user": "Admin",
+      "time": 1794030280841,
+      "actionBn": "ভিজিটর মোড"
+    },
+    {
+      "actionBn": "ভিজিটর মোড",
+      "time": 1794030219601,
+      "action": "User Login",
+      "id": "log-1794030219601",
+      "user": "Admin",
+      "details": "সম্মানিত ভিজিটর (01777877207)"
+    },
+    {
+      "user": "Admin",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "time": 1794030172926,
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1794030172926",
+      "action": "User Login"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "id": "log-1794029591447",
+      "user": "Admin",
+      "action": "User Login",
+      "time": 1794029591447,
+      "actionBn": "ভিজিটর মোড"
+    },
+    {
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login",
+      "time": 1794029072636,
+      "user": "Admin",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "id": "log-1794029072636"
+    },
+    {
+      "time": 1794029070508,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "action": "Logout",
+      "id": "log-1794029070508",
+      "actionBn": "লগআউট",
+      "details": "সেশন সমাপ্ত ও সরাসরি লগইন পেইজে স্থানান্তর"
+    },
+    {
+      "action": "User Login",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1794025038435",
+      "time": 1794025038435,
+      "user": "Admin"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "id": "log-1794022712485",
+      "actionBn": "ভিজিটর মোড",
+      "user": "Admin",
+      "action": "User Login",
+      "time": 1794022712485
+    },
+    {
+      "time": 1794018216393,
+      "user": "Admin",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login",
+      "id": "log-1794018216393",
+      "actionBn": "ভিজিটর মোড"
+    },
+    {
+      "action": "User Login",
+      "time": 1793988920140,
+      "id": "log-1793988920140",
+      "actionBn": "ভিজিটর মোড",
+      "user": "Admin",
+      "details": "সম্মানিত ভিজিটর (01777877207)"
+    },
+    {
+      "time": 1793984657468,
+      "action": "User Login",
+      "user": "Admin",
+      "actionBn": "ভিজিটর মোড",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "id": "log-1793984657468"
+    },
+    {
+      "id": "log-1793984622570",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "action": "Updated Banners",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 3",
+      "time": 1793984622570
+    },
+    {
+      "id": "log-1793984606254",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793984606254,
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 3",
+      "action": "Updated Banners"
+    },
+    {
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "action": "Updated Banners",
+      "id": "log-1793984589135",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 3",
+      "time": 1793984589135
+    },
+    {
+      "id": "log-1793984580055",
+      "action": "Updated Banners",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 2",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793984580055
+    },
+    {
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793984572149",
+      "time": 1793984572149,
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 3",
+      "action": "Updated Banners"
+    },
+    {
+      "time": 1793984552280,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "action": "Updated Banners",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 2",
+      "id": "log-1793984552279"
+    },
+    {
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "time": 1793984510003,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 3",
+      "id": "log-1793984510003",
+      "action": "Updated Banners"
+    },
+    {
+      "id": "log-1793984498758",
+      "action": "Updated Banners",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 2",
+      "time": 1793984498758,
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন"
+    },
+    {
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793984469420,
+      "id": "log-1793984469420",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 3",
+      "action": "Updated Banners"
+    },
+    {
+      "id": "log-1793984456899",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793984456899,
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 3",
+      "action": "Updated Banners"
+    },
+    {
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 3",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "id": "log-1793984449422",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "action": "Updated Banners",
+      "time": 1793984449422
+    },
+    {
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "id": "log-1793984425525",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 3",
+      "action": "Updated Banners",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793984425525
+    },
+    {
+      "action": "Updated Banners",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "time": 1793984375291,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793984375291",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 3"
+    },
+    {
+      "id": "log-1793984111200",
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin",
+      "time": 1793984111200
+    },
+    {
+      "action": "User Login",
+      "id": "log-1793983434325",
+      "actionBn": "ভিজিটর মোড",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin",
+      "time": 1793983434325
+    },
+    {
+      "action": "Logout",
+      "id": "log-1793983432975",
+      "user": "সম্মানিত ভিজিটর",
+      "time": 1793983432975,
+      "details": "সেশন সমাপ্ত ও সরাসরি লগইন পেইজে স্থানান্তর",
+      "actionBn": "লগআউট"
+    },
+    {
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793983046288",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "time": 1793983046288,
+      "user": "Admin"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login",
+      "time": 1793981396007,
+      "id": "log-1793981396007",
+      "user": "Admin",
+      "actionBn": "ভিজিটর মোড"
+    },
+    {
+      "actionBn": "ভিজিটর মোড",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "id": "log-1793976480821",
+      "time": 1793976480821,
+      "action": "User Login",
+      "user": "Admin"
+    },
+    {
+      "action": "User Login",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "actionBn": "ভিজিটর মোড",
+      "time": 1793972791749,
+      "id": "log-1793972791749",
+      "user": "Admin"
+    },
+    {
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793971373429",
+      "time": 1793971373429,
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "time": 1793971125674,
+      "action": "User Login",
+      "user": "Admin",
+      "id": "log-1793971125674",
+      "actionBn": "ভিজিটর মোড"
+    },
+    {
+      "user": "Admin",
+      "time": 1793971074012,
+      "action": "User Login",
+      "id": "log-1793971074012",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "actionBn": "ভিজিটর মোড"
+    },
+    {
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793969662787",
+      "time": 1793969662787,
+      "action": "Updated Services",
+      "actionBn": "সেবা স্ট্যাটাস পরিবর্তন",
+      "details": "সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট"
+    },
+    {
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793969662172",
+      "time": 1793969662172,
+      "action": "Updated Services",
+      "actionBn": "সেবা স্ট্যাটাস পরিবর্তন",
+      "details": "সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট"
+    },
+    {
+      "id": "log-1793969615320",
+      "user": "Admin",
+      "action": "User Login",
+      "time": 1793969615320,
+      "actionBn": "ভিজিটর মোড",
+      "details": "সম্মানিত ভিজিটর (01777877207)"
+    },
+    {
+      "time": 1793969410781,
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin",
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login",
+      "id": "log-1793969410781"
+    },
+    {
+      "time": 1793968146876,
+      "user": "Admin",
+      "actionBn": "ভিজিটর মোড",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "id": "log-1793968146876",
+      "action": "User Login"
+    },
+    {
+      "id": "log-1793964909732",
+      "action": "Updated Services",
+      "details": "সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793964909732,
+      "actionBn": "সেবা স্ট্যাটাস পরিবর্তন"
+    },
+    {
+      "time": 1793962270540,
+      "user": "Admin",
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793962270540",
+      "details": "সম্মানিত ভিজিটর (01777877207)"
+    },
+    {
+      "action": "User Login",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "time": 1793960966049,
+      "user": "Admin",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793960966049"
+    },
+    {
+      "action": "Updated Services",
+      "details": "সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট",
+      "id": "log-1793960894418",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793960894418,
+      "actionBn": "সেবা স্ট্যাটাস পরিবর্তন"
+    },
+    {
+      "time": 1793956207615,
+      "user": "সম্মানিত ভিজিটর",
+      "details": "সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট",
+      "actionBn": "সেবা স্ট্যাটাস পরিবর্তন",
+      "action": "Updated Services",
+      "id": "log-1793956207615"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793955895914",
+      "time": 1793955895914,
+      "user": "Admin"
+    },
+    {
+      "actionBn": "ভিজিটর মোড",
+      "time": 1793954702424,
+      "user": "Admin",
+      "action": "User Login",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "id": "log-1793954702424"
+    },
+    {
+      "user": "Admin",
+      "action": "User Login",
+      "time": 1793945060042,
+      "id": "log-1793945060042",
+      "actionBn": "ভিজিটর মোড",
+      "details": "সম্মানিত ভিজিটর (01777877207)"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "time": 1793943935174,
+      "actionBn": "ভিজিটর মোড",
+      "user": "Admin",
+      "id": "log-1793943935174",
+      "action": "User Login"
+    },
+    {
+      "time": 1793941104738,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "actionBn": "সেবা স্ট্যাটাস পরিবর্তন",
+      "details": "সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট",
+      "id": "log-1793941104738",
+      "action": "Updated Services"
+    },
+    {
+      "id": "log-1793941088761",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "action": "Updated Banners",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793941088761,
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 2"
+    },
+    {
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 2",
+      "id": "log-1793941079153",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793941079153,
+      "action": "Updated Banners"
+    },
+    {
+      "time": 1793941067134,
+      "action": "Updated Banners",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 2",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "id": "log-1793941067134"
+    },
+    {
+      "user": "Admin",
+      "time": 1793941051669,
+      "action": "User Login",
+      "id": "log-1793941051669",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "actionBn": "ভিজিটর মোড"
+    },
+    {
+      "actionBn": "সেবা স্ট্যাটাস পরিবর্তন",
+      "action": "Updated Services",
+      "id": "log-1793941037592",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793941037592,
+      "details": "সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট"
+    },
+    {
+      "id": "log-1793941027297",
+      "actionBn": "ভিজিটর মোড",
+      "user": "Admin",
+      "action": "User Login",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "time": 1793941027297
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "time": 1793941015091,
+      "user": "Admin",
+      "action": "User Login",
+      "id": "log-1793941015091",
+      "actionBn": "ভিজিটর মোড"
+    },
+    {
+      "details": "সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট",
+      "action": "Updated Services",
+      "actionBn": "সেবা স্ট্যাটাস পরিবর্তন",
+      "time": 1793940994354,
+      "id": "log-1793940994354",
+      "user": "প্রত্যাশা অ্যাডমিন"
+    },
+    {
+      "action": "Updated Services",
+      "actionBn": "সেবা স্ট্যাটাস পরিবর্তন",
+      "time": 1793940993532,
+      "details": "সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793940993532"
+    },
+    {
+      "user": "Admin",
+      "id": "log-1793940982302",
+      "time": 1793940982302,
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login",
+      "details": "সম্মানিত ভিজিটর (01777877207)"
+    },
+    {
+      "id": "log-1793940549266",
+      "user": "Admin",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "time": 1793940549266,
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "id": "log-1793934935194",
+      "action": "User Login",
+      "time": 1793934935194,
+      "actionBn": "ভিজিটর মোড",
+      "user": "Admin"
+    },
+    {
+      "actionBn": "ভিজিটর মোড",
+      "time": 1793931174846,
+      "id": "log-1793931174846",
+      "action": "User Login",
+      "user": "Admin",
+      "details": "সম্মানিত ভিজিটর (01777877207)"
+    },
+    {
+      "details": "সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793899512946,
+      "id": "log-1793899512946",
+      "actionBn": "সেবা স্ট্যাটাস পরিবর্তন",
+      "action": "Updated Services"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "id": "log-1793899415259",
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login",
+      "user": "Admin",
+      "time": 1793899415259
+    },
+    {
+      "details": "সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793898972573,
+      "actionBn": "সেবা স্ট্যাটাস পরিবর্তন",
+      "id": "log-1793898972573",
+      "action": "Updated Services"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793897422440",
+      "time": 1793897422441,
+      "action": "User Login"
+    },
+    {
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793888876007",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin",
+      "time": 1793888876007,
+      "action": "User Login"
+    },
+    {
+      "action": "Updated Services",
+      "actionBn": "সেবা স্ট্যাটাস পরিবর্তন",
+      "time": 1793888017379,
+      "details": "সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793888017379"
+    },
+    {
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login",
+      "time": 1793886252200,
+      "id": "log-1793886252200",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin"
+    },
+    {
+      "id": "log-1793883607451",
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin",
+      "time": 1793883607451
+    },
+    {
+      "id": "log-1793883578300",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin",
+      "time": 1793883578300,
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড"
+    },
+    {
+      "time": 1793878908942,
+      "user": "Admin",
+      "id": "log-1793878908942",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড"
+    },
+    {
+      "id": "log-1793875512238",
+      "user": "Admin",
+      "time": 1793875512238,
+      "details": "প্রত্যাশা অ্যাডমিন (01777877207)",
+      "actionBn": "এডমিন লগইন",
+      "action": "User Login"
+    },
+    {
+      "action": "Logout",
+      "time": 1793875504643,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "actionBn": "লগআউট",
+      "id": "log-1793875504642",
+      "details": "সেশন সমাপ্ত ও সরাসরি লগইন পেইজে স্থানান্তর"
+    },
+    {
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 2",
+      "time": 1793873343734,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "id": "log-1793873343734",
+      "action": "Updated Banners"
+    },
+    {
+      "action": "Updated Banners",
+      "id": "log-1793873334363",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 1",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "time": 1793873334363
+    },
+    {
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 2",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793873325342",
+      "action": "Updated Banners",
+      "time": 1793873325342,
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন"
+    },
+    {
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 1",
+      "id": "log-1793873292841",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793873292841,
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "action": "Updated Banners"
+    },
+    {
+      "id": "log-1793872478510",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 1",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "time": 1793872478510,
+      "action": "Updated Banners"
+    },
+    {
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 1",
+      "time": 1793872307548,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "action": "Updated Banners",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "id": "log-1793872307548"
+    },
+    {
+      "id": "log-1793871829869",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "action": "Updated Banners",
+      "time": 1793871829869,
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 1"
+    },
+    {
+      "action": "Updated Banners",
+      "time": 1793871382748,
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "id": "log-1793871382748",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 1"
+    },
+    {
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 1",
+      "time": 1793871330665,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793871330665",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "action": "Updated Banners"
+    },
+    {
+      "action": "Updated Banners",
+      "time": 1793871329485,
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793871329485",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 2"
+    },
+    {
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 3",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793871328320",
+      "time": 1793871328320,
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "action": "Updated Banners"
+    },
+    {
+      "action": "Updated Banners",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "time": 1793871326720,
+      "id": "log-1793871326720",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 4"
+    },
+    {
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "action": "Updated Banners",
+      "time": 1793871325622,
+      "id": "log-1793871325622",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 5"
+    },
+    {
+      "details": "মোট অফার: 0",
+      "actionBn": "অফার ও বিজ্ঞাপন পরিবর্তন",
+      "id": "log-1793871304754",
+      "action": "Updated Offers",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793871304754
+    },
+    {
+      "time": 1793871294868,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 1",
+      "id": "log-1793871294868",
+      "action": "Updated Banners"
+    },
+    {
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "action": "Updated Banners",
+      "time": 1793871293852,
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 2",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793871293852"
+    },
+    {
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793871292476",
+      "time": 1793871292476,
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 3",
+      "action": "Updated Banners",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন"
+    },
+    {
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793871291076,
+      "action": "Updated Banners",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 4",
+      "id": "log-1793871291076",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন"
+    },
+    {
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "id": "log-1793871289955",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793871289955,
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 5",
+      "action": "Updated Banners"
+    },
+    {
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login",
+      "time": 1793870850347,
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin",
+      "id": "log-1793870850347"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "time": 1793865298825,
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793865298825",
+      "user": "Admin"
+    },
+    {
+      "time": 1793865148364,
+      "user": "Admin",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793865148364",
+      "action": "User Login",
+      "details": "সম্মানিত ভিজিটর (01777877207)"
+    },
+    {
+      "user": "Admin",
+      "time": 1793717919106,
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "id": "log-1793717919106",
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "id": "log-1793712733983",
+      "actionBn": "ভিজিটর মোড",
+      "user": "Admin",
+      "action": "User Login",
+      "time": 1793712733983
+    },
+    {
+      "time": 1793709129998,
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793709129998",
+      "action": "User Login"
+    },
+    {
+      "action": "User Login",
+      "id": "log-1793698499763",
+      "user": "Admin",
+      "actionBn": "ভিজিটর মোড",
+      "time": 1793698499763,
+      "details": "সম্মানিত ভিজিটর (01777877207)"
+    },
+    {
+      "id": "log-1793696924005",
+      "user": "Admin",
+      "time": 1793696924005,
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login"
+    },
+    {
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793691112808",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin",
+      "time": 1793691112808,
+      "action": "User Login"
+    },
+    {
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login",
+      "time": 1793688989503,
+      "user": "Admin",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "id": "log-1793688989503"
+    },
+    {
+      "action": "User Login",
+      "id": "log-1793686301989",
+      "user": "Admin",
+      "time": 1793686301989,
+      "actionBn": "ভিজিটর মোড",
+      "details": "সম্মানিত ভিজিটর (01777877207)"
+    },
+    {
+      "user": "Admin",
+      "time": 1793638043304,
+      "action": "User Login",
+      "id": "log-1793638043304",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "actionBn": "ভিজিটর মোড"
+    },
+    {
+      "action": "User Login",
+      "time": 1793630157840,
+      "user": "Admin",
+      "actionBn": "ভিজিটর মোড",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "id": "log-1793630157840"
+    },
+    {
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "id": "log-1793619156226",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793619156226,
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 2",
+      "action": "Updated Banners"
+    },
+    {
+      "details": "সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট",
+      "time": 1793543128922,
+      "actionBn": "সেবা স্ট্যাটাস পরিবর্তন",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "action": "Updated Services",
+      "id": "log-1793543128922"
+    },
+    {
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793543077279",
+      "time": 1793543077279,
+      "action": "Updated Services",
+      "actionBn": "সেবা স্ট্যাটাস পরিবর্তন",
+      "details": "সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট"
+    },
+    {
+      "actionBn": "প্রোফাইল ও পাসওয়ার্ড পরিবর্তন",
+      "id": "log-1793543047831",
+      "details": "মোঃ রিয়াদ মিয়া (01884542812)",
+      "user": "মোঃ রিয়াদ মিয়া",
+      "time": 1793543047831,
+      "action": "Updated Profile"
+    },
+    {
+      "actionBn": "ইউজার লগইন",
+      "time": 1793543035145,
+      "user": "Admin",
+      "details": "মোঃ রিয়াদ মিয়া (01884542812)",
+      "action": "User Login",
+      "id": "log-1793543035145"
+    },
+    {
+      "action": "Logout",
+      "details": "সেশন সমাপ্ত ও সরাসরি লগইন পেইজে স্থানান্তর",
+      "actionBn": "লগআউট",
+      "id": "log-1793543029754",
+      "time": 1793543029754,
+      "user": "মো: রিয়াদ মিয়া"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড",
+      "time": 1793531397728,
+      "id": "log-1793531397728",
+      "user": "Admin"
+    },
+    {
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793473508846,
+      "action": "Deleted Staff",
+      "id": "log-1793473508846",
+      "actionBn": "স্টাফ অ্যাকাউন্ট বাতিল",
+      "details": "Name: মোঃ রহিম"
+    },
+    {
+      "details": "🌙 রাতের আবহাওয়া ও শেষরাতের বুলেটিন: চাঁপাইনবাবগঞ্জ (২৫°C)",
+      "time": 1793471105178,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793471105178",
+      "actionBn": "নোটিফিকেশন পাঠানো হয়েছে",
+      "action": "Sent Notification"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793460744628",
+      "time": 1793460744628,
+      "user": "Admin"
+    },
+    {
+      "actionBn": "ভিজিটর মোড",
+      "time": 1793459579367,
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin",
+      "id": "log-1793459579367",
+      "action": "User Login"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "id": "log-1793459450000",
+      "actionBn": "ভিজিটর মোড",
+      "user": "Admin",
+      "time": 1793459450000,
+      "action": "User Login"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin",
+      "id": "log-1793459433200",
+      "time": 1793459433200,
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login"
+    },
+    {
+      "time": 1793457666406,
+      "user": "Admin",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793457666406",
+      "action": "User Login"
+    },
+    {
+      "user": "Admin",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login",
+      "time": 1793446165713,
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793446165713"
+    },
+    {
+      "time": 1793444311855,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "actionBn": "নতুন স্টাফ যোগ",
+      "details": "মোঃ রহিম (০১৭৩৪৩৫৫৪)",
+      "action": "Added Staff",
+      "id": "log-1793444311855"
+    },
+    {
+      "action": "Deleted Staff",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "details": "Name: কাজী রাজু",
+      "time": 1793438018411,
+      "id": "log-1793438018411",
+      "actionBn": "স্টাফ অ্যাকাউন্ট বাতিল"
+    },
+    {
+      "action": "Deleted Staff",
+      "actionBn": "স্টাফ অ্যাকাউন্ট বাতিল",
+      "time": 1793438016273,
+      "id": "log-1793438016273",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "details": "Name: মোঃ রফিকুল ইসলাম"
+    },
+    {
+      "action": "Staff Collection Recorded",
+      "time": 1793437747760,
+      "user": "মো: রিয়াদ মিয়া",
+      "details": "কাজী রাজু: ৳300",
+      "id": "log-1793437747760",
+      "actionBn": "স্টাফ কালেকশন জমা"
+    },
+    {
+      "time": 1793434188172,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "action": "Created Transaction",
+      "details": "খরচ [ডাচ্ বাংলা ব্যাংক]: রহিম - 350 টাকা",
+      "id": "log-1793434188172",
+      "actionBn": "নতুন লেনদেন এন্ট্রি"
+    },
+    {
+      "action": "Sent Notification",
+      "time": 1793434081322,
+      "actionBn": "নোটিফিকেশন পাঠানো হয়েছে",
+      "details": "সফটওয়্যার সিস্টেম আপগ্রেড করা হচ্ছে...",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793434081322"
+    },
+    {
+      "actionBn": "পেমেন্ট চ্যানেল হালনাগাদ",
+      "action": "Updated Channels",
+      "time": 1793433303965,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "details": "মোট চ্যানেল সংখ্যা: 4",
+      "id": "log-1793433303965"
+    },
+    {
+      "time": 1793432773459,
+      "user": "Admin",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login",
+      "id": "log-1793432773459",
+      "actionBn": "ভিজিটর মোড"
+    },
+    {
+      "user": "Admin",
+      "time": 1793431390372,
+      "id": "log-1793431390372",
+      "actionBn": "ভিজিটর মোড",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login"
+    },
+    {
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793389299147",
+      "user": "Admin",
+      "time": 1793389299147,
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login"
+    },
+    {
+      "user": "Admin",
+      "time": 1793388756078,
+      "id": "log-1793388756078",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login"
+    },
+    {
+      "actionBn": "ভিজিটর মোড",
+      "user": "Admin",
+      "time": 1793387970696,
+      "id": "log-1793387970696",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login"
+    },
+    {
+      "action": "User Login",
+      "time": 1793386617855,
+      "actionBn": "ভিজিটর মোড",
+      "user": "Admin",
+      "id": "log-1793386617855",
+      "details": "সম্মানিত ভিজিটর (01777877207)"
+    },
+    {
+      "user": "Admin",
+      "time": 1793386096235,
+      "id": "log-1793386096235",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login"
+    },
+    {
+      "id": "log-1793385158066",
+      "details": "সেশন সমাপ্ত ও সরাসরি লগইন পেইজে স্থানান্তর",
+      "user": "সম্মানিত ভিজিটর",
+      "time": 1793385158066,
+      "actionBn": "লগআউট",
+      "action": "Logout"
+    },
+    {
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793384655488",
+      "time": 1793384655488,
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin"
+    },
+    {
+      "id": "log-1793384508063",
+      "user": "Admin",
+      "time": 1793384508063,
+      "actionBn": "ভিজিটর মোড",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login"
+    },
+    {
+      "action": "User Login",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "actionBn": "ভিজিটর মোড",
+      "time": 1793384328184,
+      "user": "Admin",
+      "id": "log-1793384328184"
+    },
+    {
+      "id": "log-1793384125813",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login",
+      "user": "Admin",
+      "time": 1793384125813
+    },
+    {
+      "time": 1793384103746,
+      "user": "সম্মানিত ভিজিটর",
+      "actionBn": "লগআউট",
+      "details": "সেশন সমাপ্ত ও সরাসরি লগইন পেইজে স্থানান্তর",
+      "id": "log-1793384103746",
+      "action": "Logout"
+    },
+    {
+      "action": "User Login",
+      "user": "Admin",
+      "actionBn": "ভিজিটর মোড",
+      "time": 1793384084805,
+      "id": "log-1793384084805",
+      "details": "সম্মানিত ভিজিটর (01777877207)"
+    },
+    {
+      "action": "User Login",
+      "actionBn": "ইউজার লগইন",
+      "details": "মো: রিয়াদ মিয়া (01884542812)",
+      "time": 1793360446306,
+      "id": "log-1793360446306",
+      "user": "Admin"
+    },
+    {
+      "id": "log-1793358593134",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "details": "🌤️ বিকালের আবহাওয়া আপডেট: শেরপুর (২৮°C)",
+      "action": "Sent Notification",
+      "time": 1793358593134,
+      "actionBn": "নোটিফিকেশন পাঠানো হয়েছে"
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793357800752",
+      "time": 1793357800752,
+      "user": "Admin"
+    },
+    {
+      "time": 1793356548476,
+      "user": "Admin",
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "id": "log-1793356548476"
+    },
+    {
+      "id": "log-1793355680246",
+      "action": "User Login",
+      "user": "Admin",
+      "actionBn": "ভিজিটর মোড",
+      "time": 1793355680246,
+      "details": "সম্মানিত ভিজিটর (01777877207)"
+    },
+    {
+      "time": 1793355252235,
+      "action": "User Login",
+      "user": "Admin",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793355252235"
+    },
+    {
+      "user": "Admin",
+      "actionBn": "ভিজিটর মোড",
+      "time": 1793354394106,
+      "id": "log-1793354394106",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "action": "User Login"
+    },
+    {
+      "id": "log-1793348014951",
+      "user": "Admin",
+      "time": 1793348014951,
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড",
+      "details": "সম্মানিত ভিজিটর (01777877207)"
+    },
+    {
+      "id": "log-1793347623356",
+      "actionBn": "ইউজার লগইন",
+      "action": "User Login",
+      "user": "Admin",
+      "time": 1793347623356,
+      "details": "মো: রিয়াদ মিয়া (01884542812)"
+    },
+    {
+      "action": "Logout",
+      "id": "log-1793347619130",
+      "details": "সেশন সমাপ্ত ও সরাসরি লগইন পেইজে স্থানান্তর",
+      "actionBn": "লগআউট",
+      "user": "মো: রিয়াদ মিয়া",
+      "time": 1793347619130
+    },
+    {
+      "actionBn": "প্রোফাইল ও পাসওয়ার্ড পরিবর্তন",
+      "details": "মো: রিয়াদ মিয়া (01884542812)",
+      "id": "log-1793343704000",
+      "user": "মো: রিয়াদ মিয়া",
+      "action": "Updated Profile",
+      "time": 1793343704000
+    },
+    {
+      "action": "Sent Notification",
+      "actionBn": "নোটিফিকেশন পাঠানো হয়েছে",
+      "details": "🌤️ দুপুরের আবহাওয়া ও তাপদাহ বুলেটিন: টাঙ্গাইল (২৯°C)",
+      "id": "log-1793341817628",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793341817628
+    },
+    {
+      "details": "খরচ [বিকাশ]: খচর - 500 টাকা",
+      "id": "log-1793341760212",
+      "action": "Created Transaction",
+      "actionBn": "নতুন লেনদেন এন্ট্রি",
+      "time": 1793341760212,
+      "user": "প্রত্যাশা অ্যাডমিন"
+    },
+    {
+      "action": "Created Transaction",
+      "id": "log-1793341358418",
+      "details": "খরচ [রকেট]: খচর - 100 টাকা",
+      "actionBn": "নতুন লেনদেন এন্ট্রি",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793341358418
+    },
+    {
+      "action": "User Login",
+      "time": 1793341231222,
+      "user": "Admin",
+      "actionBn": "ইউজার লগইন",
+      "id": "log-1793341231222",
+      "details": "মো: রিয়াদ মিয়া (01884542812)"
+    },
+    {
+      "details": "সেশন সমাপ্ত ও সরাসরি লগইন পেইজে স্থানান্তর",
+      "id": "log-1793341222531",
+      "user": "মো: রিয়াদ মিয়া",
+      "time": 1793341222531,
+      "action": "Logout",
+      "actionBn": "লগআউট"
+    },
+    {
+      "action": "User Login",
+      "time": 1793340998042,
+      "details": "মো: রিয়াদ মিয়া (01884542812)",
+      "user": "Admin",
+      "actionBn": "ইউজার লগইন",
+      "id": "log-1793340998042"
+    },
+    {
+      "action": "Logout",
+      "actionBn": "লগআউট",
+      "id": "log-1793340283542",
+      "user": "মো: রিয়াদ মিয়া",
+      "time": 1793340283542,
+      "details": "সেশন সমাপ্ত ও সরাসরি লগইন পেইজে স্থানান্তর"
+    },
+    {
+      "time": 1793340221114,
+      "actionBn": "ইউজার লগইন",
+      "user": "Admin",
+      "details": "মো: রিয়াদ মিয়া (01884542812)",
+      "id": "log-1793340221114",
+      "action": "User Login"
+    },
+    {
+      "action": "Logout",
+      "id": "log-1793340199380",
+      "actionBn": "লগআউট",
+      "details": "সেশন সমাপ্ত ও সরাসরি লগইন পেইজে স্থানান্তর",
+      "user": "মো: রিয়াদ মিয়া",
+      "time": 1793340199380
+    },
+    {
+      "time": 1793340125922,
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "action": "Updated Banners",
+      "id": "log-1793340125922",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 1"
+    },
+    {
+      "time": 1793340069952,
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 1",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "id": "log-1793340069952",
+      "action": "Updated Banners"
+    },
+    {
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 2",
+      "time": 1793340068889,
+      "action": "Updated Banners",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793340068889",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন"
+    },
+    {
+      "time": 1793340067621,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 3",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "id": "log-1793340067621",
+      "action": "Updated Banners"
+    },
+    {
+      "id": "log-1793340066354",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 4",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793340066354,
+      "action": "Updated Banners"
+    },
+    {
+      "time": 1793340065219,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "details": "সক্রিয় বিজ্ঞাপন সংখ্যা: 5",
+      "actionBn": "বিজ্ঞাপন ব্যানার পরিবর্তন",
+      "action": "Updated Banners",
+      "id": "log-1793340065219"
+    },
+    {
+      "id": "log-1793340038429",
+      "details": "খরচ [নগদ]: খচর - 200 টাকা",
+      "action": "Created Transaction",
+      "actionBn": "নতুন লেনদেন এন্ট্রি",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793340038429
+    },
+    {
+      "time": 1793339405458,
+      "actionBn": "নতুন লেনদেন এন্ট্রি",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "details": "জমা [রকেট]: জমা - 300 টাকা",
+      "id": "log-1793339405458",
+      "action": "Created Transaction"
+    },
+    {
+      "action": "Created Transaction",
+      "actionBn": "নতুন লেনদেন এন্ট্রি",
+      "details": "খরচ [নগদ]: জমা - 500 টাকা",
+      "id": "log-1793339091575",
+      "time": 1793339091575,
+      "user": "প্রত্যাশা অ্যাডমিন"
+    },
+    {
+      "actionBn": "নতুন লেনদেন এন্ট্রি",
+      "time": 1793338963350,
+      "action": "Created Transaction",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793338963350",
+      "details": "জমা [নগদ]: জমা - 300 টাকা"
+    },
+    {
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793338758326,
+      "details": "জমা [রকেট]: জমা - 120 টাকা",
+      "id": "log-1793338758326",
+      "action": "Created Transaction",
+      "actionBn": "নতুন লেনদেন এন্ট্রি"
+    },
+    {
+      "time": 1793337024966,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "actionBn": "নতুন লেনদেন এন্ট্রি",
+      "action": "Created Transaction",
+      "details": "জমা [বিকাশ]: জমা - 300 টাকা",
+      "id": "log-1793337024966"
+    },
+    {
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড",
+      "id": "log-1793335968242",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin",
+      "time": 1793335968242
+    },
+    {
+      "id": "log-1793334303694",
+      "action": "User Login",
+      "actionBn": "ভিজিটর মোড",
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin",
+      "time": 1793334303694
+    },
+    {
+      "details": "সম্মানিত ভিজিটর (01777877207)",
+      "user": "Admin",
+      "id": "log-1793333821228",
+      "time": 1793333821229,
+      "actionBn": "ভিজিটর মোড",
+      "action": "User Login"
+    },
+    {
+      "id": "log-1793333419314",
+      "actionBn": "রিসাইকেল বিনে প্রেরণ",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "action": "Moved to Trash",
+      "time": 1793333419314,
+      "details": "জমা - #765MDFZFA"
+    },
+    {
+      "time": 1793333418349,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "actionBn": "রিসাইকেল বিনে প্রেরণ",
+      "id": "log-1793333418349",
+      "action": "Moved to Trash",
+      "details": "জমা - #765M1MOM2"
+    },
+    {
+      "details": "জমা [নগদ]: জমা - 600 টাকা",
+      "time": 1793333413490,
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "actionBn": "নতুন লেনদেন এন্ট্রি",
+      "id": "log-1793333413490",
+      "action": "Created Transaction"
+    },
+    {
+      "details": "জমা [নগদ]: জমা - 600 টাকা",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "id": "log-1793333406652",
+      "time": 1793333406652,
+      "actionBn": "নতুন লেনদেন এন্ট্রি",
+      "action": "Created Transaction"
+    },
+    {
+      "id": "log-1793333399882",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "actionBn": "নতুন লেনদেন এন্ট্রি",
+      "action": "Created Transaction",
+      "time": 1793333399882,
+      "details": "জমা [নগদ]: জমা - 600 টাকা"
+    },
+    {
+      "actionBn": "পেমেন্ট চ্যানেল হালনাগাদ",
+      "id": "log-1793333209084",
+      "details": "মোট চ্যানেল সংখ্যা: 3",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793333209084,
+      "action": "Updated Channels"
+    },
+    {
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "action": "Updated Channels",
+      "time": 1793333186920,
+      "id": "log-1793333186920",
+      "actionBn": "পেমেন্ট চ্যানেল হালনাগাদ",
+      "details": "মোট চ্যানেল সংখ্যা: 2"
+    },
+    {
+      "id": "log-1793333164789",
+      "action": "Updated Channels",
+      "actionBn": "পেমেন্ট চ্যানেল হালনাগাদ",
+      "details": "মোট চ্যানেল সংখ্যা: 1",
+      "user": "প্রত্যাশা অ্যাডমিন",
+      "time": 1793333164789
+    }
+  ],
+  "transactions": [],
+  "serviceStatuses": null,
+  "quickHisabSummary": {
+    "totalExpense": 0,
+    "staffSalary": 0,
+    "totalIncome": 3813,
+    "lastUpdated": "2026-11-07T19:14:15.187Z",
+    "otherExpense": 0,
+    "netProfit": 3813
+  },
+  "quickHisabOwners": [],
+  "quickHisabMonthlyRecords": {
+    "2026-11": {
+      "lastUpdated": "2026-11-07T19:14:15.187Z",
+      "staffSalary": 0,
+      "totalIncome": 3813,
+      "otherExpense": 0,
+      "netProfit": 3813,
+      "totalExpense": 0
+    },
+    "2026-10": {
+      "totalExpense": 40000,
+      "netProfit": 80000,
+      "lastUpdated": "2026-11-05T07:22:29.692Z",
+      "otherExpense": 20000,
+      "totalIncome": 120000,
+      "staffSalary": 20000
+    }
+  }
+}

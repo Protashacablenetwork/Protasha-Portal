@@ -1,0 +1,8 @@
+{
+  "name": "প্রত্যাশা ক্যাবল নেটওয়ার্ক",
+  "description": "প্রত্যাশা স্মার্ট ক্যাবল নেটওয়ার্ক ও লেনদেন ব্যবস্থাপনা - মোবাইল ফিনান্সিয়াল সার্ভিসেস স্টাইল হিসাব খাতা",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,24 @@
+[
+  {
+    "id": "INV-124111",
+    "name": "Dual Band ONU",
+    "category": "onu",
+    "unit": "পিস",
+    "currentStock": null,
+    "minStockAlert": 2,
+    "unitCost": 1200,
+    "createdAt": "2026-11-06T13:35:24.112Z",
+    "updatedAt": "2026-11-06T13:35:24.112Z"
+  },
+  {
+    "id": "INV-179180",
+    "name": "4-Core Optic Fiber Cable",
+    "category": "cable",
+    "unit": "মিটার",
+    "currentStock": 500,
+    "minStockAlert": 100,
+    "unitCost": 15,
+    "createdAt": "2026-11-06T13:36:19.180Z",
+    "updatedAt": "2026-11-06T13:36:19.180Z"
+  }
+]
