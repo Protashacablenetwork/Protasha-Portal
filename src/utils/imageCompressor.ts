@@ -2,7 +2,7 @@
  * Compresses an image file client-side to a crisp, web-optimized JPEG data URL (~40-80KB).
  * This ensures:
  * 1. Fast uploads without payload limit errors.
- * 2. Safe storage in localStorage without hitting quota limits (which fail silently on 5MB+ files).
+ * 2. Safe storage in safeStorage without hitting quota limits (which fail silently on 5MB+ files).
  * 3. Bulletproof persistence across server restarts and Cloud Run container scale-downs.
  */
 export async function compressImage(

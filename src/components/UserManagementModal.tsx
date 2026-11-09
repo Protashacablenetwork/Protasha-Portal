@@ -22,6 +22,7 @@ import { db, safeSetDoc, safeDeleteDoc, isFirestoreQuotaExceeded } from '../util
 import { collection, getDocs, doc, query, where } from 'firebase/firestore';
 import { Language, AppUser, UserRole } from '../types';
 import { sounds } from '../utils/audio';
+import { safeStorage } from '../utils/safeStorage';
 import { compressImage } from '../utils/imageCompressor';
 import { savePersistentImage, getPersistentImage } from '../utils/imageStorage';
 import { getStoredUsers, saveStoredUser, deleteStoredUser, findStoredUserByPhone } from '../utils/userStorage';
@@ -212,7 +213,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       setUsers(prev => prev.map(u => u.id === editingUser.id ? updatedUser : u));
 
       // Sync local storage if active session matches
-      const saved = localStorage.getItem('protyasha_user');
+      const saved = safeStorage.getItem('protyasha_user');
       if (saved) {
         try {
           const cur = JSON.parse(saved);
@@ -224,11 +225,11 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
               avatarUrl: editAvatar || cur.avatarUrl,
               role: editRole
             };
-            localStorage.setItem('protyasha_user', JSON.stringify(updatedSession));
-            localStorage.setItem('protyasha_admin_name', editName.trim());
-            localStorage.setItem('protyasha_admin_phone', editPhone.trim());
+            safeStorage.setItem('protyasha_user', JSON.stringify(updatedSession));
+            safeStorage.setItem('protyasha_admin_name', editName.trim());
+            safeStorage.setItem('protyasha_admin_phone', editPhone.trim());
             if (editAvatar) {
-              localStorage.setItem('protyasha_admin_avatar', editAvatar);
+              safeStorage.setItem('protyasha_admin_avatar', editAvatar);
             }
           }
         } catch {}

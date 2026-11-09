@@ -1,12 +1,14 @@
 /**
- * Robust, client-side permanent image persistence utility using IndexedDB + localStorage.
+ * Robust, client-side permanent image persistence utility using IndexedDB + safeStorage.
  * 
  * Why this is necessary:
  * Cloud Run containers have ephemeral filesystems; files written to /public/uploads/
  * are permanently destroyed when the container scales to 0 after 10-15 minutes of inactivity.
- * By storing clean compressed data URLs (25KB - 45KB) in IndexedDB and localStorage,
+ * By storing clean compressed data URLs (25KB - 45KB) in IndexedDB and safeStorage,
  * images survive container scale-downs, browser restarts, and device reboots forever.
  */
+
+import { safeStorage } from './safeStorage';
 
 const DB_NAME = 'protyasha_storage_db';
 const DB_VERSION = 1;
@@ -45,16 +47,16 @@ function getDB(): Promise<IDBDatabase> {
 }
 
 /**
- * Save an image permanently to IndexedDB and mirror to localStorage
+ * Save an image permanently to IndexedDB and mirror to safeStorage
  */
 export async function savePersistentImage(key: string, dataUrl: string): Promise<void> {
   if (!key || !dataUrl) return;
 
-  // 1. Save to localStorage immediately for instant synchronous access
+  // 1. Save to safeStorage immediately for instant synchronous access
   try {
-    localStorage.setItem(`protyasha_img_${key}`, dataUrl);
+    safeStorage.setItem(`protyasha_img_${key}`, dataUrl);
   } catch (e) {
-    console.warn(`[ImageStorage] localStorage quota reached for ${key}:`, e);
+    console.warn(`[ImageStorage] safeStorage quota reached for ${key}:`, e);
   }
 
   // 2. Save to IndexedDB for unlimited, permanent storage
@@ -73,14 +75,14 @@ export async function savePersistentImage(key: string, dataUrl: string): Promise
 }
 
 /**
- * Retrieve an image from localStorage or IndexedDB
+ * Retrieve an image from safeStorage or IndexedDB
  */
 export async function getPersistentImage(key: string): Promise<string | null> {
   if (!key) return null;
 
-  // 1. Fast check from localStorage
+  // 1. Fast check from safeStorage
   try {
-    const local = localStorage.getItem(`protyasha_img_${key}`);
+    const local = safeStorage.getItem(`protyasha_img_${key}`);
     if (local && local.startsWith('data:image/')) {
       return local;
     }
@@ -96,9 +98,9 @@ export async function getPersistentImage(key: string): Promise<string | null> {
       req.onsuccess = () => {
         const result = req.result as string | undefined;
         if (result && result.startsWith('data:image/')) {
-          // Re-populate localStorage if possible
+          // Re-populate safeStorage if possible
           try {
-            localStorage.setItem(`protyasha_img_${key}`, result);
+            safeStorage.setItem(`protyasha_img_${key}`, result);
           } catch {}
           resolve(result);
         } else {
@@ -113,16 +115,16 @@ export async function getPersistentImage(key: string): Promise<string | null> {
 }
 
 /**
- * Get synchronous image from localStorage immediately
+ * Get synchronous image from safeStorage immediately
  */
 export function getSyncPersistentImage(key: string, fallbackKey?: string): string {
   if (typeof window === 'undefined') return '';
   try {
-    const direct = localStorage.getItem(`protyasha_img_${key}`);
+    const direct = safeStorage.getItem(`protyasha_img_${key}`);
     if (direct && direct.startsWith('data:image/')) return direct;
 
     if (fallbackKey) {
-      const fallback = localStorage.getItem(fallbackKey);
+      const fallback = safeStorage.getItem(fallbackKey);
       if (fallback && fallback.startsWith('data:image/')) return fallback;
     }
   } catch {}
@@ -130,12 +132,12 @@ export function getSyncPersistentImage(key: string, fallbackKey?: string): strin
 }
 
 /**
- * Delete an image permanently from IndexedDB and localStorage
+ * Delete an image permanently from IndexedDB and safeStorage
  */
 export async function deletePersistentImage(key: string): Promise<void> {
   if (!key) return;
   try {
-    localStorage.removeItem(`protyasha_img_${key}`);
+    safeStorage.removeItem(`protyasha_img_${key}`);
   } catch {}
 
   try {
@@ -152,7 +154,7 @@ export async function deletePersistentImage(key: string): Promise<void> {
 
 /**
  * Cleanly compress an image file to a lightweight, crystal-clear Data URL (15-30KB)
- * to safely store in Firestore (<1MB), IndexedDB, and localStorage without quota errors.
+ * to safely store in Firestore (<1MB), IndexedDB, and safeStorage without quota errors.
  */
 export function compressImageFile(file: File, maxDim = 300, quality = 0.85): Promise<string> {
   return new Promise((resolve) => {

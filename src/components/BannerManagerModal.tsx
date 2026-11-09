@@ -24,6 +24,7 @@ interface BannerManagerModalProps {
   lang: Language;
   onClose: () => void;
   onSaveBanners: (updated: BannerAd[]) => void;
+  onDeleteBanner?: (id: string) => void;
 }
 
 const MAX_BANNERS = 7;
@@ -34,14 +35,15 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
   banners,
   lang,
   onClose,
-  onSaveBanners
+  onSaveBanners,
+  onDeleteBanner
 }) => {
   if (!isOpen) return null;
 
   const [bannerList, setBannerList] = useState<BannerAd[]>(banners);
 
   React.useEffect(() => {
-    if (banners && banners.length > 0) {
+    if (Array.isArray(banners)) {
       setBannerList(banners);
     }
   }, [banners, isOpen]);
@@ -185,17 +187,17 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
 
   const handleDelete = (id: string) => {
     sounds.playTap();
-    if (bannerList.length <= 1) {
-      setValidationError(lang === 'bn' ? 'কমপক্ষে একটি বিজ্ঞাপন সক্রিয় থাকা প্রয়োজন' : 'At least one ad is required');
-      return;
-    }
     setDeleteConfirmId(id);
   };
 
   const confirmDelete = () => {
     if (!deleteConfirmId) return;
-    const updated = bannerList.filter(b => b.id !== deleteConfirmId);
+    const targetId = deleteConfirmId;
+    const updated = bannerList.filter(b => b.id !== targetId);
     setBannerList(updated);
+    if (onDeleteBanner) {
+      onDeleteBanner(targetId);
+    }
     onSaveBanners(updated);
     setDeleteConfirmId(null);
     sounds.playSuccess();

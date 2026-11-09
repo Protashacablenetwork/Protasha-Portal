@@ -85,7 +85,7 @@ export default function App() {
   const [currentMonthIndex, setCurrentMonthIndex] = useState(new Date().getMonth());
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear());
 
-  // User Session: Persistent from localStorage
+  // User Session: Persistent from safeStorage
   const [user, setUser] = useState<UserSession | null>(() => {
     const saved = safeStorage.getItem('protyasha_user');
     if (saved) {
@@ -279,13 +279,13 @@ export default function App() {
 
   // Notifications State (Sanitized to strictly remove demo notifications)
   const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
-    const saved = localStorage.getItem('protyasha_notifications');
+    const saved = safeStorage.getItem('protyasha_notifications');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         const cleaned = cleanDemoNotifications(parsed);
         if (cleaned.length !== parsed.length) {
-          localStorage.setItem('protyasha_notifications', JSON.stringify(cleaned));
+          safeStorage.setItem('protyasha_notifications', JSON.stringify(cleaned));
         }
         return cleaned;
       } catch {
@@ -301,7 +301,7 @@ export default function App() {
   const [readNotifIds, setReadNotifIds] = useState<string[]>(() => {
     try {
       const key = `protyasha_read_notifs_${user ? (user.id || user.phone || user.role) : 'visitor'}`;
-      const saved = localStorage.getItem(key);
+      const saved = safeStorage.getItem(key);
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
@@ -311,7 +311,7 @@ export default function App() {
   useEffect(() => {
     const key = `protyasha_read_notifs_${userKey}`;
     try {
-      const saved = localStorage.getItem(key);
+      const saved = safeStorage.getItem(key);
       setReadNotifIds(saved ? JSON.parse(saved) : []);
     } catch {
       setReadNotifIds([]);
@@ -325,7 +325,7 @@ export default function App() {
             setReadNotifIds(prev => {
               const combined = Array.from(new Set([...prev, ...data.readNotifications]));
               try {
-                localStorage.setItem(key, JSON.stringify(combined));
+                safeStorage.setItem(key, JSON.stringify(combined));
               } catch {}
               return combined;
             });
@@ -357,7 +357,7 @@ export default function App() {
           if (cloudStaff.length > 0) {
             setStaffAccounts(cloudStaff);
             try {
-              localStorage.setItem('protyasha_staff', JSON.stringify(cloudStaff));
+              safeStorage.setItem('protyasha_staff', JSON.stringify(cloudStaff));
             } catch {}
           }
         }
@@ -376,6 +376,108 @@ export default function App() {
     }
   }, []);
 
+  // Real-time synchronization for Banners (Ads) from dedicated collection & settings doc
+  useEffect(() => {
+    if (isFirestoreQuotaExceeded()) return;
+
+    let unsubDoc: (() => void) | null = null;
+    let unsubColl: (() => void) | null = null;
+
+    try {
+      unsubDoc = onSnapshot(doc(db, 'settings', 'app_banners'), (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data && Array.isArray(data.banners)) {
+            setBanners(data.banners);
+            try {
+              safeStorage.setItem('protyasha_banners', JSON.stringify(data.banners));
+            } catch {}
+          }
+        }
+      }, (err) => {
+        handleFirestoreError(err, OperationType.GET, 'settings/app_banners');
+      });
+
+      unsubColl = onSnapshot(collection(db, 'banners'), (snapshot) => {
+        if (!snapshot.empty) {
+          const cloudBanners: BannerAd[] = [];
+          snapshot.forEach(dSnap => {
+            const b = dSnap.data() as BannerAd;
+            if (b && b.id) {
+              cloudBanners.push(b);
+            }
+          });
+          if (cloudBanners.length > 0) {
+            setBanners(cloudBanners);
+            try {
+              safeStorage.setItem('protyasha_banners', JSON.stringify(cloudBanners));
+            } catch {}
+          }
+        }
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'banners');
+      });
+    } catch (e) {
+      console.warn('Banners Firestore listener setup notice:', e);
+    }
+
+    return () => {
+      if (unsubDoc) unsubDoc();
+      if (unsubColl) unsubColl();
+    };
+  }, []);
+
+  // Real-time synchronization for Quick Hisab Owners from dedicated collection & doc
+  useEffect(() => {
+    if (isFirestoreQuotaExceeded()) return;
+
+    let unsubDoc: (() => void) | null = null;
+    let unsubColl: (() => void) | null = null;
+
+    try {
+      unsubDoc = onSnapshot(doc(db, 'settings', 'quick_hisab_owners_data'), (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data && Array.isArray(data.owners) && data.owners.length > 0) {
+            setQuickHisabOwners(data.owners);
+            try {
+              safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(data.owners));
+            } catch {}
+          }
+        }
+      }, (err) => {
+        handleFirestoreError(err, OperationType.GET, 'settings/quick_hisab_owners_data');
+      });
+
+      unsubColl = onSnapshot(collection(db, 'quick_hisab_owners'), (snapshot) => {
+        if (!snapshot.empty) {
+          const cloudOwners: QuickHisabOwner[] = [];
+          snapshot.forEach(dSnap => {
+            const o = dSnap.data() as QuickHisabOwner;
+            if (o && o.name) {
+              cloudOwners.push({ ...o, id: o.id || dSnap.id });
+            }
+          });
+          if (cloudOwners.length > 0) {
+            setQuickHisabOwners(cloudOwners);
+            try {
+              safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(cloudOwners));
+            } catch {}
+          }
+        }
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'quick_hisab_owners');
+      });
+    } catch (e) {
+      console.warn('Quick Hisab Owners listener setup notice:', e);
+    }
+
+    return () => {
+      if (unsubDoc) unsubDoc();
+      if (unsubColl) unsubColl();
+    };
+  }, []);
+
   const isNotifReadForUser = useCallback((notif: NotificationItem) => {
     if (readNotifIds.includes(notif.id)) return true;
     if (userKey && Array.isArray(notif.readBy) && notif.readBy.includes(userKey)) return true;
@@ -387,7 +489,7 @@ export default function App() {
 
   // Footer Config
   const [footerConfig, setFooterConfig] = useState<FooterConfig>(() => {
-    const saved = localStorage.getItem('protyasha_footer');
+    const saved = safeStorage.getItem('protyasha_footer');
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -400,7 +502,7 @@ export default function App() {
 
   // Audit Logs
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
-    const saved = localStorage.getItem('protyasha_audit');
+    const saved = safeStorage.getItem('protyasha_audit');
     if (saved) {
       try {
         return JSON.parse(saved);
@@ -424,7 +526,7 @@ export default function App() {
     const syncImg = getSyncPersistentImage('avatar_admin', 'protyasha_admin_avatar');
     // If it's a broken /uploads/ URL, discard it
     if (syncImg && !syncImg.startsWith('/uploads/')) return syncImg;
-    const legacy = localStorage.getItem('protyasha_admin_avatar') || '';
+    const legacy = safeStorage.getItem('protyasha_admin_avatar') || '';
     return legacy && !legacy.startsWith('/uploads/') ? legacy : '';
   });
 
@@ -467,7 +569,7 @@ export default function App() {
     if (adminAvatar && adminAvatar.startsWith('data:image/')) {
       savePersistentImage('avatar_admin', adminAvatar);
       try {
-        localStorage.setItem('protyasha_admin_avatar', adminAvatar);
+        safeStorage.setItem('protyasha_admin_avatar', adminAvatar);
       } catch (e) {
         console.warn('LocalStorage limit reached for admin avatar:', e);
       }
@@ -578,12 +680,12 @@ export default function App() {
     setAdminAvatar(avatarUrl);
     if (avatarUrl && avatarUrl.startsWith('data:image/')) {
       savePersistentImage('avatar_admin', avatarUrl);
-      localStorage.setItem('protyasha_admin_avatar', avatarUrl);
+      safeStorage.setItem('protyasha_admin_avatar', avatarUrl);
     }
     if (user?.role === 'admin') {
       const updatedUser = { ...user, name, avatarUrl };
       setUser(updatedUser);
-      localStorage.setItem('protyasha_user', JSON.stringify(updatedUser));
+      safeStorage.setItem('protyasha_user', JSON.stringify(updatedUser));
     }
     syncToServer({ adminProfile: { name, phone: '01777877207', avatarUrl } });
   };
@@ -619,15 +721,15 @@ export default function App() {
         avatarUrl: updatedData.avatarUrl || user.avatarUrl
       };
       setUser(updatedSession);
-      localStorage.setItem('protyasha_user', JSON.stringify(updatedSession));
-      localStorage.setItem('protyasha_last_phone', updatedData.phone);
+      safeStorage.setItem('protyasha_user', JSON.stringify(updatedSession));
+      safeStorage.setItem('protyasha_last_phone', updatedData.phone);
 
       if (updatedData.avatarUrl) {
-        localStorage.setItem('protyasha_last_avatar', updatedData.avatarUrl);
+        safeStorage.setItem('protyasha_last_avatar', updatedData.avatarUrl);
         if (user.role === 'admin') {
           setAdminAvatar(updatedData.avatarUrl);
           savePersistentImage('avatar_admin', updatedData.avatarUrl);
-          localStorage.setItem('protyasha_admin_avatar', updatedData.avatarUrl);
+          safeStorage.setItem('protyasha_admin_avatar', updatedData.avatarUrl);
         } else if (user.id) {
           savePersistentImage(`avatar_user_${user.id}`, updatedData.avatarUrl);
         }
@@ -657,7 +759,7 @@ export default function App() {
 
       const updatedSession: UserSession = { ...user, ...updates };
       setUser(updatedSession);
-      localStorage.setItem('protyasha_user', JSON.stringify(updatedSession));
+      safeStorage.setItem('protyasha_user', JSON.stringify(updatedSession));
       return { success: true };
     } catch (e: any) {
       return { success: false, message: e.message };
@@ -737,7 +839,7 @@ export default function App() {
 
             if (newlyAdded) {
               try {
-                localStorage.setItem('protyasha_notifications', JSON.stringify(prayerNotifs));
+                safeStorage.setItem('protyasha_notifications', JSON.stringify(prayerNotifs));
               } catch (e) {
                 console.warn('LocalStorage limit reached for notifications:', e);
               }
@@ -1016,12 +1118,12 @@ export default function App() {
     } else {
       document.documentElement.classList.remove('dark');
     }
-    localStorage.setItem('protyasha_theme', theme);
+    safeStorage.setItem('protyasha_theme', theme);
   }, [theme]);
 
   useEffect(() => {
     document.body.setAttribute('data-lang', lang);
-    localStorage.setItem('protyasha_lang', lang);
+    safeStorage.setItem('protyasha_lang', lang);
   }, [lang]);
 
   // Real-time Cloud Synchronization with Google Cloud Firestore
@@ -1029,8 +1131,50 @@ export default function App() {
     if (isFirestoreQuotaExceeded()) return;
 
     let unsubscribe: (() => void) | null = null;
+    // 1. Listen to Transaction Collection directly for instant updates from all portals (AyByay, etc.)
+    let unsubscribeTransactions: (() => void) | null = null;
     try {
-      unsubscribe = onSnapshot(
+      const q = collection(db, 'transactions');
+      unsubscribeTransactions = onSnapshot(q, (snapshot) => {
+        const cloudTxs: Transaction[] = [];
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data() as Transaction;
+          if (data && data.id) {
+            cloudTxs.push(data);
+          }
+        });
+        
+        // Update local state with latest collection data
+        setTransactions(cloudTxs);
+        
+        // Compute totals from live collection
+        const income = cloudTxs.filter(t => t.type === 'income' && !t.isDeleted).reduce((sum, t) => sum + (t.amount || 0), 0);
+        const expense = cloudTxs.filter(t => t.type === 'expense' && !t.isDeleted).reduce((sum, t) => sum + (t.amount || 0), 0);
+        
+        setServerTotals({
+          income,
+          expense,
+          balance: income - expense,
+          totalCount: cloudTxs.length
+        });
+        setHasMoreTransactions(cloudTxs.length > 50);
+        
+        // Sync to safeStorage
+        try {
+          safeStorage.setItem('protyasha_transactions', JSON.stringify(cloudTxs));
+          safeStorage.setItem('isp_cache_txns', JSON.stringify(cloudTxs));
+        } catch {}
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'transactions');
+      });
+    } catch (e) {
+      console.warn('Transaction collection listener error:', e);
+    }
+
+    // 2. Listen to Server Data for app settings and other configurations
+    let unsubscribeServerData: (() => void) | null = null;
+    try {
+      unsubscribeServerData = onSnapshot(
         doc(db, 'settings', 'server_data'),
         (snapshot) => {
           if (!snapshot.exists()) return;
@@ -1038,9 +1182,8 @@ export default function App() {
           if (!cloudDoc || !cloudDoc.data) return;
           const d = cloudDoc.data;
 
-          if (Array.isArray(d.transactions) && d.transactions.length > 0) {
-            setTransactions(d.transactions);
-          }
+          // Note: Transactions are now handled by direct collection listener above
+          
           if (Array.isArray(d.banners) && d.banners.length > 0) {
             setBanners(d.banners);
           }
@@ -1059,7 +1202,7 @@ export default function App() {
           if (Array.isArray(d.quickHisabOwners) && d.quickHisabOwners.length > 0) {
             setQuickHisabOwners(d.quickHisabOwners);
             try {
-              localStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(d.quickHisabOwners));
+              safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(d.quickHisabOwners));
             } catch {}
           }
           if (d.serviceStatuses && typeof d.serviceStatuses === 'object') {
@@ -1067,7 +1210,7 @@ export default function App() {
               const merged: Record<string, ServiceStatusConfig> = { ...prev };
               Object.keys(d.serviceStatuses).forEach(key => {
                 const incoming = d.serviceStatuses[key];
-                const fallbackLogo = key === 'ayByay' ? 'https://i.ibb.co/0jZfwH1s/file-0000000079b4821185e81949d65e68d5.png' : key === 'billManager' ? 'https://bill-manager.ai.studio/logo.jpg' : '';
+                const fallbackLogo = key === 'ayByay' ? 'https://i.ibb.co/0jZfwH1s/file-0000000079b4821185e81949d65e68d5.png' : key === 'billManager' ? 'https://bill-manager-180526203883.asia-southeast1.run.app/logo.jpg' : '';
                 merged[key] = {
                   ...merged[key],
                   ...incoming,
@@ -1075,7 +1218,7 @@ export default function App() {
                 };
               });
               try {
-                localStorage.setItem('protyasha_service_statuses', JSON.stringify(merged));
+                safeStorage.setItem('protyasha_service_statuses', JSON.stringify(merged));
               } catch {}
               return merged;
             });
@@ -1088,14 +1231,28 @@ export default function App() {
         },
         (error) => {
           const wasQuota = handleFirestoreError(error, OperationType.GET, 'settings/server_data');
-          if (wasQuota && unsubscribe) {
-            try { unsubscribe(); } catch {}
+          if (wasQuota && unsubscribeServerData) {
+            try { unsubscribeServerData(); } catch {}
           }
         }
       );
+    } catch (e) {
+      console.warn('Server data listener error:', e);
+    }
 
-      // Separate listener for service statuses to prevent sync conflicts
-      const unsubServices = onSnapshot(
+    return () => {
+      if (unsubscribeTransactions) unsubscribeTransactions();
+      if (unsubscribeServerData) unsubscribeServerData();
+    };
+  }, [userKey]);
+
+  // Separate listener for service statuses to prevent sync conflicts
+  useEffect(() => {
+    if (isFirestoreQuotaExceeded()) return;
+    
+    let unsubServices: (() => void) | null = null;
+    try {
+      unsubServices = onSnapshot(
         doc(db, 'settings', 'service_control'),
         (snapshot) => {
           if (!snapshot.exists()) return;
@@ -1114,7 +1271,7 @@ export default function App() {
                 };
               });
               try {
-                localStorage.setItem('protyasha_service_statuses', JSON.stringify(merged));
+                safeStorage.setItem('protyasha_service_statuses', JSON.stringify(merged));
               } catch {}
               return merged;
             });
@@ -1127,9 +1284,12 @@ export default function App() {
           }
         }
       );
+    } catch {}
 
-      // 3. Dedicated Notification Listener for instant reliable delivery
-      const unsubNotifs = onSnapshot(
+    // 3. Dedicated Notification Listener for instant reliable delivery
+    let unsubNotifs: (() => void) | null = null;
+    try {
+      unsubNotifs = onSnapshot(
         doc(db, 'settings', 'broadcast_notifications'),
         (snapshot) => {
           if (!snapshot.exists()) return;
@@ -1153,21 +1313,20 @@ export default function App() {
           handleFirestoreError(err, OperationType.GET, 'settings/broadcast_notifications');
         }
       );
-
-      return () => {
-        if (unsubscribe) unsubscribe();
-        unsubServices();
-        unsubNotifs();
-      };
     } catch (e) {
-      console.warn('Real-time Firestore listener init notice:', e);
+      console.warn('Broadcast notification listener error:', e);
     }
+
+    return () => {
+      if (unsubServices) unsubServices();
+      if (unsubNotifs) unsubNotifs();
+    };
   }, []);
 
   // Sync state to local storage with safety check
   useEffect(() => {
     try {
-      localStorage.setItem('protyasha_transactions', JSON.stringify(transactions));
+      safeStorage.setItem('protyasha_transactions', JSON.stringify(transactions));
     } catch (e) {
       console.warn('LocalStorage limit reached for transactions:', e);
     }
@@ -1175,7 +1334,7 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('protyasha_staff', JSON.stringify(staffAccounts));
+      safeStorage.setItem('protyasha_staff', JSON.stringify(staffAccounts));
     } catch (e) {
       console.warn('LocalStorage limit reached for staffAccounts:', e);
     }
@@ -1183,7 +1342,7 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('protyasha_channels', JSON.stringify(channels));
+      safeStorage.setItem('protyasha_channels', JSON.stringify(channels));
     } catch (e) {
       console.warn('LocalStorage limit reached for channels:', e);
     }
@@ -1192,7 +1351,7 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('protyasha_banners', JSON.stringify(banners));
+      safeStorage.setItem('protyasha_banners', JSON.stringify(banners));
     } catch (e) {
       console.warn('LocalStorage limit reached for banners:', e);
     }
@@ -1200,7 +1359,7 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('protyasha_notifications', JSON.stringify(notifications));
+      safeStorage.setItem('protyasha_notifications', JSON.stringify(notifications));
     } catch (e) {
       console.warn('LocalStorage limit reached for notifications:', e);
     }
@@ -1208,7 +1367,7 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('protyasha_footer', JSON.stringify(footerConfig));
+      safeStorage.setItem('protyasha_footer', JSON.stringify(footerConfig));
     } catch (e) {
       console.warn('LocalStorage limit reached for footer:', e);
     }
@@ -1216,7 +1375,7 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem('protyasha_audit', JSON.stringify(auditLogs));
+      safeStorage.setItem('protyasha_audit', JSON.stringify(auditLogs));
     } catch (e) {
       console.warn('LocalStorage limit reached for audit logs:', e);
     }
@@ -1225,26 +1384,24 @@ export default function App() {
   useEffect(() => {
     if (user) {
       try {
-        localStorage.setItem('protyasha_user', JSON.stringify(user));
+        safeStorage.setItem('protyasha_user', JSON.stringify(user));
       } catch (e) {
         console.warn('LocalStorage limit reached for user session:', e);
       }
     } else {
-      localStorage.removeItem('protyasha_user');
+      safeStorage.removeItem('protyasha_user');
     }
   }, [user]);
 
-  // Optimized balance calculation: use server-side total if transactions are truncated
+  // Accurate balance calculation: always strictly reflects active non-deleted transactions
   const totalBalance = useMemo(() => {
-    if (serverTotals && hasMoreTransactions) {
-      return serverTotals.balance;
-    }
     return transactions
-      .filter(t => !t.isDeleted)
+      .filter(t => !t.isDeleted && (t as any).isDeleted !== 'true')
       .reduce((acc, curr) => {
-        return curr.type === 'income' ? acc + curr.amount : acc - curr.amount;
+        const amt = Number(curr.amount) || 0;
+        return curr.type === 'income' ? acc + amt : acc - amt;
       }, 0);
-  }, [transactions, serverTotals, hasMoreTransactions]);
+  }, [transactions]);
 
   const userDistrictSlug = (currentDistrict?.nameEn || 'dhaka').toLowerCase().replace(/[^a-z0-9]/g, '');
 
@@ -1367,7 +1524,7 @@ export default function App() {
     const newRead = Array.from(new Set([...readNotifIds, id]));
     setReadNotifIds(newRead);
     try {
-      localStorage.setItem(key, JSON.stringify(newRead));
+      safeStorage.setItem(key, JSON.stringify(newRead));
     } catch {}
 
     if (user?.id) {
@@ -1395,7 +1552,7 @@ export default function App() {
     const newRead = Array.from(new Set([...readNotifIds, ...allIds]));
     setReadNotifIds(newRead);
     try {
-      localStorage.setItem(key, JSON.stringify(newRead));
+      safeStorage.setItem(key, JSON.stringify(newRead));
     } catch {}
 
     if (user?.id) {
@@ -1617,16 +1774,16 @@ export default function App() {
 
   const handleLoginSuccess = (loggedInUser: UserSession) => {
     setUser(loggedInUser);
-    localStorage.setItem('protyasha_user', JSON.stringify(loggedInUser));
+    safeStorage.setItem('protyasha_user', JSON.stringify(loggedInUser));
     if (loggedInUser.role !== 'visitor') {
       sessionStorage.setItem('protyasha_session_active', 'true');
     } else {
       sessionStorage.setItem('protyasha_session_active', 'false');
     }
     if (loggedInUser.avatarUrl) {
-      localStorage.setItem('protyasha_last_avatar', loggedInUser.avatarUrl);
+      safeStorage.setItem('protyasha_last_avatar', loggedInUser.avatarUrl);
     } else {
-      localStorage.removeItem('protyasha_last_avatar');
+      safeStorage.removeItem('protyasha_last_avatar');
     }
     setIsLoginOpen(false);
     setIsProfileOpen(false);
@@ -1641,9 +1798,9 @@ export default function App() {
   const handleLogout = () => {
     sounds.playTap();
     if (user?.avatarUrl && user.role !== 'visitor') {
-      localStorage.setItem('protyasha_last_avatar', user.avatarUrl);
+      safeStorage.setItem('protyasha_last_avatar', user.avatarUrl);
     }
-    localStorage.removeItem('protyasha_user');
+    safeStorage.removeItem('protyasha_user');
     sessionStorage.removeItem('protyasha_session_active');
     setUser(null);
     setActiveTab('home');
@@ -1692,14 +1849,148 @@ export default function App() {
   const handleSaveQuickHisabOwners = (updatedOwners: QuickHisabOwner[]) => {
     setQuickHisabOwners(updatedOwners);
     try {
-      localStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(updatedOwners));
+      safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(updatedOwners));
     } catch {}
 
-    syncServerData({ quickHisabOwners: updatedOwners });
+    // Dedicated Firestore snapshot storage
+    safeSetDoc(doc(db, 'settings', 'quick_hisab_owners_data'), {
+      owners: updatedOwners,
+      updatedAt: new Date().toISOString()
+    }).catch(() => {});
+
+    // Save individual owner documents in dedicated 'quick_hisab_owners' collection
+    updatedOwners.forEach(o => {
+      safeSetDoc(doc(db, 'quick_hisab_owners', String(o.id)), o).catch(() => {});
+    });
 
     syncServerData({ quickHisabOwners: updatedOwners });
-
     logAction('Updated Owners', 'মালিকানা তালিকা হালনাগাদ', `মোট অংশীদার: ${updatedOwners.length}`);
+  };
+
+  const handleSaveBanners = (updated: BannerAd[]) => {
+    setBanners(updated);
+    try {
+      safeStorage.setItem('protyasha_banners', JSON.stringify(updated));
+    } catch {}
+
+    // Dedicated Firestore snapshot document
+    safeSetDoc(doc(db, 'settings', 'app_banners'), {
+      banners: updated,
+      updatedAt: new Date().toISOString()
+    }).catch(() => {});
+
+    // Save each individual banner to collection 'banners'
+    updated.forEach(b => {
+      safeSetDoc(doc(db, 'banners', String(b.id)), b).catch(() => {});
+    });
+
+    syncServerData({ banners: updated });
+    logAction('Updated Banners', 'বিজ্ঞাপন ব্যানার পরিবর্তন', `সক্রিয় বিজ্ঞাপন সংখ্যা: ${updated.length}`);
+  };
+
+  const handleDeleteBanner = (bannerId: string) => {
+    const updated = banners.filter(b => String(b.id) !== String(bannerId));
+    setBanners(updated);
+    try {
+      safeStorage.setItem('protyasha_banners', JSON.stringify(updated));
+    } catch {}
+
+    // Dedicated deletion from 'banners' collection
+    safeDeleteDoc(doc(db, 'banners', String(bannerId))).catch(() => {});
+
+    // Update dedicated snapshot document
+    safeSetDoc(doc(db, 'settings', 'app_banners'), {
+      banners: updated,
+      updatedAt: new Date().toISOString()
+    }).catch(() => {});
+
+    syncServerData({ banners: updated });
+    logAction('Deleted Banner', 'বিজ্ঞাপন ব্যানার মুছে ফেলা হয়েছে', `ব্যানার আইডি: ${bannerId}`);
+  };
+
+  const handleSaveStaffAccounts = (updated: StaffAccount[]) => {
+    const cleanUpdated: StaffAccount[] = JSON.parse(JSON.stringify(updated));
+    setStaffAccounts(cleanUpdated);
+    try {
+      safeStorage.setItem('protyasha_staff', JSON.stringify(cleanUpdated));
+    } catch (e) {
+      console.warn('LocalStorage limit reached for staffAccounts:', e);
+    }
+
+    // Save each staff in dedicated 'staff' collection in staffDb
+    cleanUpdated.forEach(staff => {
+      safeSetDoc(doc(staffDb, 'staff', String(staff.id)), staff).catch(() => {});
+    });
+
+    // Dedicated snapshot storage in staffDb
+    safeSetDoc(doc(staffDb, 'settings', 'staff_accounts_data'), {
+      staff: cleanUpdated,
+      updatedAt: new Date().toISOString()
+    }).catch(() => {});
+
+    syncServerData({ staffAccounts: cleanUpdated });
+    logAction('Updated Staff Accounts', 'স্টাফ হিসাব হালনাগাদ', `মোট স্টাফ: ${cleanUpdated.length}`);
+  };
+
+  const handleDeleteStaffAccount = (staffId: string) => {
+    const remaining = staffAccounts.filter(s => String(s.id) !== String(staffId));
+    setStaffAccounts(remaining);
+    try {
+      safeStorage.setItem('protyasha_staff', JSON.stringify(remaining));
+    } catch {}
+
+    // Delete document from dedicated 'staff' collection in staffDb
+    safeDeleteDoc(doc(staffDb, 'staff', String(staffId))).catch((err) => {
+      handleFirestoreError(err, OperationType.DELETE, `staff/${staffId}`);
+    });
+
+    // Update dedicated snapshot storage
+    safeSetDoc(doc(staffDb, 'settings', 'staff_accounts_data'), {
+      staff: remaining,
+      updatedAt: new Date().toISOString()
+    }).catch(() => {});
+
+    syncServerData({ staffAccounts: remaining });
+    logAction('Deleted Staff Account', 'স্টাফ অ্যাকাউন্ট মোছা হয়েছে', `স্টাফ আইডি: ${staffId}`);
+  };
+
+  const handleDeleteStaffTransaction = (staffId: string, txId: string) => {
+    setStaffAccounts(prev => {
+      const updated = prev.map(staff => {
+        if (staff.id === staffId) {
+          const txs = staff.transactions || [];
+          const updatedTxs = txs.filter(t => {
+            const tid = String(t.id || '').trim();
+            const targetId = String(txId || '').trim();
+            if (tid && targetId && tid === targetId) return false;
+            if (!tid && String(t.created) === targetId) return false;
+            return true;
+          });
+          const newTotalDue = updatedTxs.filter(t => t.type === 'due').reduce((sum, t) => sum + (t.amount || 0), 0);
+          const newTotalCollected = updatedTxs.filter(t => t.type === 'collection').reduce((sum, t) => sum + (t.amount || 0), 0);
+          const newRemaining = newTotalDue - newTotalCollected;
+          const updatedStaff = {
+            ...staff,
+            totalDue: newTotalDue,
+            totalCollected: newTotalCollected,
+            remainingDue: newRemaining,
+            transactions: updatedTxs
+          };
+          safeSetDoc(doc(staffDb, 'staff', staffId), updatedStaff).catch(() => {});
+          return updatedStaff;
+        }
+        return staff;
+      });
+      try {
+        safeStorage.setItem('protyasha_staff', JSON.stringify(updated));
+      } catch {}
+      safeSetDoc(doc(staffDb, 'settings', 'staff_accounts_data'), {
+        staff: updated,
+        updatedAt: new Date().toISOString()
+      }).catch(() => {});
+      syncServerData({ staffAccounts: updated });
+      return updated;
+    });
   };
 
   return (
@@ -1859,13 +2150,7 @@ export default function App() {
                       openLoginView();
                     }
                   }}
-                  onSaveBanners={(updated) => {
-                    setBanners(updated);
-                    try {
-                      localStorage.setItem('protyasha_banners', JSON.stringify(updated));
-                    } catch {}
-                    syncServerData({ banners: updated });
-                  }}
+                  onSaveBanners={handleSaveBanners}
                 />
 
                 {/* Payment Channels & Control Panel (বিকাশ, নগদ, ব্যাংক, রকেট, ক্যাশ + স্টাফ কালেকশন / কোম্পানি পাওনা) */}
@@ -2146,11 +2431,8 @@ export default function App() {
             banners={banners}
             lang={lang}
             onClose={() => setIsBannerManagerOpen(false)}
-            onSaveBanners={(updated) => {
-              setBanners(updated);
-              syncServerData({ banners: updated });
-              logAction('Updated Banners', 'বিজ্ঞাপন ব্যানার পরিবর্তন', `সক্রিয় বিজ্ঞাপন সংখ্যা: ${updated.length}`);
-            }}
+            onSaveBanners={handleSaveBanners}
+            onDeleteBanner={handleDeleteBanner}
           />
         )}
 
@@ -2164,7 +2446,7 @@ export default function App() {
             onSaveChannels={(updated) => {
               setChannels(updated);
               try {
-                localStorage.setItem('protyasha_channels', JSON.stringify(updated));
+                safeStorage.setItem('protyasha_channels', JSON.stringify(updated));
               } catch (e) {
                 console.warn('LocalStorage limit reached for channels:', e);
               }
@@ -2206,7 +2488,7 @@ export default function App() {
             onSaveServiceStatuses={(updated) => {
               setServiceStatuses(updated);
               try {
-                localStorage.setItem('protyasha_service_statuses', JSON.stringify(updated));
+                safeStorage.setItem('protyasha_service_statuses', JSON.stringify(updated));
               } catch {}
 
               // Persist logos to IndexedDB for each service (only save if logo exists, never delete inadvertently)
@@ -2238,61 +2520,9 @@ export default function App() {
           lang={lang}
           user={user}
           onClose={() => setIsStaffManagerOpen(false)}
-          onSaveStaffAccounts={(updated) => {
-            const cleanUpdated: StaffAccount[] = JSON.parse(JSON.stringify(updated));
-            setStaffAccounts(cleanUpdated);
-            try {
-              localStorage.setItem('protyasha_staff', JSON.stringify(cleanUpdated));
-            } catch (e) {
-              console.warn('LocalStorage limit reached for staffAccounts:', e);
-            }
-
-            // Global snapshot sync saves all staff accounts in 1 single Firestore write
-            syncServerData({ staffAccounts: cleanUpdated });
-
-            // Backend Server persistence
-            syncServerData({ staffAccounts: cleanUpdated });
-          }}
-          onDeleteStaffAccount={(staffId) => {
-            safeDeleteDoc(doc(staffDb, 'staff', staffId)).catch((err) => {
-              handleFirestoreError(err, OperationType.DELETE, `staff/${staffId}`);
-            });
-
-          }}
-          onDeleteStaffTransaction={(staffId, txId) => {
-            setStaffAccounts(prev => {
-              const updated = prev.map(staff => {
-                if (staff.id === staffId) {
-                  const txs = staff.transactions || [];
-                  const updatedTxs = txs.filter(t => {
-                    const tid = String(t.id || '').trim();
-                    const targetId = String(txId || '').trim();
-                    if (tid && targetId && tid === targetId) return false;
-                    if (!tid && String(t.created) === targetId) return false;
-                    return true;
-                  });
-                  const newTotalDue = updatedTxs.filter(t => t.type === 'due').reduce((sum, t) => sum + (t.amount || 0), 0);
-                  const newTotalCollected = updatedTxs.filter(t => t.type === 'collection').reduce((sum, t) => sum + (t.amount || 0), 0);
-                  const newRemaining = newTotalDue - newTotalCollected;
-                  const updatedStaff = {
-                    ...staff,
-                    totalDue: newTotalDue,
-                    totalCollected: newTotalCollected,
-                    remainingDue: newRemaining,
-                    transactions: updatedTxs
-                  };
-                  safeSetDoc(doc(staffDb, 'staff', staffId), updatedStaff).catch(() => {});
-                  return updatedStaff;
-                }
-                return staff;
-              });
-              try {
-                localStorage.setItem('protyasha_staff', JSON.stringify(updated));
-              } catch {}
-              return updated;
-            });
-
-          }}
+          onSaveStaffAccounts={handleSaveStaffAccounts}
+          onDeleteStaffAccount={handleDeleteStaffAccount}
+          onDeleteStaffTransaction={handleDeleteStaffTransaction}
           onLogAction={logAction}
         />
 
@@ -2464,12 +2694,12 @@ export default function App() {
           onClose={() => setIsFooterSettingsOpen(false)}
           onSave={(newCfg) => {
             setFooterConfig(newCfg);
-            localStorage.setItem('protyasha_footer_config', JSON.stringify(newCfg));
+            safeStorage.setItem('protyasha_footer_config', JSON.stringify(newCfg));
             syncToServer({ footerConfig: newCfg });
           }}
           onSaveBanners={(newBanners) => {
             setBanners(newBanners);
-            localStorage.setItem('protyasha_banners', JSON.stringify(newBanners));
+            safeStorage.setItem('protyasha_banners', JSON.stringify(newBanners));
             syncToServer({ banners: newBanners });
             logAction('Updated Offers', 'অফার ও বিজ্ঞাপন পরিবর্তন', `মোট অফার: ${newBanners.length}`);
           }}
@@ -2612,17 +2842,7 @@ export default function App() {
               <AyByayPortal 
                 onExit={() => setActivePortal(null)}
                 staffAccounts={staffAccounts}
-                onSaveStaffAccounts={(updated) => {
-                  const cleanUpdated: StaffAccount[] = JSON.parse(JSON.stringify(updated));
-                  setStaffAccounts(cleanUpdated);
-                  try {
-                    localStorage.setItem('protyasha_staff', JSON.stringify(cleanUpdated));
-                  } catch (e) {
-                    console.warn('LocalStorage limit reached for staffAccounts:', e);
-                  }
-                  syncServerData({ staffAccounts: cleanUpdated });
-                  syncToServer({ staffAccounts: cleanUpdated });
-                }}
+                onSaveStaffAccounts={handleSaveStaffAccounts}
                 quickHisabOwners={quickHisabOwners}
                 onOpenDriveBackup={() => {
                   setIsDriveBackupOpen(true);
@@ -2632,16 +2852,6 @@ export default function App() {
                 onAdminLogin={handleAyByayAdminLogin}
                 onAdminLogout={handleAyByayAdminLogout}
               />
-            ) : activePortal === 'bill-manager' ? (
-              <div className="relative w-full h-full flex flex-col bg-slate-950">
-                {/* Full-screen Cloud Run App Iframe without any header or new tab buttons */}
-                <iframe
-                  src="https://bill-manager-180526203883.asia-southeast1.run.app/#dashboard"
-                  title="Bill Management Pro Dashboard"
-                  className="w-full flex-1 border-none bg-slate-950"
-                  allow="clipboard-read; clipboard-write; fullscreen; camera; microphone; geolocation"
-                />
-              </div>
             ) : (
               <BillManagerPortal onExit={() => setActivePortal(null)} />
             )}

@@ -1,6 +1,7 @@
 import { NotificationItem, Language } from '../types';
 import { WeatherData } from './weatherService';
 import { toBengaliNumber } from './formatters';
+import { safeStorage } from './safeStorage';
 
 /**
  * 6 Time slots for daily scheduled weather broadcasts
@@ -242,11 +243,11 @@ export function checkAndGenerateWeatherNotifications(
     (weather.conditionType === 'rain' && weather.rainProbability >= 50) ||
     (weather.windSpeed >= 25);
 
-  const alreadySentAlert = localStorage.getItem(alertKey);
+  const alreadySentAlert = safeStorage.getItem(alertKey);
 
   if (isSevereWeather && !alreadySentAlert) {
     const alertNotif = buildWeatherNotification(weather, slot, true, false);
-    localStorage.setItem(alertKey, '1');
+    safeStorage.setItem(alertKey, '1');
     return {
       updatedNotifications: [alertNotif, ...currentNotifications],
       newlyAdded: alertNotif
@@ -254,7 +255,7 @@ export function checkAndGenerateWeatherNotifications(
   }
 
   // 2. Check regular daily slot notifications per city
-  const alreadySentSlot = localStorage.getItem(slotKey);
+  const alreadySentSlot = safeStorage.getItem(slotKey);
   const expectedId = `weather-slot-${slot.id}-${citySlug}-${todayStr}`;
   const existsInList = currentNotifications.some(n => n.id === expectedId);
 
@@ -262,7 +263,7 @@ export function checkAndGenerateWeatherNotifications(
     const slotNotif = buildWeatherNotification(weather, slot, false, false);
     // Ensure the ID contains the citySlug
     slotNotif.id = expectedId;
-    localStorage.setItem(slotKey, '1');
+    safeStorage.setItem(slotKey, '1');
     return {
       updatedNotifications: [slotNotif, ...currentNotifications],
       newlyAdded: slotNotif

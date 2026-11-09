@@ -21,7 +21,10 @@ import {
   Shield,
   Upload,
   UserCheck,
-  Calendar
+  Calendar,
+  Phone,
+  MapPin,
+  FileText
 } from 'lucide-react';
 import { Language, StaffAccount, UserSession, QuickHisabOwner } from '../types';
 import { initialQuickHisabOwners } from '../data/initialData';
@@ -30,8 +33,9 @@ import { sounds } from '../utils/audio';
 import { compressImageFile } from '../utils/imageStorage';
 import confetti from 'canvas-confetti';
 import { isIncomeTransaction, isExpenseTransaction, parseNumber, getTransactionMonth, getMonthBengaliName } from '../portals/ayByay/data/categories';
-import { db, staffDb, safeSetDoc, isFirestoreQuotaExceeded, handleFirestoreError, OperationType } from '../utils/firebase';
+import { db, staffDb, safeSetDoc, safeDeleteDoc, isFirestoreQuotaExceeded, handleFirestoreError, OperationType } from '../utils/firebase';
 import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
+import { safeStorage } from '../utils/safeStorage';
 
 interface QuickHisabModalProps {
   isOpen: boolean;
@@ -83,7 +87,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
   // Real-time cached Ay-Byay data state
   const [ayByayTxns, setAyByayTxns] = useState<any[]>(() => {
     try {
-      const raw = localStorage.getItem('isp_cache_txns');
+      const raw = safeStorage.getItem('isp_cache_txns');
       return raw ? JSON.parse(raw) : [];
     } catch {
       return [];
@@ -92,7 +96,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
 
   const [ayByaySalaries, setAyByaySalaries] = useState<any[]>(() => {
     try {
-      const raw = localStorage.getItem('isp_cache_salaries');
+      const raw = safeStorage.getItem('isp_cache_salaries');
       return raw ? JSON.parse(raw) : [];
     } catch {
       return [];
@@ -144,9 +148,9 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
       };
     }
 
-    // Check main ISP transactions if ay_byay_transactions is empty for this month
+    // Check main ISP transactions if collection is empty for this month
     try {
-      const rawMain = localStorage.getItem('protyasha_transactions');
+      const rawMain = safeStorage.getItem('protyasha_transactions');
       if (rawMain) {
         const mainTx = JSON.parse(rawMain);
         if (Array.isArray(mainTx) && mainTx.length > 0) {
@@ -190,7 +194,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
     // Fallback baseline for current month
     if (monthKey === currentMonthKey) {
       try {
-        const saved = localStorage.getItem('protyasha_cached_summary');
+        const saved = safeStorage.getItem('protyasha_cached_summary');
         if (saved) {
           const parsed = JSON.parse(saved);
           if (parsed && typeof parsed.totalIncome === 'number') {
@@ -216,8 +220,8 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
   // 1. Reliable instant Summary state initialized from current live data
   const [summary, setSummary] = useState<SummaryData>(() => {
     try {
-      const rawTxns = localStorage.getItem('isp_cache_txns');
-      const rawSal = localStorage.getItem('isp_cache_salaries');
+      const rawTxns = safeStorage.getItem('isp_cache_txns');
+      const rawSal = safeStorage.getItem('isp_cache_salaries');
       const tx = rawTxns ? JSON.parse(rawTxns) : [];
       const sa = rawSal ? JSON.parse(rawSal) : [];
       return calculateMonthStats(currentMonthKey, tx, sa);
@@ -229,12 +233,12 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // 2. Owners state (Synced with props, localStorage, and defaults)
+  // 2. Owners state (Synced with props, safeStorage, and defaults)
   const [owners, setOwners] = useState<QuickHisabOwner[]>(() => {
     if (propOwners && Array.isArray(propOwners) && propOwners.length > 0) {
       return propOwners;
     }
-    const saved = localStorage.getItem('protyasha_quick_hisab_owners');
+    const saved = safeStorage.getItem('protyasha_quick_hisab_owners');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -257,6 +261,9 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingOwner, setEditingOwner] = useState<QuickHisabOwner | null>(null);
   const [formName, setFormName] = useState('');
+  const [formPhone, setFormPhone] = useState('');
+  const [formAddress, setFormAddress] = useState('');
+  const [formNotes, setFormNotes] = useState('');
   const [formShareUnits, setFormShareUnits] = useState<number>(1.0);
   const [formAvatarUrl, setFormAvatarUrl] = useState('');
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
@@ -302,7 +309,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
 
     setSummary(updatedSummary);
     try {
-      localStorage.setItem('protyasha_cached_summary', JSON.stringify(updatedSummary));
+      safeStorage.setItem('protyasha_cached_summary', JSON.stringify(updatedSummary));
     } catch {}
 
     try {
@@ -340,7 +347,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
     let unsubSals: (() => void) | null = null;
 
     try {
-      const qTxns = collection(staffDb, 'ay_byay_transactions');
+      const qTxns = collection(staffDb, 'transactions');
       unsubTxns = onSnapshot(qTxns, (snapshot) => {
         const cloudTx: any[] = [];
         snapshot.forEach(docSnap => {
@@ -348,12 +355,12 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
           if (t && (t.id || docSnap.id)) cloudTx.push({ ...t, id: t.id || docSnap.id });
         });
         setAyByayTxns(cloudTx);
-        try { localStorage.setItem('isp_cache_txns', JSON.stringify(cloudTx)); } catch {}
+        try { safeStorage.setItem('isp_cache_txns', JSON.stringify(cloudTx)); } catch {}
       }, (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'ay_byay_transactions');
+        handleFirestoreError(err, OperationType.LIST, 'transactions');
       });
     } catch (e) {
-      console.warn('Realtime ay_byay_transactions subscription error:', e);
+      console.warn('Realtime transactions subscription error:', e);
     }
 
     try {
@@ -365,7 +372,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
           if (s) cloudSals.push(s);
         });
         setAyByaySalaries(cloudSals);
-        try { localStorage.setItem('isp_cache_salaries', JSON.stringify(cloudSals)); } catch {}
+        try { safeStorage.setItem('isp_cache_salaries', JSON.stringify(cloudSals)); } catch {}
       }, (err) => {
         handleFirestoreError(err, OperationType.LIST, 'ay_byay_salaries');
       });
@@ -379,6 +386,41 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
     };
   }, [isOpen]);
 
+  // Dedicated real-time listener for Quick Hisab Owners collection
+  useEffect(() => {
+    if (!isOpen || isFirestoreQuotaExceeded()) return;
+
+    let unsub: (() => void) | null = null;
+    try {
+      const q = collection(db, 'quick_hisab_owners');
+      unsub = onSnapshot(q, (snapshot) => {
+        if (!snapshot.empty) {
+          const cloudOwners: QuickHisabOwner[] = [];
+          snapshot.forEach(docSnap => {
+            const data = docSnap.data() as QuickHisabOwner;
+            if (data && data.name) {
+              cloudOwners.push({ ...data, id: data.id || docSnap.id });
+            }
+          });
+          if (cloudOwners.length > 0) {
+            setOwners(cloudOwners);
+            try {
+              safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(cloudOwners));
+            } catch {}
+          }
+        }
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'quick_hisab_owners');
+      });
+    } catch (e) {
+      console.warn('Realtime quick_hisab_owners subscription error:', e);
+    }
+
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [isOpen]);
+
   // Recalculate summary in real-time whenever selectedMonth, ayByayTxns, or ayByaySalaries change
   useEffect(() => {
     const updated = calculateMonthStats(selectedMonth, ayByayTxns, ayByaySalaries);
@@ -386,7 +428,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
     setIsLiveAyByaySynced(true);
     if (selectedMonth === currentMonthKey) {
       try {
-        localStorage.setItem('protyasha_cached_summary', JSON.stringify(updated));
+        safeStorage.setItem('protyasha_cached_summary', JSON.stringify(updated));
       } catch {}
     }
   }, [selectedMonth, ayByayTxns, ayByaySalaries, calculateMonthStats, currentMonthKey]);
@@ -395,8 +437,8 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
   useEffect(() => {
     const handleAyByayDataChanged = () => {
       try {
-        const rawTxns = localStorage.getItem('isp_cache_txns');
-        const rawSals = localStorage.getItem('isp_cache_salaries');
+        const rawTxns = safeStorage.getItem('isp_cache_txns');
+        const rawSals = safeStorage.getItem('isp_cache_salaries');
         const txns = rawTxns ? JSON.parse(rawTxns) : [];
         const sals = rawSals ? JSON.parse(rawSals) : [];
         if (Array.isArray(txns) && txns.length > 0) setAyByayTxns(txns);
@@ -416,7 +458,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
   const fetchSummary = async (monthKey: string = selectedMonth) => {
     setLoading(true);
     try {
-      const qTxns = collection(staffDb, 'ay_byay_transactions');
+      const qTxns = collection(staffDb, 'transactions');
       const snapTxns = await getDocs(qTxns);
       const cloudTx: any[] = [];
       snapTxns.forEach(docSnap => {
@@ -425,7 +467,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
       });
       if (cloudTx.length > 0) {
         setAyByayTxns(cloudTx);
-        try { localStorage.setItem('isp_cache_txns', JSON.stringify(cloudTx)); } catch {}
+        try { safeStorage.setItem('isp_cache_txns', JSON.stringify(cloudTx)); } catch {}
       }
 
       const qSals = collection(staffDb, 'ay_byay_salaries');
@@ -437,7 +479,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
       });
       if (cloudSals.length > 0) {
         setAyByaySalaries(cloudSals);
-        try { localStorage.setItem('isp_cache_salaries', JSON.stringify(cloudSals)); } catch {}
+        try { safeStorage.setItem('isp_cache_salaries', JSON.stringify(cloudSals)); } catch {}
       }
 
       const freshTxns = cloudTx.length > 0 ? cloudTx : ayByayTxns;
@@ -457,8 +499,19 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
   const saveUpdatedOwners = (newOwners: QuickHisabOwner[]) => {
     setOwners(newOwners);
     try {
-      localStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(newOwners));
+      safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(newOwners));
     } catch {}
+
+    // Dedicated Firestore snapshot storage
+    safeSetDoc(doc(db, 'settings', 'quick_hisab_owners_data'), {
+      owners: newOwners,
+      updatedAt: new Date().toISOString()
+    }).catch(() => {});
+
+    // Save individual owner documents in dedicated collection 'quick_hisab_owners'
+    newOwners.forEach(o => {
+      safeSetDoc(doc(db, 'quick_hisab_owners', String(o.id)), o).catch(() => {});
+    });
 
     if (onSaveOwners) {
       onSaveOwners(newOwners);
@@ -471,6 +524,9 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
     sounds.playTap();
     setEditingOwner(null);
     setFormName(isBn ? `মালিক ${owners.length + 1}` : `Owner ${owners.length + 1}`);
+    setFormPhone('');
+    setFormAddress('');
+    setFormNotes('');
     setFormShareUnits(1.0);
     setFormAvatarUrl('');
     setIsEditorOpen(true);
@@ -482,6 +538,9 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
     sounds.playTap();
     setEditingOwner(owner);
     setFormName(owner.name);
+    setFormPhone(owner.phone || '');
+    setFormAddress(owner.address || '');
+    setFormNotes(owner.notes || '');
     setFormShareUnits(owner.shareUnits);
     setFormAvatarUrl(owner.avatarUrl || '');
     setIsEditorOpen(true);
@@ -503,9 +562,13 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
           return {
             ...o,
             name: cleanName,
+            phone: formPhone.trim(),
+            address: formAddress.trim(),
+            notes: formNotes.trim(),
             shareUnits: formShareUnits,
             avatarUrl: formAvatarUrl,
-            isHalf: formShareUnits === 0.5
+            isHalf: formShareUnits === 0.5,
+            updatedAt: new Date().toISOString()
           };
         }
         return o;
@@ -515,9 +578,14 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
       const newOwner: QuickHisabOwner = {
         id: `owner-${Date.now()}`,
         name: cleanName,
+        phone: formPhone.trim(),
+        address: formAddress.trim(),
+        notes: formNotes.trim(),
         shareUnits: formShareUnits,
         avatarUrl: formAvatarUrl,
-        isHalf: formShareUnits === 0.5
+        isHalf: formShareUnits === 0.5,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       };
       updated = [...owners, newOwner];
     }
@@ -533,6 +601,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
     if (confirm(isBn ? 'এই মালিককে তালিকা থেকে মুছে ফেলতে চান?' : 'Delete this owner from the list?')) {
       const updated = owners.filter(o => o.id !== id);
       saveUpdatedOwners(updated);
+      safeDeleteDoc(doc(db, 'quick_hisab_owners', String(id))).catch(() => {});
       setIsEditorOpen(false);
     }
   };
@@ -1035,7 +1104,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
                           )}
                         </div>
 
-                        <div className="flex items-center gap-1.5 mt-0.5">
+                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                           <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md ${
                             isHalf 
                               ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
@@ -1049,6 +1118,27 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
                             • {sharePercentage.toFixed(2)}%
                           </span>
                         </div>
+
+                        {(owner.phone || owner.address) && (
+                          <div className="mt-1 flex flex-col gap-0.5 text-[10px] text-slate-500 dark:text-slate-400">
+                            {owner.phone && (
+                              <a 
+                                href={`tel:${owner.phone}`} 
+                                onClick={(e) => e.stopPropagation()} 
+                                className="inline-flex items-center gap-1 hover:text-[#E52E2E] transition-colors"
+                              >
+                                <Phone className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                                <span className="font-semibold">{owner.phone}</span>
+                              </a>
+                            )}
+                            {owner.address && (
+                              <div className="inline-flex items-center gap-1">
+                                <MapPin className="w-2.5 h-2.5 text-rose-500 shrink-0" />
+                                <span className="truncate max-w-[150px] sm:max-w-[200px]">{owner.address}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -1164,6 +1254,51 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
                 onChange={(e) => setFormName(e.target.value)}
                 placeholder={isBn ? 'উদা: মোঃ আব্দুর রহিম' : 'e.g. John Doe'}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white outline-none focus:border-[#E52E2E]"
+              />
+            </div>
+
+            {/* Phone Input */}
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                <Phone className="w-3 h-3 text-emerald-600" />
+                <span>{isBn ? 'মোবাইল নাম্বার' : 'Mobile Number'}</span>
+              </label>
+              <input
+                type="tel"
+                value={formPhone}
+                onChange={(e) => setFormPhone(e.target.value)}
+                placeholder={isBn ? 'উদা: ০১৭০০-০০০০০০' : 'e.g. 01700-000000'}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white outline-none focus:border-[#E52E2E]"
+              />
+            </div>
+
+            {/* Address Input */}
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                <MapPin className="w-3 h-3 text-rose-500" />
+                <span>{isBn ? 'ঠিকানা' : 'Address'}</span>
+              </label>
+              <input
+                type="text"
+                value={formAddress}
+                onChange={(e) => setFormAddress(e.target.value)}
+                placeholder={isBn ? 'উদা: গ্রাম / বাজার, থানা, জেলা' : 'e.g. Village, City'}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-white outline-none focus:border-[#E52E2E]"
+              />
+            </div>
+
+            {/* Notes Input */}
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                <FileText className="w-3 h-3 text-indigo-500" />
+                <span>{isBn ? 'মন্তব্য / নোট (ঐচ্ছিক)' : 'Notes (Optional)'}</span>
+              </label>
+              <input
+                type="text"
+                value={formNotes}
+                onChange={(e) => setFormNotes(e.target.value)}
+                placeholder={isBn ? 'শেয়ার বা অন্যান্য বিবরণ...' : 'Notes...'}
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-900 dark:text-white outline-none focus:border-[#E52E2E]"
               />
             </div>
 

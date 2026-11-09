@@ -36,6 +36,7 @@ import confetti from 'canvas-confetti';
 import { Language, UserSession } from '../types';
 import { translations } from '../utils/formatters';
 import { sounds } from '../utils/audio';
+import { safeStorage } from '../utils/safeStorage';
 import { compressImage } from '../utils/imageCompressor';
 
 interface ProfileViewProps {
@@ -98,7 +99,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     user?.name || (isAdmin ? (isBn ? 'প্রত্যাশা অ্যাডমিন' : 'Protyasha Admin') : (isBn ? 'সম্মানিত সদস্য' : 'Valued Member'))
   );
   const [avatarUrl, setAvatarUrl] = useState(() => 
-    user?.avatarUrl || adminAvatar || (typeof window !== 'undefined' ? localStorage.getItem('protyasha_admin_avatar') || '' : '')
+    user?.avatarUrl || adminAvatar || (typeof window !== 'undefined' ? safeStorage.getItem('protyasha_admin_avatar') || '' : '')
   );
 
   // Edit Modal States with 3 Distinct Options: 'info', 'security' vs 'binding'

@@ -3,6 +3,7 @@ import { Bell, ShieldCheck, Sun, CloudRain, Cloud, CloudLightning } from 'lucide
 import { Language, UserSession } from '../types';
 import { getGreeting, toBengaliNumber } from '../utils/formatters';
 import { sounds } from '../utils/audio';
+import { safeStorage } from '../utils/safeStorage';
 import { fetchLiveWeather, WeatherData } from '../utils/weatherService';
 import scenicLandscape from '../assets/images/scenic_river_bridge_landscape_1792226647109.jpg';
 
@@ -36,7 +37,7 @@ export const Header: React.FC<HeaderProps> = ({
   const greeting = getGreeting(lang);
   const isAdmin = user?.role === 'admin';
   const isLoggedIn = !!user && (user.role === 'admin' || user.role === 'user');
-  const rawAvatar = user?.avatarUrl || adminAvatar || (typeof window !== 'undefined' ? (localStorage.getItem('protyasha_admin_avatar') || localStorage.getItem('protyasha_last_avatar') || '') : '');
+  const rawAvatar = user?.avatarUrl || adminAvatar || (typeof window !== 'undefined' ? (safeStorage.getItem('protyasha_admin_avatar') || safeStorage.getItem('protyasha_last_avatar') || '') : '');
   const displayAvatar = rawAvatar && !rawAvatar.startsWith('/uploads/') ? rawAvatar : (rawAvatar.startsWith('data:image/') ? rawAvatar : '');
 
   const [internalWeather, setInternalWeather] = useState<WeatherData | null>(null);

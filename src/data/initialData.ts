@@ -381,17 +381,17 @@ export const initialStaffAccounts: StaffAccount[] = [
 ];
 
 export const initialQuickHisabOwners: QuickHisabOwner[] = [
-  { id: 'owner-1', name: 'মালিক ১', shareUnits: 1.0 },
-  { id: 'owner-2', name: 'মালিক ২', shareUnits: 1.0 },
-  { id: 'owner-3', name: 'মালিক ৩', shareUnits: 1.0 },
-  { id: 'owner-4', name: 'মালিক ৪', shareUnits: 1.0 },
-  { id: 'owner-5', name: 'মালিক ৫', shareUnits: 1.0 },
-  { id: 'owner-6', name: 'মালিক ৬', shareUnits: 1.0 },
-  { id: 'owner-7', name: 'মালিক ৭', shareUnits: 1.0 },
-  { id: 'owner-8', name: 'মালিক ৮', shareUnits: 1.0 },
-  { id: 'owner-9', name: 'মালিক ৯', shareUnits: 1.0 },
-  { id: 'owner-10', name: 'মালিক ১০', shareUnits: 1.0 },
-  { id: 'owner-11', name: 'মালিক ১১', shareUnits: 1.0 },
-  { id: 'owner-12', name: 'মালিক ১২', shareUnits: 1.0 },
-  { id: 'owner-13', name: 'মালিক ১৩ (অর্ধেক অংশীদার)', shareUnits: 0.5, isHalf: true }
+  { id: 'owner-1', name: 'মালিক ১', shareUnits: 1.0, phone: '01711000001', address: 'দত্তপাড়া, ইসলামপুর, জামালপুর', notes: 'প্রতিষ্ঠাতা অংশীদার' },
+  { id: 'owner-2', name: 'মালিক ২', shareUnits: 1.0, phone: '01711000002', address: 'আনন্দ বাজার, ইসলামপুর', notes: 'অংশীদার' },
+  { id: 'owner-3', name: 'মালিক ৩', shareUnits: 1.0, phone: '01711000003', address: 'টানা ব্রীজ, ইসলামপুর', notes: 'অংশীদার' },
+  { id: 'owner-4', name: 'মালিক ৪', shareUnits: 1.0, phone: '01711000004', address: 'হাজী আবেদ আলী মার্কেট', notes: 'অংশীদার' },
+  { id: 'owner-5', name: 'মালিক ৫', shareUnits: 1.0, phone: '01711000005', address: 'ইসলামপুর বাজার', notes: 'অংশীদার' },
+  { id: 'owner-6', name: 'মালিক ৬', shareUnits: 1.0, phone: '01711000006', address: 'চর শিমুল চূড়া', notes: 'অংশীদার' },
+  { id: 'owner-7', name: 'মালিক ৭', shareUnits: 1.0, phone: '01711000007', address: 'ইসলামপুর', notes: 'অংশীদার' },
+  { id: 'owner-8', name: 'মালিক ৮', shareUnits: 1.0, phone: '01711000008', address: 'দত্তপাড়া', notes: 'অংশীদার' },
+  { id: 'owner-9', name: 'মালিক ৯', shareUnits: 1.0, phone: '01711000009', address: 'ইসলামপুর', notes: 'অংশীদার' },
+  { id: 'owner-10', name: 'মালিক ১০', shareUnits: 1.0, phone: '01711000010', address: 'জামালপুর সদর', notes: 'অংশীদার' },
+  { id: 'owner-11', name: 'মালিক ১১', shareUnits: 1.0, phone: '01711000011', address: 'ইসলামপুর', notes: 'অংশীদার' },
+  { id: 'owner-12', name: 'মালিক ১২', shareUnits: 1.0, phone: '01711000012', address: 'ইসলামপুর', notes: 'অংশীদার' },
+  { id: 'owner-13', name: 'মালিক ১৩ (অর্ধেক অংশীদার)', shareUnits: 0.5, phone: '01711000013', address: 'দত্তপাড়া আনন্দ বাজার', notes: '০.৫ শেয়ার অংশীদার', isHalf: true }
 ];

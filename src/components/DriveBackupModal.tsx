@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { safeStorage } from '../utils/safeStorage';
 import { 
   X, 
   Cloud, 
@@ -94,7 +95,7 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
   const [activeTab, setActiveTab] = useState<'drive' | 'local' | 'security'>('drive');
   const [autoBackupEnabled, setAutoBackupEnabled] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('protyasha_auto_backup_enabled') === 'true';
+      return safeStorage.getItem('protyasha_auto_backup_enabled') === 'true';
     } catch {
       return true;
     }
@@ -222,7 +223,7 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
     // 4. Fetch AyByay transactions
     const ayTransactions: any[] = [];
     try {
-      const txSnap = await getDocs(collection(staffDb, 'ay_byay_transactions'));
+      const txSnap = await getDocs(collection(staffDb, 'transactions'));
       txSnap.forEach(d => {
         const item = d.data();
         if (item && item.id) ayTransactions.push(item);
@@ -263,7 +264,7 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
       firestore: {
         staff: filteredStaff,
         staff_salaries: filteredSalaries,
-        ay_byay_transactions: filteredTransactions
+        transactions: filteredTransactions
       },
       serverData: serverSnapshot,
       ayByayData: {
@@ -370,11 +371,11 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
         }
       }
 
-      const ayTransactions = backupJson?.firestore?.ay_byay_transactions || backupJson?.ayByayData?.transactions || [];
+      const ayTransactions = backupJson?.firestore?.transactions || backupJson?.firestore?.ay_byay_transactions || backupJson?.ayByayData?.transactions || [];
       if (Array.isArray(ayTransactions)) {
         for (const tx of ayTransactions) {
           if (tx && tx.id) {
-            await safeSetDoc(doc(staffDb, 'ay_byay_transactions', tx.id), tx);
+            await safeSetDoc(doc(staffDb, 'transactions', tx.id), tx);
           }
         }
       }
@@ -388,13 +389,13 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
         });
       }
 
-      // 3. Update localStorage caches
+      // 3. Update safeStorage caches
       if (Array.isArray(staffList)) {
-        try { localStorage.setItem('protyasha_staff', JSON.stringify(staffList)); } catch {}
+        try { safeStorage.setItem('protyasha_staff', JSON.stringify(staffList)); } catch {}
         window.dispatchEvent(new CustomEvent('staff-data-changed', { detail: staffList }));
       }
       if (Array.isArray(salariesList)) {
-        try { localStorage.setItem('isp_cache_salaries', JSON.stringify(salariesList)); } catch {}
+        try { safeStorage.setItem('isp_cache_salaries', JSON.stringify(salariesList)); } catch {}
       }
 
       setStatusMessage({
@@ -533,7 +534,7 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
   const toggleAutoBackup = (enabled: boolean) => {
     setAutoBackupEnabled(enabled);
     try {
-      localStorage.setItem('protyasha_auto_backup_enabled', enabled ? 'true' : 'false');
+      safeStorage.setItem('protyasha_auto_backup_enabled', enabled ? 'true' : 'false');
     } catch {}
     setStatusMessage({
       type: 'info',

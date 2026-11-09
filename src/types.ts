@@ -173,6 +173,11 @@ export interface QuickHisabOwner {
   id: string | number;
   name: string;
   shareUnits: number; // 1.0, 0.5, or custom number of shares
-  avatarUrl?: string;
+  phone?: string;     // মোবাইল নাম্বার
+  address?: string;   // ঠিকানা
+  avatarUrl?: string; // ছবি
+  notes?: string;     // হিসাব মন্তব্য / বিবরণ
   isHalf?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }

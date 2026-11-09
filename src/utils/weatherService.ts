@@ -1,4 +1,5 @@
 import { toBengaliNumber } from './formatters';
+import { safeStorage } from './safeStorage';
 export { toBengaliNumber };
 
 export interface DailyForecast {
@@ -230,12 +231,12 @@ const CACHE_TIME_KEY = 'protyasha_live_weather_ts_v2';
 
 export function getUserPreferredDistrict(): DistrictInfo | null {
   try {
-    const raw = localStorage.getItem(PREFERRED_DISTRICT_KEY);
+    const raw = safeStorage.getItem(PREFERRED_DISTRICT_KEY);
     if (raw) {
       const match = ALL_BANGLADESH_DISTRICTS.find(d => d.nameBn === raw || d.nameEn.toLowerCase() === raw.toLowerCase());
       if (match) return match;
     }
-    const gpsRaw = localStorage.getItem(DEVICE_GPS_DISTRICT_KEY);
+    const gpsRaw = safeStorage.getItem(DEVICE_GPS_DISTRICT_KEY);
     if (gpsRaw) {
       const match = ALL_BANGLADESH_DISTRICTS.find(d => d.nameBn === gpsRaw || d.nameEn.toLowerCase() === gpsRaw.toLowerCase());
       if (match) return match;
@@ -246,15 +247,15 @@ export function getUserPreferredDistrict(): DistrictInfo | null {
 
 export function setUserPreferredDistrict(nameBn: string) {
   try {
-    localStorage.setItem(PREFERRED_DISTRICT_KEY, nameBn);
-    localStorage.removeItem(CACHE_KEY); // clear cache to fetch new location immediately
+    safeStorage.setItem(PREFERRED_DISTRICT_KEY, nameBn);
+    safeStorage.removeItem(CACHE_KEY); // clear cache to fetch new location immediately
   } catch {}
 }
 
 export function clearUserPreferredDistrict() {
   try {
-    localStorage.removeItem(PREFERRED_DISTRICT_KEY);
-    localStorage.removeItem(CACHE_KEY);
+    safeStorage.removeItem(PREFERRED_DISTRICT_KEY);
+    safeStorage.removeItem(CACHE_KEY);
   } catch {}
 }
 
@@ -287,8 +288,8 @@ export async function getRealDeviceGPS(): Promise<DistrictInfo | null> {
     if (pos.coords && pos.coords.latitude && pos.coords.longitude) {
       const nearest = findNearestDistrict(pos.coords.latitude, pos.coords.longitude);
       try {
-        localStorage.setItem(DEVICE_GPS_DISTRICT_KEY, nearest.nameBn);
-        localStorage.setItem(PREFERRED_DISTRICT_KEY, nearest.nameBn);
+        safeStorage.setItem(DEVICE_GPS_DISTRICT_KEY, nearest.nameBn);
+        safeStorage.setItem(PREFERRED_DISTRICT_KEY, nearest.nameBn);
       } catch {}
       return nearest;
     }
@@ -299,8 +300,8 @@ export async function getRealDeviceGPS(): Promise<DistrictInfo | null> {
       if (pos.coords && pos.coords.latitude && pos.coords.longitude) {
         const nearest = findNearestDistrict(pos.coords.latitude, pos.coords.longitude);
         try {
-          localStorage.setItem(DEVICE_GPS_DISTRICT_KEY, nearest.nameBn);
-          localStorage.setItem(PREFERRED_DISTRICT_KEY, nearest.nameBn);
+          safeStorage.setItem(DEVICE_GPS_DISTRICT_KEY, nearest.nameBn);
+          safeStorage.setItem(PREFERRED_DISTRICT_KEY, nearest.nameBn);
         } catch {}
         return nearest;
       }
@@ -331,7 +332,7 @@ export async function detectPreciseLocation(forceRealGPS = false): Promise<{
 
     // Check if we previously confirmed GPS on this device
     try {
-      const lastGps = localStorage.getItem(DEVICE_GPS_DISTRICT_KEY);
+      const lastGps = safeStorage.getItem(DEVICE_GPS_DISTRICT_KEY);
       if (lastGps) {
         const match = ALL_BANGLADESH_DISTRICTS.find(d => d.nameBn === lastGps || d.nameEn.toLowerCase() === lastGps.toLowerCase());
         if (match) {
@@ -342,7 +343,7 @@ export async function detectPreciseLocation(forceRealGPS = false): Promise<{
 
     // Check stable IP cache
     try {
-      const stableIp = sessionStorage.getItem(STABLE_IP_DISTRICT_KEY) || localStorage.getItem(STABLE_IP_DISTRICT_KEY);
+      const stableIp = sessionStorage.getItem(STABLE_IP_DISTRICT_KEY) || safeStorage.getItem(STABLE_IP_DISTRICT_KEY);
       if (stableIp) {
         const match = ALL_BANGLADESH_DISTRICTS.find(d => d.nameBn === stableIp || d.nameEn.toLowerCase() === stableIp.toLowerCase());
         if (match) {
@@ -382,8 +383,8 @@ export async function fetchLiveWeather(forceRefresh = false, ignorePreferred = f
   // Check memory/local cache (valid for 10 minutes AND must match current district!)
   if (!forceRefresh) {
     try {
-      const cached = localStorage.getItem(CACHE_KEY);
-      const cachedTs = localStorage.getItem(CACHE_TIME_KEY);
+      const cached = safeStorage.getItem(CACHE_KEY);
+      const cachedTs = safeStorage.getItem(CACHE_TIME_KEY);
       if (cached && cachedTs) {
         const age = Date.now() - parseInt(cachedTs, 10);
         if (age < 10 * 60 * 1000) {
@@ -491,8 +492,8 @@ export async function fetchLiveWeather(forceRefresh = false, ignorePreferred = f
     };
 
     try {
-      localStorage.setItem(CACHE_KEY, JSON.stringify(weatherResult));
-      localStorage.setItem(CACHE_TIME_KEY, String(Date.now()));
+      safeStorage.setItem(CACHE_KEY, JSON.stringify(weatherResult));
+      safeStorage.setItem(CACHE_TIME_KEY, String(Date.now()));
     } catch {}
 
     return weatherResult;

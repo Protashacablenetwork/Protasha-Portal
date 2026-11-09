@@ -23,6 +23,7 @@ import { db, safeSetDoc, isFirestoreQuotaExceeded } from '../utils/firebase';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { Language, FooterConfig, UserSession, BannerAd } from '../types';
 import { translations } from '../utils/formatters';
+import { safeStorage } from '../utils/safeStorage';
 import { sounds } from '../utils/audio';
 import { compressImage } from '../utils/imageCompressor';
 import { saveStoredUser, findStoredUserByPhone } from '../utils/userStorage';
@@ -60,7 +61,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
   // Login Form States (Remember last logged in phone number)
   const [accountNumber, setAccountNumber] = useState(() => {
-    return localStorage.getItem('protyasha_last_phone') || '';
+    return safeStorage.getItem('protyasha_last_phone') || '';
   });
   const [pin, setPin] = useState('');
   const [showPin, setShowPin] = useState(false);
@@ -179,10 +180,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
             return;
           }
 
-          localStorage.setItem('protyasha_last_phone', accountNumber.trim());
-          localStorage.setItem('protyasha_user_phone', accountNumber.trim());
+          safeStorage.setItem('protyasha_last_phone', accountNumber.trim());
+          safeStorage.setItem('protyasha_user_phone', accountNumber.trim());
           if (userData.avatarUrl) {
-            localStorage.setItem('protyasha_last_avatar', userData.avatarUrl);
+            safeStorage.setItem('protyasha_last_avatar', userData.avatarUrl);
           }
           sounds.playSuccess();
           onLoginSuccess({
@@ -283,10 +284,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
       setIsLoading(false);
       sounds.playSuccess();
       setSuccessMsg(isBn ? 'অ্যাকাউন্ট সফলভাবে তৈরি হয়েছে!' : 'Account created successfully!');
-      localStorage.setItem('protyasha_user_phone', cleanPhone);
-      localStorage.setItem('protyasha_last_phone', cleanPhone);
+      safeStorage.setItem('protyasha_user_phone', cleanPhone);
+      safeStorage.setItem('protyasha_last_phone', cleanPhone);
       if (regAvatar) {
-        localStorage.setItem('protyasha_last_avatar', regAvatar);
+        safeStorage.setItem('protyasha_last_avatar', regAvatar);
       }
       
       setTimeout(() => {
@@ -324,7 +325,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
     });
   };
 
-  const displayAvatar = localStorage.getItem('protyasha_last_avatar') || adminAvatar;
+  const displayAvatar = safeStorage.getItem('protyasha_last_avatar') || adminAvatar;
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-md flex items-center justify-center p-0 md:p-6 select-none overflow-y-auto">

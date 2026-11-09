@@ -1,11 +1,12 @@
 /**
- * Persistent App User storage manager with IndexedDB + localStorage hybrid caching.
+ * Persistent App User storage manager with IndexedDB + safeStorage hybrid caching.
  * Ensures account creation, login, and user listing work 100% reliably
  * even if Cloud Firestore is offline, uninitialized, or rate-limited.
  */
 import { AppUser } from '../types';
 import { initialAppUsers } from '../data/initialData';
 import { savePersistentImage, getPersistentImage } from './imageStorage';
+import { safeStorage } from './safeStorage';
 
 const LOCAL_USERS_KEY = 'protyasha_app_users';
 
@@ -15,7 +16,7 @@ const LOCAL_USERS_KEY = 'protyasha_app_users';
 export function getStoredUsers(): AppUser[] {
   if (typeof window === 'undefined') return initialAppUsers;
   try {
-    const raw = localStorage.getItem(LOCAL_USERS_KEY);
+    const raw = safeStorage.getItem(LOCAL_USERS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
@@ -28,7 +29,7 @@ export function getStoredUsers(): AppUser[] {
 
   // Save initial users to local storage for future offline access
   try {
-    localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(initialAppUsers));
+    safeStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(initialAppUsers));
   } catch {}
   return initialAppUsers;
 }
@@ -61,7 +62,7 @@ export function saveStoredUser(user: AppUser): void {
       updatedUsers = [user, ...users];
     }
 
-    localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(updatedUsers));
+    safeStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(updatedUsers));
 
     // Save user avatar permanently in IndexedDB if it's a data URL
     if (user.avatarUrl && user.avatarUrl.startsWith('data:image/')) {
@@ -80,7 +81,7 @@ export function deleteStoredUser(id: string): void {
   try {
     const users = getStoredUsers();
     const updated = users.filter(u => u.id !== id);
-    localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(updated));
+    safeStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(updated));
   } catch (e) {
     console.warn('[UserStorage] Error deleting user:', e);
   }

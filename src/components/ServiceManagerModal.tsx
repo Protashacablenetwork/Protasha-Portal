@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Language, ServiceStatusConfig } from '../types';
 import { X, Check, ShieldAlert, Sparkles, Power, Edit3, Trash2, Upload } from 'lucide-react';
 import { sounds } from '../utils/audio';
+import { safeStorage } from '../utils/safeStorage';
 import { compressImageFile, savePersistentImage, deletePersistentImage } from '../utils/imageStorage';
 
 interface ServiceManagerModalProps {
@@ -109,7 +110,7 @@ export const ServiceManagerModal: React.FC<ServiceManagerModalProps> = ({
 
     setIsCompressingLogo(true);
     try {
-      // Compress to max 280px webp/jpeg (15-25KB) so it permanently fits Firestore & localStorage
+      // Compress to max 280px webp/jpeg (15-25KB) so it permanently fits Firestore & safeStorage
       const compressedDataUrl = await compressImageFile(file, 280, 0.85);
       if (compressedDataUrl) {
         setCustomLogoUrl(compressedDataUrl);

@@ -3,6 +3,7 @@ import { Staff, SalaryPayment, AppConfig } from '../types';
 import { STAFF_DESIGNATIONS, PAYMENT_METHODS, formatCurrency, getMonthBengaliName } from '../data/categories';
 import { ConfirmModal } from './ConfirmModal';
 import { StaffAccount, StaffTransaction, QuickHisabOwner } from '../../../types';
+import { safeStorage } from '../../../utils/safeStorage';
 import {
   Users,
   Plus,
@@ -373,9 +374,7 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
           if (onSaveStaffAccounts) {
             onSaveStaffAccounts(updatedAccounts);
           } else {
-            try {
-              localStorage.setItem('protyasha_staff', JSON.stringify(updatedAccounts));
-            } catch {}
+            safeStorage.setItem('protyasha_staff', JSON.stringify(updatedAccounts));
             setTimeout(() => {
               window.dispatchEvent(new CustomEvent('staff-data-changed', { detail: updatedAccounts }));
             }, 0);
@@ -429,9 +428,7 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
             if (onSaveStaffAccounts) {
               onSaveStaffAccounts(updatedAccounts);
             } else {
-              try {
-                localStorage.setItem('protyasha_staff', JSON.stringify(updatedAccounts));
-              } catch {}
+              safeStorage.setItem('protyasha_staff', JSON.stringify(updatedAccounts));
               setTimeout(() => {
                 window.dispatchEvent(new CustomEvent('staff-data-changed', { detail: updatedAccounts }));
               }, 0);

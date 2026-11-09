@@ -55,8 +55,16 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
   const isLedgerLocked = serviceStatuses.ledger?.isActive === false || String(serviceStatuses.ledger?.isActive) === 'false';
 
   const filteredTransactions = transactions.filter(t => {
+    if (!t || t.isDeleted === true || (t as any).isDeleted === 'true') return false;
+    if (!t.date) return false;
+    const parts = t.date.split('-');
+    if (parts.length >= 2) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      return month === currentMonthIndex && year === currentYear;
+    }
     const d = new Date(t.date);
-    return d.getMonth() === currentMonthIndex && d.getFullYear() === currentYear;
+    return !isNaN(d.getTime()) && d.getMonth() === currentMonthIndex && d.getFullYear() === currentYear;
   });
 
   const balances: Record<string, number> = {};
@@ -66,11 +74,12 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
 
   filteredTransactions.forEach(trx => {
     const m = trx.method;
+    const amt = Number(trx.amount) || 0;
     if (balances[m] !== undefined) {
       if (trx.type === 'income') {
-        balances[m] += trx.amount;
+        balances[m] += amt;
       } else {
-        balances[m] -= trx.amount;
+        balances[m] -= amt;
       }
     }
   });
@@ -88,44 +97,44 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
           <span>{isBn ? 'পেমেন্ট চ্যানেল ও ব্যালেন্স হিসাব' : 'Payment Channels & Balance'}</span>
         </h3>
         
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {/* Direct Income / Money Addition Button */}
-          <button
-            onClick={() => {
-              sounds.playTap();
-              onOpenIncome();
-            }}
-            className="flex items-center gap-1 text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1 rounded-full transition-all active:scale-95 shadow-2xs"
-          >
-            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span>{isBn ? 'টাকা জমা' : '+ Deposit'}</span>
-          </button>
+        {user?.role === 'admin' && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Direct Income / Money Addition Button - PROMINENT FOR ADMIN */}
+            <button
+              onClick={() => {
+                sounds.playTap();
+                onOpenIncome();
+              }}
+              className="flex items-center gap-1 text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 px-3 py-1.5 rounded-full transition-all active:scale-95 shadow-md"
+            >
+              <Plus className="w-3.5 h-3.5 stroke-[3]" />
+              <span>{isBn ? 'টাকা জমা' : '+ Deposit'}</span>
+            </button>
 
-          {/* Direct Expense Button */}
-          <button
-            onClick={() => {
-              sounds.playTap();
-              onOpenExpense();
-            }}
-            className="flex items-center gap-1 text-[11px] font-bold text-white bg-rose-600 hover:bg-rose-700 px-2.5 py-1 rounded-full transition-all active:scale-95 shadow-2xs"
-          >
-            <ArrowUpRight className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span>{isBn ? 'টাকা খরচ' : '- Expense'}</span>
-          </button>
+            {/* Direct Expense Button */}
+            <button
+              onClick={() => {
+                sounds.playTap();
+                onOpenExpense();
+              }}
+              className="flex items-center gap-1 text-[11px] font-bold text-white bg-rose-600 hover:bg-rose-700 px-3 py-1.5 rounded-full transition-all active:scale-95 shadow-md"
+            >
+              <ArrowUpRight className="w-3.5 h-3.5 stroke-[3]" />
+              <span>{isBn ? 'টাকা খরচ' : '- Expense'}</span>
+            </button>
 
-          {user?.role === 'admin' && (
             <button
               onClick={() => {
                 sounds.playTap();
                 onOpenChannelManager();
               }}
-              className="flex items-center gap-1 text-[11px] font-bold text-[#E52E2E] dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 border border-rose-200/80 dark:border-rose-900/60 px-2.5 py-1 rounded-full transition-all active:scale-95 shadow-2xs"
+              className="flex items-center gap-1 text-[11px] font-bold text-[#E52E2E] dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 border border-rose-200/80 dark:border-rose-900/60 px-3 py-1.5 rounded-full transition-all active:scale-95 shadow-sm"
             >
-              <Plus className="w-3 h-3 stroke-[2.5]" />
-              <span>{isBn ? 'চ্যানেল যোগ' : '+ Add Channel'}</span>
+              <Sliders className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>{isBn ? 'ম্যানেজ' : 'Manage'}</span>
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       <>
@@ -210,8 +219,23 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
                     <h4 className={`text-base font-extrabold ${ch.color} tabular-nums leading-tight`}>
                       {formatCurrency(bal, lang)}
                     </h4>
-                    <div className="w-6 h-6 rounded-full bg-white/80 dark:bg-slate-800/80 flex items-center justify-center text-slate-400 group-hover:text-slate-800 dark:group-hover:text-slate-100 shadow-2xs transition-colors">
-                      <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                    <div className="flex items-center gap-1">
+                      {user?.role === 'admin' && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            sounds.playTap();
+                            onOpenIncome(ch.name);
+                          }}
+                          className="w-7 h-7 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white flex items-center justify-center shadow-xs active:scale-90 transition-all"
+                          title={isBn ? 'টাকা জমা' : 'Add Money'}
+                        >
+                          <Plus className="w-4 h-4 stroke-[3]" />
+                        </button>
+                      )}
+                      <div className="w-6 h-6 rounded-full bg-white/80 dark:bg-slate-800/80 flex items-center justify-center text-slate-400 group-hover:text-slate-800 dark:group-hover:text-slate-100 shadow-2xs transition-colors">
+                        <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+                      </div>
                     </div>
                   </div>
                 </div>

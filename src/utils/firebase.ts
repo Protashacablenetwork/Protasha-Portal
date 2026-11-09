@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app';
+import { safeStorage } from './safeStorage';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer, setDoc, deleteDoc } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -22,15 +23,15 @@ const QUOTA_RESET_KEY = 'firestore_quota_reset_time';
 
 export function isFirestoreQuotaExceeded(): boolean {
   try {
-    const isExceeded = localStorage.getItem(QUOTA_KEY) === 'true';
-    const resetTime = parseInt(localStorage.getItem(QUOTA_RESET_KEY) || '0', 10);
+    const isExceeded = safeStorage.getItem(QUOTA_KEY) === 'true';
+    const resetTime = parseInt(safeStorage.getItem(QUOTA_RESET_KEY) || '0', 10);
     
     if (isExceeded && Date.now() < resetTime) {
       return true;
     }
     if (isExceeded && Date.now() >= resetTime) {
-      localStorage.removeItem(QUOTA_KEY);
-      localStorage.removeItem(QUOTA_RESET_KEY);
+      safeStorage.removeItem(QUOTA_KEY);
+      safeStorage.removeItem(QUOTA_RESET_KEY);
       enableNetwork(db).catch(() => {});
     }
   } catch {
@@ -42,8 +43,8 @@ export function isFirestoreQuotaExceeded(): boolean {
 export function setFirestoreQuotaExceeded() {
   try {
     const resetTime = Date.now() + 60 * 60 * 1000; // 1-hour backoff (persisted)
-    localStorage.setItem(QUOTA_KEY, 'true');
-    localStorage.setItem(QUOTA_RESET_KEY, resetTime.toString());
+    safeStorage.setItem(QUOTA_KEY, 'true');
+    safeStorage.setItem(QUOTA_RESET_KEY, resetTime.toString());
     disableNetwork(db).catch(() => {});
   } catch {
     // ignore
@@ -83,7 +84,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   if (isQuota) {
     if (!isFirestoreQuotaExceeded()) {
       setFirestoreQuotaExceeded();
-      console.warn('[Firestore Spark Tier Quota Notice]: Daily write/read units limit reached on Google Cloud Firestore free tier. Seamlessly switched to local offline storage (localStorage/IndexedDB) and local server persistence. All app data is 100% saved and protected. Quota resets daily at midnight Pacific Time.');
+      console.warn('[Firestore Spark Tier Quota Notice]: Daily write/read units limit reached on Google Cloud Firestore free tier. Seamlessly switched to local offline storage (safeStorage/IndexedDB) and local server persistence. All app data is 100% saved and protected. Quota resets daily at midnight Pacific Time.');
     }
     return true;
   }

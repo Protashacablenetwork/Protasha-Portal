@@ -1,5 +1,6 @@
 import { DistrictInfo, detectPreciseLocation, ALL_BANGLADESH_DISTRICTS } from './weatherService';
 import { toBengaliNumber } from './formatters';
+import { safeStorage } from './safeStorage';
 import { NotificationItem } from '../types';
 
 export interface PrayerTimings {
@@ -393,8 +394,8 @@ export function checkAndGeneratePrayerNotifications(
     return { updatedNotifications: currentNotifications, newlyAdded: null };
   }
 
-  const localStorageKey = `notif_prayer_${targetSlot.id}`;
-  const alreadySent = localStorage.getItem(localStorageKey);
+  const safeStorageKey = `notif_prayer_${targetSlot.id}`;
+  const alreadySent = safeStorage.getItem(safeStorageKey);
   const existsInList = currentNotifications.some(n => n.id === targetSlot!.id);
 
   if (!alreadySent && !existsInList) {
@@ -420,7 +421,7 @@ export function checkAndGeneratePrayerNotifications(
     };
 
     try {
-      localStorage.setItem(localStorageKey, '1');
+      safeStorage.setItem(safeStorageKey, '1');
     } catch {}
 
     return {

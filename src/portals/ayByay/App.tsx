@@ -45,6 +45,7 @@ import { StaffAccount, QuickHisabOwner, UserSession } from '../../types';
 import { initialTransactions } from '../../data/initialData';
 import { staffDb, safeSetDoc, safeDeleteDoc, isFirestoreQuotaExceeded, handleFirestoreError, OperationType } from '../../utils/firebase';
 import { collection, doc, onSnapshot, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { safeStorage } from '../../utils/safeStorage';
 
 interface AyByayPortalProps {
   onExit?: () => void;
@@ -69,7 +70,7 @@ export function AyByayPortal({
 }: AyByayPortalProps) {
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
     try {
-      const saved = localStorage.getItem('isp_cache_txns') || localStorage.getItem('protyasha_transactions');
+      const saved = safeStorage.getItem('isp_cache_txns') || safeStorage.getItem('protyasha_transactions');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -94,7 +95,7 @@ export function AyByayPortal({
   const [staffAccounts, setStaffAccounts] = useState<StaffAccount[]>(() => {
     if (propStaffAccounts && propStaffAccounts.length > 0) return propStaffAccounts;
     try {
-      const saved = localStorage.getItem('protyasha_staff');
+      const saved = safeStorage.getItem('protyasha_staff');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) return parsed;
@@ -115,7 +116,7 @@ export function AyByayPortal({
         setStaffAccounts(e.detail);
       } else {
         try {
-          const saved = localStorage.getItem('protyasha_staff');
+          const saved = safeStorage.getItem('protyasha_staff');
           if (saved) setStaffAccounts(JSON.parse(saved));
         } catch {}
       }
@@ -131,21 +132,15 @@ export function AyByayPortal({
       const q = collection(staffDb, 'staff');
       let unsubscribe: (() => void) | null = null;
       unsubscribe = onSnapshot(q, (snapshot) => {
-        if (!snapshot.empty) {
-          const cloudStaff: StaffAccount[] = [];
-          snapshot.forEach(docSnap => {
-            const data = docSnap.data() as StaffAccount;
-            if (data && data.id && data.name) {
-              cloudStaff.push(data);
-            }
-          });
-          if (cloudStaff.length > 0) {
-            setStaffAccounts(cloudStaff);
-            try {
-              localStorage.setItem('protyasha_staff', JSON.stringify(cloudStaff));
-            } catch {}
+        const cloudStaff: StaffAccount[] = [];
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data() as StaffAccount;
+          if (data && data.id && data.name) {
+            cloudStaff.push(data);
           }
-        }
+        });
+        setStaffAccounts(cloudStaff);
+        safeStorage.setItem('protyasha_staff', JSON.stringify(cloudStaff));
       }, (err) => {
         const wasQuota = handleFirestoreError(err, OperationType.LIST, 'staff');
         if (wasQuota && unsubscribe) {
@@ -175,10 +170,8 @@ export function AyByayPortal({
           }
         });
         setSalaries(cloudSalaries);
-        try { 
-          localStorage.setItem('isp_cache_salaries', JSON.stringify(cloudSalaries)); 
-          window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { type: 'salaries', data: cloudSalaries } }));
-        } catch {}
+        safeStorage.setItem('isp_cache_salaries', JSON.stringify(cloudSalaries)); 
+        window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { type: 'salaries', data: cloudSalaries } }));
       }, (err) => {
         handleFirestoreError(err, OperationType.LIST, 'ay_byay_salaries');
       });
@@ -190,23 +183,23 @@ export function AyByayPortal({
   useEffect(() => {
     if (isFirestoreQuotaExceeded()) return;
     try {
-      const q = collection(staffDb, 'ay_byay_transactions');
+      const q = collection(staffDb, 'transactions');
       let unsubscribe: (() => void) | null = null;
       unsubscribe = onSnapshot(q, (snapshot) => {
         const cloudTx: Transaction[] = [];
         snapshot.forEach(docSnap => {
-          const data = docSnap.data() as Transaction;
-          if (data && data.id) cloudTx.push(data);
+          const data = docSnap.data() as any;
+          if (data && data.id && !data.isDeleted) cloudTx.push(data);
         });
-        if (cloudTx.length > 0) {
-          setTransactions(cloudTx.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')));
-          try { 
-            localStorage.setItem('isp_cache_txns', JSON.stringify(cloudTx)); 
-            window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { type: 'transactions', data: cloudTx } }));
-          } catch {}
-        }
+        
+        // Update state with cloud data (even if empty, to reflect deletions)
+        const sorted = cloudTx.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        setTransactions(sorted);
+        
+        safeStorage.setItem('isp_cache_txns', JSON.stringify(sorted)); 
+        window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { type: 'transactions', data: sorted } }));
       }, (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'ay_byay_transactions');
+        handleFirestoreError(err, OperationType.LIST, 'transactions');
       });
       return () => { if (unsubscribe) unsubscribe(); };
     } catch (e) { console.warn('Transactions listener error:', e); }
@@ -217,9 +210,7 @@ export function AyByayPortal({
     if (propOnSaveStaffAccounts) {
       propOnSaveStaffAccounts(updated);
     } else {
-      try {
-        localStorage.setItem('protyasha_staff', JSON.stringify(updated));
-      } catch {}
+      safeStorage.setItem('protyasha_staff', JSON.stringify(updated));
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('staff-data-changed', { detail: updated }));
       }, 0);
@@ -279,7 +270,7 @@ export function AyByayPortal({
   const [config, setConfig] = useState<AppConfig>(() => {
     let localSaved: any = null;
     try {
-      const raw = localStorage.getItem('isp_admin_saved_config');
+      const raw = safeStorage.getItem('isp_admin_saved_config');
       if (raw) localSaved = JSON.parse(raw);
     } catch {}
 
@@ -311,7 +302,7 @@ export function AyByayPortal({
   // Dark / Light Mode State
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('isp_dark_mode') === 'true';
+      return safeStorage.getItem('isp_dark_mode') === 'true';
     } catch {
       return false;
     }
@@ -319,7 +310,7 @@ export function AyByayPortal({
 
   useEffect(() => {
     try {
-      localStorage.setItem('isp_dark_mode', String(isDarkMode));
+      safeStorage.setItem('isp_dark_mode', String(isDarkMode));
       if (isDarkMode) {
         document.documentElement.classList.add('dark');
       } else {
@@ -345,7 +336,7 @@ export function AyByayPortal({
   // User created / managed months
   const [managedMonths, setManagedMonths] = useState<string[]>(() => {
     try {
-      const saved = localStorage.getItem('isp_managed_months');
+      const saved = safeStorage.getItem('isp_managed_months');
       if (saved) return JSON.parse(saved);
     } catch {}
     const now = new Date();
@@ -381,9 +372,7 @@ export function AyByayPortal({
 
     const updated = Array.from(new Set([newMonth, ...managedMonths]));
     setManagedMonths(updated);
-    try {
-      localStorage.setItem('isp_managed_months', JSON.stringify(updated));
-    } catch {}
+    safeStorage.setItem('isp_managed_months', JSON.stringify(updated));
 
     setSyncToast({
       message: `📅 ${getMonthBengaliName(newMonth)} মাসের তথ্য দেখানো হচ্ছে`,
@@ -394,9 +383,7 @@ export function AyByayPortal({
   const handleAddNewMonth = (monthKey: string) => {
     const updated = Array.from(new Set([monthKey, ...managedMonths]));
     setManagedMonths(updated);
-    try {
-      localStorage.setItem('isp_managed_months', JSON.stringify(updated));
-    } catch {}
+    safeStorage.setItem('isp_managed_months', JSON.stringify(updated));
     hasUserSetMonthRef.current = true;
     setSelectedMonth(monthKey);
     lastServerActiveMonthRef.current = monthKey;
@@ -883,11 +870,20 @@ export function AyByayPortal({
         recordedByGmail: currentUser?.gmail || undefined,
         createdAt: new Date().toISOString()
       };
-      await safeSetDoc(doc(staffDb, 'ay_byay_transactions', newId), payload);
+      await safeSetDoc(doc(staffDb, 'transactions', newId), payload);
       try {
-        const currentList = JSON.parse(localStorage.getItem('isp_cache_txns') || '[]');
+        const currentList = JSON.parse(safeStorage.getItem('isp_cache_txns') || '[]');
         const updated = [payload, ...(Array.isArray(currentList) ? currentList : [])];
-        localStorage.setItem('isp_cache_txns', JSON.stringify(updated));
+        safeStorage.setItem('isp_cache_txns', JSON.stringify(updated));
+        safeStorage.setItem('protyasha_transactions', JSON.stringify(updated));
+        
+        // IMPORTANT: Also sync with main app's server_data snapshot so it shows up there too
+        const docRef = doc(staffDb, 'settings', 'server_data');
+        const snap = await getDocs(query(collection(staffDb, 'transactions'), limit(100)));
+        const allTxs: any[] = [];
+        snap.forEach(d => { if(!d.data().isDeleted) allTxs.push(d.data()); });
+        await safeSetDoc(docRef, { data: { transactions: allTxs } }, { merge: true });
+        
         window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { action: 'add', transaction: payload } }));
       } catch {}
       setSyncToast({ message: '✅ নতুন লেনদেনটি সফলভাবে অন্তর্ভুক্ত হয়েছে!', type: 'success' });
@@ -914,11 +910,20 @@ export function AyByayPortal({
       const existing = transactions.find(t => t.id === id);
       if (!existing) return false;
       const updated = { ...existing, ...updatedData };
-      await safeSetDoc(doc(staffDb, 'ay_byay_transactions', id), updated);
+      await safeSetDoc(doc(staffDb, 'transactions', id), updated);
       try {
-        const currentList = JSON.parse(localStorage.getItem('isp_cache_txns') || '[]');
+        const currentList = JSON.parse(safeStorage.getItem('isp_cache_txns') || '[]');
         const updatedList = Array.isArray(currentList) ? currentList.map((t: any) => t.id === id ? { ...t, ...updatedData } : t) : [];
-        localStorage.setItem('isp_cache_txns', JSON.stringify(updatedList));
+        safeStorage.setItem('isp_cache_txns', JSON.stringify(updatedList));
+        safeStorage.setItem('protyasha_transactions', JSON.stringify(updatedList));
+        
+        // Sync main snapshot
+        const docRef = doc(staffDb, 'settings', 'server_data');
+        const snap = await getDocs(query(collection(staffDb, 'transactions'), limit(100)));
+        const allTxs: any[] = [];
+        snap.forEach(d => { if(!d.data().isDeleted) allTxs.push(d.data()); });
+        await safeSetDoc(docRef, { data: { transactions: allTxs } }, { merge: true });
+        
         window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { action: 'update', transaction: updated } }));
       } catch {}
       setSyncToast({ message: '✅ লেনদেনের তথ্য সফলভাবে আপডেট হয়েছে!', type: 'success' });
@@ -930,7 +935,7 @@ export function AyByayPortal({
     }
   };
 
-  // Delete transaction
+  // Delete transaction (Soft Delete for Recycle Bin compatibility)
   const handleDeleteTransaction = async (id: string) => {
     if (!canEdit) {
       setIsAdminLoginModalOpen(true);
@@ -938,13 +943,26 @@ export function AyByayPortal({
       return false;
     }
     try {
-      await safeDeleteDoc(doc(staffDb, 'ay_byay_transactions', id));
+      // 1. Soft delete by setting isDeleted flag in the main collection
+      await safeSetDoc(doc(staffDb, 'transactions', id), { isDeleted: true }, { merge: true });
+      
       try {
-        const currentList = JSON.parse(localStorage.getItem('isp_cache_txns') || '[]');
+        // 2. Update local state and safeStorage immediately
+        const currentList = JSON.parse(safeStorage.getItem('isp_cache_txns') || '[]');
         const updatedList = Array.isArray(currentList) ? currentList.filter((t: any) => t.id !== id) : [];
-        localStorage.setItem('isp_cache_txns', JSON.stringify(updatedList));
+        setTransactions(updatedList);
+        safeStorage.setItem('isp_cache_txns', JSON.stringify(updatedList));
+        safeStorage.setItem('protyasha_transactions', JSON.stringify(updatedList));
+        
+        // 3. Sync with main app's server_data snapshot
+        const docRef = doc(staffDb, 'settings', 'server_data');
+        await safeSetDoc(docRef, { data: { transactions: updatedList } }, { merge: true });
+        
         window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { action: 'delete', id } }));
-      } catch {}
+      } catch (err) {
+        console.warn('AyByay local sync error during delete:', err);
+      }
+
       if (selectedTransaction?.id === id) {
         setIsDetailModalOpen(false);
         setSelectedTransaction(null);
@@ -1131,7 +1149,7 @@ export function AyByayPortal({
       });
       try {
         const updated = [...salaries.filter(s => !(s.staffId === data.staffId && s.month === data.month)), record];
-        localStorage.setItem('isp_cache_salaries', JSON.stringify(updated));
+        safeStorage.setItem('isp_cache_salaries', JSON.stringify(updated));
       } catch {}
 
       // 3. Deduct from company dues in "স্টাফ কালেকশন ও কোম্পানি পাওনা" if deduction was applied and staff owes dues
@@ -1200,7 +1218,7 @@ export function AyByayPortal({
           createdAt: record.createdAt,
           recordedBy: currentUser?.id
         };
-        await safeSetDoc(doc(staffDb, 'ay_byay_transactions', txnId), salaryExpenseTx);
+        await safeSetDoc(doc(staffDb, 'transactions', txnId), salaryExpenseTx);
       }
 
       try {
@@ -1230,7 +1248,7 @@ export function AyByayPortal({
 
       // 2. Remove linked expense transaction from Firestore
       const linkedTxId = `tx-sal-${id}`;
-      await safeDeleteDoc(doc(staffDb, 'ay_byay_transactions', linkedTxId));
+      await safeDeleteDoc(doc(staffDb, 'transactions', linkedTxId));
 
       try {
         window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { action: 'salary_deleted', id } }));
@@ -1249,7 +1267,7 @@ export function AyByayPortal({
   const handleSaveConfig = async (newConfig: Partial<AppConfig>) => {
     try {
       const merged = { ...config, ...newConfig };
-      localStorage.setItem('isp_admin_saved_config', JSON.stringify(merged));
+      safeStorage.setItem('isp_admin_saved_config', JSON.stringify(merged));
       
       // Save to Firestore staffDb
       await safeSetDoc(doc(staffDb, 'ay_byay_config', 'main'), merged);
