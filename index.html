@@ -63,6 +63,15 @@
     </div>
     <div id="root"></div>
     <script>
+      // Force hide splash screen after a maximum of 6 seconds if app initialization stalls
+      window.addEventListener('load', () => {
+        console.log('Window loaded. Setting safety timer...');
+        setTimeout(() => {
+          document.body.classList.add('app-ready');
+          console.log('Splash screen forced hidden via window load timer.');
+        }, 4000);
+      });
+
       // Fallback: hide splash screen after 3 seconds if app doesn't ready
       setTimeout(() => {
         document.body.classList.add('app-ready');

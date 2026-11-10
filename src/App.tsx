@@ -512,8 +512,12 @@ export default function App() {
       }
     }
   }, [adminAvatar]);
-
   useEffect(() => {
+    // Safety Timeout: Force hide splash screen after 5s regardless of Firestore status
+    const safetyTimer = setTimeout(() => {
+      document.body.classList.add('app-ready');
+    }, 5000);
+
     // 2. Load from Cloud Firestore directly instead of /api/data
     if (!isFirestoreQuotaExceeded()) {
       getDoc(doc(db, 'settings', 'server_data')).then((snapshot) => {
@@ -564,9 +568,11 @@ export default function App() {
       }).catch(err => {
         console.warn('Initial data load failed:', err);
       }).finally(() => {
+        clearTimeout(safetyTimer);
         document.body.classList.add('app-ready');
       });
     } else {
+      clearTimeout(safetyTimer);
       document.body.classList.add('app-ready');
     }
   }, []);
