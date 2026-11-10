@@ -11,7 +11,8 @@ dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = process.env.PORT || 3000;
-const isProd = process.env.NODE_ENV === 'production' || fs.existsSync(path.join(__dirname, 'dist'));
+const isProd = process.env.NODE_ENV === 'production' || fs.existsSync(path.join(__dirname, 'dist')) || fs.existsSync(path.join(__dirname, 'docs'));
+const buildDir = fs.existsSync(path.join(__dirname, 'dist')) ? 'dist' : (fs.existsSync(path.join(__dirname, 'docs')) ? 'docs' : 'dist');
 
 app.use(cors());
 app.use(compression());
@@ -80,9 +81,9 @@ if (!isProd) {
     });
     app.use(vite.middlewares);
 } else {
-    app.use(express.static(path.join(__dirname, 'dist')));
+    app.use(express.static(path.join(__dirname, buildDir)));
     app.get('*', (req: express.Request, res: express.Response) => {
-        res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+        res.sendFile(path.join(__dirname, buildDir, 'index.html'));
     });
 }
 
