@@ -183,13 +183,13 @@ export function AyByayPortal({
   useEffect(() => {
     if (isFirestoreQuotaExceeded()) return;
     try {
-      const q = collection(staffDb, 'transactions');
+      const q = collection(staffDb, 'ay_byay_transactions');
       let unsubscribe: (() => void) | null = null;
       unsubscribe = onSnapshot(q, (snapshot) => {
         const cloudTx: Transaction[] = [];
         snapshot.forEach(docSnap => {
           const data = docSnap.data() as any;
-          if (data && data.id && !data.isDeleted) cloudTx.push(data);
+          if (data && data.id && !data.isDeleted && data.source === 'ay-byay') cloudTx.push(data);
         });
         
         // Update state with cloud data (even if empty, to reflect deletions)
@@ -868,21 +868,15 @@ export function AyByayPortal({
         id: newId,
         recordedBy: currentUser?.id || 'admin-primary',
         recordedByGmail: currentUser?.gmail || undefined,
+        source: 'ay-byay',
         createdAt: new Date().toISOString()
       };
-      await safeSetDoc(doc(staffDb, 'transactions', newId), payload);
+      await safeSetDoc(doc(staffDb, 'ay_byay_transactions', newId), payload);
       try {
         const currentList = JSON.parse(safeStorage.getItem('isp_cache_txns') || '[]');
         const updated = [payload, ...(Array.isArray(currentList) ? currentList : [])];
         safeStorage.setItem('isp_cache_txns', JSON.stringify(updated));
         safeStorage.setItem('protyasha_transactions', JSON.stringify(updated));
-        
-        // IMPORTANT: Also sync with main app's server_data snapshot so it shows up there too
-        const docRef = doc(staffDb, 'settings', 'server_data');
-        const snap = await getDocs(query(collection(staffDb, 'transactions'), limit(100)));
-        const allTxs: any[] = [];
-        snap.forEach(d => { if(!d.data().isDeleted) allTxs.push(d.data()); });
-        await safeSetDoc(docRef, { data: { transactions: allTxs } }, { merge: true });
         
         window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { action: 'add', transaction: payload } }));
       } catch {}
@@ -910,19 +904,12 @@ export function AyByayPortal({
       const existing = transactions.find(t => t.id === id);
       if (!existing) return false;
       const updated = { ...existing, ...updatedData };
-      await safeSetDoc(doc(staffDb, 'transactions', id), updated);
+      await safeSetDoc(doc(staffDb, 'ay_byay_transactions', id), updated);
       try {
         const currentList = JSON.parse(safeStorage.getItem('isp_cache_txns') || '[]');
         const updatedList = Array.isArray(currentList) ? currentList.map((t: any) => t.id === id ? { ...t, ...updatedData } : t) : [];
         safeStorage.setItem('isp_cache_txns', JSON.stringify(updatedList));
         safeStorage.setItem('protyasha_transactions', JSON.stringify(updatedList));
-        
-        // Sync main snapshot
-        const docRef = doc(staffDb, 'settings', 'server_data');
-        const snap = await getDocs(query(collection(staffDb, 'transactions'), limit(100)));
-        const allTxs: any[] = [];
-        snap.forEach(d => { if(!d.data().isDeleted) allTxs.push(d.data()); });
-        await safeSetDoc(docRef, { data: { transactions: allTxs } }, { merge: true });
         
         window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { action: 'update', transaction: updated } }));
       } catch {}
@@ -944,7 +931,7 @@ export function AyByayPortal({
     }
     try {
       // 1. Delete document directly from Firestore so it doesn't auto-return
-      await safeDeleteDoc(doc(staffDb, 'transactions', id));
+      await safeDeleteDoc(doc(staffDb, 'ay_byay_transactions', id));
       
       try {
         // 2. Update local state and safeStorage immediately
@@ -953,10 +940,6 @@ export function AyByayPortal({
         setTransactions(updatedList);
         safeStorage.setItem('isp_cache_txns', JSON.stringify(updatedList));
         safeStorage.setItem('protyasha_transactions', JSON.stringify(updatedList));
-        
-        // 3. Sync with main app's server_data snapshot
-        const docRef = doc(staffDb, 'settings', 'server_data');
-        await safeSetDoc(docRef, { data: { transactions: updatedList } }, { merge: true });
         
         window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { action: 'delete', id } }));
       } catch (err) {
@@ -1215,10 +1198,19 @@ export function AyByayPortal({
           date: payDate,
           paymentMethod: record.paymentMethod,
           note: `${getMonthBengaliName(data.month)} মাসের বেতন। মূল: ৳${data.baseSalary}, বোনাস: ৳${data.bonusOrAllowance || 0}, কর্তন: ৳${data.deductionOrAdvance || 0}। ভাউচার: ${voucher}`,
+          source: 'ay-byay',
           createdAt: record.createdAt,
           recordedBy: currentUser?.id
         };
-        await safeSetDoc(doc(staffDb, 'transactions', txnId), salaryExpenseTx);
+        await safeSetDoc(doc(staffDb, 'ay_byay_transactions', txnId), salaryExpenseTx);
+
+        // Update local transactions state & cache immediately
+        setTransactions(prev => {
+          const filtered = prev.filter(t => t.id !== txnId);
+          const updated = [salaryExpenseTx, ...filtered];
+          safeStorage.setItem('isp_cache_txns', JSON.stringify(updated));
+          return updated;
+        });
       }
 
       try {
@@ -1241,14 +1233,67 @@ export function AyByayPortal({
       return false;
     }
     try {
+      const salRecord = salaries.find(s => s.id === id);
+
       // 1. Delete directly from Google Cloud Firestore staffDb collection 'ay_byay_salaries'
       await safeDeleteDoc(doc(staffDb, 'ay_byay_salaries', id)).catch(err => {
         handleFirestoreError(err, OperationType.DELETE, `ay_byay_salaries/${id}`);
       });
 
-      // 2. Remove linked expense transaction from Firestore
+      // 2. Remove linked expense transaction from Ay-Byay Firestore
       const linkedTxId = `tx-sal-${id}`;
-      await safeDeleteDoc(doc(staffDb, 'transactions', linkedTxId));
+      await safeDeleteDoc(doc(staffDb, 'ay_byay_transactions', linkedTxId));
+
+      // 3. Revert company due collection in "স্টাফ কালেকশন ও কোম্পানি পাওনা" if deduction was applied
+      if (salRecord && (salRecord.deductionOrAdvance || 0) > 0) {
+        const cleanPhone = (p: string) => (p || '').replace(/[^0-9]/g, '');
+        const staffObj = effectiveStaffList.find(s => s.id === salRecord.staffId);
+        const targetPhone = cleanPhone(staffObj?.phone || '');
+        const matchedAcc = staffAccounts.find(a => 
+          a.id === salRecord.staffId || 
+          (targetPhone.length >= 10 && cleanPhone(a.phone) === targetPhone) ||
+          (a.name && salRecord.staffName && a.name.trim().toLowerCase() === salRecord.staffName.trim().toLowerCase())
+        );
+
+        if (matchedAcc && matchedAcc.transactions) {
+          const revertTarget = matchedAcc.transactions.find(t => 
+            t.type === 'collection' && 
+            t.note?.includes(getMonthBengaliName(salRecord.month)) &&
+            t.note?.includes('বেতন থেকে কোম্পানি পাওনা কর্তন')
+          );
+          if (revertTarget) {
+            const filteredTxs = matchedAcc.transactions.filter(t => t.id !== revertTarget.id);
+            const newTotalDue = filteredTxs.filter(t => t.type === 'due').reduce((sum, t) => sum + (t.amount || 0), 0);
+            const newTotalCollected = filteredTxs.filter(t => t.type === 'collection').reduce((sum, t) => sum + (t.amount || 0), 0);
+            const newRemaining = Math.max(0, newTotalDue - newTotalCollected);
+
+            const updatedAccount: StaffAccount = {
+              ...matchedAcc,
+              totalDue: newTotalDue,
+              totalCollected: newTotalCollected,
+              remainingDue: newRemaining,
+              transactions: filteredTxs
+            };
+
+            safeSetDoc(doc(staffDb, 'staff', matchedAcc.id), updatedAccount).catch(() => {});
+            const updatedAccounts = staffAccounts.map(a => a.id === matchedAcc.id ? updatedAccount : a);
+            handleSaveStaffAccounts(updatedAccounts);
+          }
+        }
+      }
+
+      // Update local state and caches immediately
+      setSalaries(prev => {
+        const updated = prev.filter(s => s.id !== id);
+        safeStorage.setItem('isp_cache_salaries', JSON.stringify(updated));
+        return updated;
+      });
+
+      setTransactions(prev => {
+        const updated = prev.filter(t => t.id !== linkedTxId);
+        safeStorage.setItem('isp_cache_txns', JSON.stringify(updated));
+        return updated;
+      });
 
       try {
         window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { action: 'salary_deleted', id } }));

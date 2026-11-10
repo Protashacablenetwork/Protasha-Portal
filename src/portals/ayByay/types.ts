@@ -15,6 +15,7 @@ export interface Transaction {
   note?: string;
   recordedBy?: string;
   recordedByGmail?: string;
+  source?: 'main' | 'ay-byay';
   createdAt?: string;
 }
 

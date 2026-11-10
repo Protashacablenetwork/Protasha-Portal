@@ -58,13 +58,16 @@ interface SummaryData {
   source?: 'ayByay' | 'cached' | 'manual';
 }
 
-// Fallback baseline summary so data is NEVER blank or missing
+// Fallback baseline summary
 const DEFAULT_SUMMARY: SummaryData = {
-  totalIncome: 88400,
-  totalExpense: 30524,
+  totalIncome: 0,
+  totalExpense: 0,
   staffSalary: 0,
-  otherExpense: 30524,
-  netProfit: 57876
+  otherExpense: 0,
+  netProfit: 0,
+  incomeCount: 0,
+  expenseCount: 0,
+  source: 'ayByay'
 };
 
 export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
@@ -103,13 +106,19 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
     }
   });
 
-  // Calculate live metrics for any month from transactions & salaries
+  // Calculate live metrics for any month strictly from Ay-Byay transactions & salaries
   const calculateMonthStats = useCallback((monthKey: string, txList: any[], salList: any[]): SummaryData => {
     let inc = 0;
-    let exp = 0;
+    let nonSalExp = 0;
+    let salExpInTx = 0;
     let incCount = 0;
     let expCount = 0;
     let hasTxn = false;
+
+    const isSalaryTx = (t: any) => 
+      (t.id && String(t.id).startsWith('tx-sal-')) ||
+      t.category === 'বেতন (Salary)' || 
+      (typeof t.description === 'string' && (t.description.includes('স্টাফ বেতন') || t.description.includes('বেতন')));
 
     (txList || []).forEach((t: any) => {
       if (!t || t.isDeleted) return;
@@ -122,25 +131,32 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
           inc += amt;
           incCount++;
         } else {
-          exp += amt;
+          if (isSalaryTx(t)) {
+            salExpInTx += amt;
+          } else {
+            nonSalExp += amt;
+          }
           expCount++;
         }
       }
     });
 
-    const sal = (Array.isArray(salList) ? salList : [])
+    // Salaries recorded in ay_byay_salaries collection for this month
+    const salFromList = (Array.isArray(salList) ? salList : [])
       .filter((s: any) => s && s.month === monthKey && s.paymentStatus === 'paid')
       .reduce((acc: number, s: any) => acc + (Number(s.netSalary) || 0), 0);
 
-    const oth = Math.max(0, exp - sal);
-    const net = inc - exp;
+    // Accurately account for staff salary without double counting
+    const effectiveSalary = Math.max(salExpInTx, salFromList);
+    const totalExp = nonSalExp + effectiveSalary;
+    const net = inc - totalExp;
 
-    if (hasTxn || sal > 0) {
+    if (hasTxn || salFromList > 0 || salExpInTx > 0) {
       return {
         totalIncome: inc,
-        totalExpense: exp,
-        staffSalary: sal,
-        otherExpense: oth,
+        totalExpense: totalExp,
+        staffSalary: effectiveSalary,
+        otherExpense: nonSalExp,
         netProfit: net,
         incomeCount: incCount,
         expenseCount: expCount,
@@ -148,73 +164,18 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
       };
     }
 
-    // Check main ISP transactions if collection is empty for this month
+    // Archived month fallback (if summary was previously saved)
     try {
-      const rawMain = safeStorage.getItem('protyasha_transactions');
-      if (rawMain) {
-        const mainTx = JSON.parse(rawMain);
-        if (Array.isArray(mainTx) && mainTx.length > 0) {
-          let mInc = 0;
-          let mExp = 0;
-          let mIncCount = 0;
-          let mExpCount = 0;
-          let mHas = false;
-          mainTx.forEach((t: any) => {
-            if (!t || t.isDeleted) return;
-            const d = t.date || t.createdAt;
-            if (!d || typeof d !== 'string') return;
-            if (getTransactionMonth(d) === monthKey) {
-              mHas = true;
-              const amt = parseNumber(t.amount);
-              if (t.type === 'income' || isIncomeTransaction(t)) {
-                mInc += amt;
-                mIncCount++;
-              } else {
-                mExp += amt;
-                mExpCount++;
-              }
-            }
-          });
-          if (mHas) {
-            return {
-              totalIncome: mInc,
-              totalExpense: mExp,
-              staffSalary: 0,
-              otherExpense: mExp,
-              netProfit: mInc - mExp,
-              incomeCount: mIncCount,
-              expenseCount: mExpCount,
-              source: 'ayByay'
-            };
-          }
+      const saved = safeStorage.getItem('protyasha_cached_summary');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed.totalIncome === 'number' && monthKey === currentMonthKey) {
+          return parsed;
         }
       }
     } catch {}
 
-    // Fallback baseline for current month
-    if (monthKey === currentMonthKey) {
-      try {
-        const saved = safeStorage.getItem('protyasha_cached_summary');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (parsed && typeof parsed.totalIncome === 'number') {
-            return parsed;
-          }
-        }
-      } catch {}
-      return DEFAULT_SUMMARY;
-    }
-
-    return {
-      totalIncome: 0,
-      totalExpense: 0,
-      staffSalary: 0,
-      otherExpense: 0,
-      netProfit: 0,
-      incomeCount: 0,
-      expenseCount: 0,
-      source: 'cached'
-    };
+    return DEFAULT_SUMMARY;
   }, [currentMonthKey]);
 
   // 1. Reliable instant Summary state initialized from current live data
@@ -347,17 +308,19 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
     let unsubSals: (() => void) | null = null;
 
     try {
-      const qTxns = collection(staffDb, 'transactions');
+      const qTxns = collection(staffDb, 'ay_byay_transactions');
       unsubTxns = onSnapshot(qTxns, (snapshot) => {
         const cloudTx: any[] = [];
         snapshot.forEach(docSnap => {
           const t = docSnap.data();
-          if (t && (t.id || docSnap.id)) cloudTx.push({ ...t, id: t.id || docSnap.id });
+          if (t && (t.id || docSnap.id) && !t.isDeleted) {
+            cloudTx.push({ ...t, id: t.id || docSnap.id });
+          }
         });
         setAyByayTxns(cloudTx);
         try { safeStorage.setItem('isp_cache_txns', JSON.stringify(cloudTx)); } catch {}
       }, (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'transactions');
+        handleFirestoreError(err, OperationType.LIST, 'ay_byay_transactions');
       });
     } catch (e) {
       console.warn('Realtime transactions subscription error:', e);
@@ -458,12 +421,12 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
   const fetchSummary = async (monthKey: string = selectedMonth) => {
     setLoading(true);
     try {
-      const qTxns = collection(staffDb, 'transactions');
+      const qTxns = collection(staffDb, 'ay_byay_transactions');
       const snapTxns = await getDocs(qTxns);
       const cloudTx: any[] = [];
       snapTxns.forEach(docSnap => {
         const t = docSnap.data();
-        if (t && (t.id || docSnap.id)) cloudTx.push({ ...t, id: t.id || docSnap.id });
+        if (t && (t.id || docSnap.id) && !t.isDeleted) cloudTx.push({ ...t, id: t.id || docSnap.id });
       });
       if (cloudTx.length > 0) {
         setAyByayTxns(cloudTx);

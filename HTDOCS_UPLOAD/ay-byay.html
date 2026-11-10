@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>আয়-ব্যয় - স্মার্ট ব্যবস্থাপনা</title>
+<link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@300;400;500;600;700&family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+    * { 
+        margin: 0; padding: 0; box-sizing: border-box; 
+        -webkit-tap-highlight-color: transparent; 
+    }
+
+    html, body {
+        height: 100%;
+        width: 100%;
+        overflow: hidden;
+        font-family: 'Hind Siliguri', 'Poppins', system-ui, sans-serif;
+        background: linear-gradient(180deg, #0f172a 0%, #1e1b4b 50%, #0f766e 100%);
+    }
+
+    /* ============================================================
+       🌟 স্প্ল্যাশ স্ক্রিন
+       ============================================================ */
+    #splashScreen {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        transition: opacity 0.5s ease, filter 0.5s ease;
+    }
+
+    #splashScreen.fade-out-blur {
+        opacity: 0;
+        filter: blur(10px);
+        pointer-events: none;
+    }
+
+    .logo-area {
+        position: relative;
+        width: 320px;
+        height: 320px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 10px;
+        margin-top: -20px;
+    }
+
+    .orbit-ring {
+        position: absolute;
+        width: 270px;
+        height: 270px;
+        border: 1px dashed rgba(255, 255, 255, 0.2);
+        border-radius: 50%;
+    }
+    
+    .orbit-ring::before {
+        content: '';
+        position: absolute;
+        inset: -10px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 50%;
+    }
+
+    .orbit-container { position: absolute; width: 100%; height: 100%; }
+
+    .icon-holder {
+        position: absolute; top: 50%; left: 50%;
+        transform: translate(-50%, -50%) rotate(var(--angle)) translateY(-135px);
+    }
+
+    .floating-icon {
+        width: 50px; height: 50px;
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        backdrop-filter: blur(5px);
+        -webkit-backdrop-filter: blur(5px);
+        animation: moveToCenter 4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    }
+
+    .floating-icon svg { width: 22px; height: 22px; stroke: #a5f3fc; stroke-width: 2; fill: none; }
+
+    .icon-holder:nth-child(1) .floating-icon { animation-delay: 0s; }
+    .icon-holder:nth-child(2) .floating-icon { animation-delay: 0.3s; }
+    .icon-holder:nth-child(3) .floating-icon { animation-delay: 0.6s; }
+    .icon-holder:nth-child(4) .floating-icon { animation-delay: 0.9s; }
+    .icon-holder:nth-child(5) .floating-icon { animation-delay: 1.2s; }
+
+    @keyframes moveToCenter {
+        0%, 100% { transform: translateY(0) scale(1); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2); background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.2); }
+        50% { transform: translateY(65px) scale(0.85); box-shadow: 0 0 25px rgba(45, 212, 191, 0.8); background: rgba(255, 255, 255, 0.25); border-color: rgba(45, 212, 191, 0.5); }
+    }
+
+    .center-logo {
+        position: relative; width: 160px; height: 160px;
+        background: #ffffff; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3), 0 0 0 8px rgba(255, 255, 255, 0.1);
+        z-index: 10; animation: pulseLogo 3s ease-in-out infinite;
+        overflow: hidden; padding: 4px;
+    }
+
+    .center-logo img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+
+    .text-area { text-align: center; z-index: 10; animation: fadeInUp 1s ease-out 0.3s both; }
+    .main-title { font-size: 2.8rem; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 15px; text-shadow: 0 4px 15px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; gap: 5px; }
+    .main-title .text-green { color: #4ade80; }
+    .main-title .text-red { color: #f87171; }
+    .main-title .dash { color: rgba(255, 255, 255, 0.7); }
+
+    .divider { display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 15px; }
+    .divider .line { width: 40px; height: 1px; background: rgba(255, 255, 255, 0.4); }
+    .divider .dot { width: 6px; height: 6px; background: #2dd4bf; border-radius: 50%; box-shadow: 0 0 10px rgba(45, 212, 191, 0.9); }
+    .subtitle { font-size: 1.25rem; font-weight: 600; color: #e2e8f0; line-height: 1.5; margin-bottom: 10px; }
+    .tagline { font-size: 0.95rem; font-weight: 400; color: rgba(255, 255, 255, 0.7); letter-spacing: 0.5px; }
+
+    .loading-section { margin-top: 40px; display: flex; flex-direction: column; align-items: center; gap: 15px; animation: fadeIn 1.5s ease-out 0.8s both; z-index: 10; }
+    .loader-ring { position: relative; width: 40px; height: 40px; }
+    .loader-ring::before, .loader-ring::after { content: ''; position: absolute; inset: 0; border-radius: 50%; border: 3px solid transparent; }
+    .loader-ring::before { border-top-color: #2dd4bf; border-right-color: #2dd4bf; animation: spin 1s cubic-bezier(0.68, -0.55, 0.27, 1.55) infinite; box-shadow: 0 0 15px rgba(45, 212, 191, 0.6); }
+    .loader-ring::after { inset: 8px; border-bottom-color: rgba(255, 255, 255, 0.6); border-left-color: rgba(255, 255, 255, 0.6); animation: spin 1.5s linear infinite reverse; }
+    .loading-text { font-size: 1.1rem; color: #ffffff; font-weight: 600; letter-spacing: 1px; animation: pulseOpacity 1.5s ease-in-out infinite; }
+
+    .footer-menu { position: absolute; bottom: 40px; display: flex; align-items: center; gap: 20px; color: rgba(255, 255, 255, 0.7); font-size: 0.95rem; font-weight: 500; animation: fadeIn 1.5s ease-out 1s both; }
+    .footer-menu .menu-item { display: flex; align-items: center; gap: 6px; }
+    .footer-menu svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 2; fill: none; }
+    .footer-menu .text-green { color: #4ade80; }
+    .footer-menu .text-green svg { stroke: #4ade80; }
+    .footer-menu .text-red { color: #f87171; }
+    .footer-menu .text-red svg { stroke: #f87171; }
+    .footer-menu .sep { width: 1px; height: 15px; background: rgba(255, 255, 255, 0.2); }
+
+    /* Animations */
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+    @keyframes pulseLogo { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.03); } }
+    @keyframes pulseOpacity { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
+    @keyframes fadeInUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes ping { 75%, 100% { transform: scale(1.5); opacity: 0; } }
+    @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-5px); } 75% { transform: translateX(5px); } }
+
+    /* ============================================================
+       😔 অফলাইন স্ক্রিন
+       ============================================================ */
+    #offlineScreen {
+        position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+        padding: 20px; z-index: 9996; background: linear-gradient(180deg, #450a0a 0%, #7f1d1d 100%);
+        overflow: hidden; opacity: 0; transition: opacity 0.5s ease;
+    }
+    #offlineScreen.show { opacity: 1; }
+    .offline-card {
+        position: relative; z-index: 2; background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.1);
+        max-width: 420px; width: 100%; padding: 40px 30px 30px; border-radius: 32px;
+        text-align: center; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        transform: translateY(20px) scale(0.95); transition: all 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    #offlineScreen.show .offline-card { transform: translateY(0) scale(1); }
+    .offline-icon-wrap { position: relative; width: 100px; height: 100px; margin: 0 auto 24px; background: rgba(239, 68, 68, 0.15); border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+    .offline-icon-wrap::before { content: ''; position: absolute; inset: -8px; border-radius: 50%; border: 2px solid rgba(239, 68, 68, 0.3); animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite; }
+    .offline-icon-wrap svg { width: 48px; height: 48px; stroke: #fca5a5; stroke-width: 2; fill: none; animation: shake 3s ease-in-out infinite; }
+    .offline-card h1 { font-size: 1.8rem; font-weight: 700; color: #ffffff; margin-bottom: 6px; }
+    .offline-card .subtitle { font-size: 1rem; color: #fca5a5; margin-bottom: 24px; font-weight: 500; }
+    .offline-card p { font-size: 1rem; color: #cbd5e1; line-height: 1.6; margin-bottom: 28px; font-weight: 400; }
+    .auto-retry-badge { display: inline-flex; align-items: center; gap: 8px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.15); padding: 8px 18px; border-radius: 40px; font-size: 0.85rem; color: #ffffff; margin-bottom: 24px; animation: pulseOpacity 1.5s ease-in-out infinite; }
+    .auto-retry-badge svg { width: 14px; height: 14px; stroke: #ffffff; stroke-width: 2; fill: none; animation: spin 2s linear infinite; }
+    .btn-retry { background: #ffffff; color: #991b1b; border: none; font-family: inherit; font-size: 1.05rem; font-weight: 700; padding: 16px 30px; border-radius: 50px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; width: 100%; box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.3); transition: all 0.3s ease; }
+    .btn-retry:active { transform: scale(0.98); }
+    .btn-retry svg { width: 20px; height: 20px; stroke: #991b1b; stroke-width: 2.5; fill: none; }
+    .offline-footer { margin-top: 20px; font-size: 0.75rem; color: rgba(255, 255, 255, 0.4); border-top: 1px solid rgba(255, 255, 255, 0.1); padding-top: 15px; }
+
+    @media (max-width: 480px) {
+        .main-title { font-size: 2.4rem; }
+        .subtitle { font-size: 1.15rem; }
+        .logo-area { width: 280px; height: 280px; }
+        .center-logo { width: 140px; height: 140px; }
+        .icon-holder { transform: translate(-50%, -50%) rotate(var(--angle)) translateY(-115px); }
+        .floating-icon { width: 44px; height: 44px; }
+        @keyframes moveToCenter { 0%, 100% { transform: translateY(0) scale(1); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2); } 50% { transform: translateY(50px) scale(0.85); box-shadow: 0 0 20px rgba(45, 212, 191, 0.8); } }
+        .footer-menu { gap: 12px; font-size: 0.85rem; }
+        .loading-section { margin-top: 25px; }
+    }
+</style>
+</head>
+<body>
+
+<!-- ১. স্প্ল্যাশ স্ক্রিন -->
+<div id="splashScreen">
+    <div class="logo-area">
+        <div class="orbit-ring"></div>
+        <div class="orbit-container">
+            <div class="icon-holder" style="--angle: 0deg;"><div class="floating-icon"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"></rect><path d="M3 10h18"></path><circle cx="16" cy="14" r="1.5"></circle></svg></div></div>
+            <div class="icon-holder" style="--angle: 72deg;"><div class="floating-icon"><svg viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"></path></svg></div></div>
+            <div class="icon-holder" style="--angle: 144deg;"><div class="floating-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg></div></div>
+            <div class="icon-holder" style="--angle: 216deg;"><div class="floating-icon"><svg viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" rx="2"></rect><line x1="8" y1="6" x2="16" y2="6"></line><line x1="16" y1="14" x2="16.01" y2="14"></line><line x1="12" y1="14" x2="12.01" y2="14"></line><line x1="8" y1="14" x2="8.01" y2="14"></line><line x1="16" y1="18" x2="16.01" y2="18"></line><line x1="12" y1="18" x2="12.01" y2="18"></line><line x1="8" y1="18" x2="8.01" y2="18"></line></svg></div></div>
+            <div class="icon-holder" style="--angle: 288deg;"><div class="floating-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg></div></div>
+        </div>
+        <div class="center-logo">
+            <img src="https://i.ibb.co/0jZfwH1s/file-0000000079b4821185e81949d65e68d5.png" alt="আয়-ব্যয় লোগো">
+        </div>
+    </div>
+
+    <div class="text-area">
+        <h1 class="main-title">
+            <span class="text-green">আয়</span><span class="dash">-</span><span class="text-red">ব্যয়</span>
+        </h1>
+        <div class="divider"><div class="line"></div><div class="dot"></div><div class="line"></div></div>
+        <p class="subtitle">স্মার্ট ব্যবস্থাপনা</p>
+        <p class="tagline">স্মার্ট হিসাব, স্মার্ট জীবন।</p>
+    </div>
+
+    <div class="loading-section">
+        <div class="loader-ring"></div>
+        <p class="loading-text" id="splashLoadingText">লোড হচ্ছে...</p>
+    </div>
+
+    <div class="footer-menu">
+        <div class="menu-item text-green"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"></path></svg> আয়</div>
+        <div class="sep"></div>
+        <div class="menu-item text-red"><svg viewBox="0 0 24 24"><path d="M12 5v14M19 12l-7 7-7-7"></path></svg> ব্যয়</div>
+        <div class="sep"></div>
+        <div class="menu-item"><svg viewBox="0 0 24 24"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path><path d="M22 12A10 10 0 0 0 12 2v10z"></path></svg> রিপোর্ট</div>
+    </div>
+</div>
+
+<!-- ২. অফলাইন স্ক্রিন -->
+<div id="offlineScreen">
+    <div class="offline-card">
+        <div class="offline-icon-wrap">
+            <svg viewBox="0 0 24 24"><path d="M1 1l22 22" stroke="#fca5a5" stroke-width="2"></path><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"></path><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"></path><path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><line x1="12" y1="20" x2="12.01" y2="20"></line></svg>
+        </div>
+        <h1>ইন্টারনেট নেই</h1>
+        <div class="subtitle">⚡ সংযোগ বিচ্ছিন্ন</div>
+        <p>দুঃখিত! পেজটি লোড করা যাচ্ছে না।<br>অনুগ্রহ করে ইন্টারনেট সংযোগ পরীক্ষা করুন।</p>
+        <div class="auto-retry-badge"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg> নেট ফিরলে অটো লোড হবে</div>
+        <button class="btn-retry" onclick="retryLoad()"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg> আবার চেষ্টা করুন</button>
+        <div class="offline-footer">আয়-ব্যয় • স্মার্ট ব্যবস্থাপনা</div>
+    </div>
+</div>
+
+<script>
+    /* ============================================================
+       🔐 টার্গেট লিঙ্ক (পিন ছাড়া সরাসরি ওপেন হবে)
+       ============================================================ */
+    const _encoded = 'aHR0cHM6Ly9zZXJ2aWNlLTQxODM5NzAxNTQ0OC5hc2lhLXNvdXRoZWFzdDEucnVuLmFwcC8=';
+    const TARGET_URL = atob(_encoded);
+
+    // Elements
+    const splashScreen = document.getElementById('splashScreen');
+    const offlineScreen = document.getElementById('offlineScreen');
+    const splashLoadingText = document.getElementById('splashLoadingText');
+    
+    // Redirect State
+    let hasRedirected = false;
+    let autoRetryInterval = null;
+
+    /* ============================================================
+       Splash & Direct Portal Init (No PIN Screen)
+       ============================================================ */
+    setTimeout(() => {
+        splashScreen.classList.add('fade-out-blur');
+        setTimeout(() => {
+            splashScreen.style.display = 'none';
+            proceedToApp();
+        }, 400);
+    }, 1800); 
+
+    function proceedToApp() {
+        if (checkOnline()) {
+            goToSite();
+        } else {
+            showOffline();
+        }
+    }
+
+    function showOffline() {
+        if (hasRedirected) return;
+        splashScreen.classList.add('fade-out-blur');
+        setTimeout(() => {
+            splashScreen.style.display = 'none';
+            offlineScreen.style.display = 'flex';
+            setTimeout(() => offlineScreen.classList.add('show'), 50);
+        }, 300); 
+        startAutoRetry();
+    }
+
+    function goToSite() {
+        if (hasRedirected) return;
+        hasRedirected = true;
+        stopAutoRetry();
+        window.location.replace(TARGET_URL);
+    }
+
+    function startAutoRetry() {
+        stopAutoRetry();
+        autoRetryInterval = setInterval(() => {
+            if (hasRedirected) { stopAutoRetry(); return; }
+            if (navigator.onLine) {
+                goToSite();
+            }
+        }, 3000);
+    }
+
+    function stopAutoRetry() {
+        if (autoRetryInterval) { clearInterval(autoRetryInterval); autoRetryInterval = null; }
+    }
+
+    function checkOnline() { return navigator.onLine !== false; }
+
+    function retryLoad() {
+        stopAutoRetry();
+        if (checkOnline()) {
+            goToSite();
+        } else {
+            showOffline();
+        }
+    }
+
+    window.addEventListener('online', () => {
+        if (!hasRedirected && offlineScreen.style.display === 'flex') retryLoad();
+    });
+
+    window.addEventListener('offline', () => {
+        if (!hasRedirected) showOffline();
+    });
+</script>
+
+</body>
+</html>

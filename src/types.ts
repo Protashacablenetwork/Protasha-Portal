@@ -28,6 +28,7 @@ export interface Transaction {
   time: string; // e.g. "11:02 AM"
   note: string;
   category: string;
+  source?: 'main' | 'ay-byay';
   isDeleted?: boolean;
   recordedBy?: string;
   recordedByGmail?: string;

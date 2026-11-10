@@ -10,7 +10,7 @@ export default defineConfig(() => {
   return {
     base: './',
     build: {
-      outDir: 'dist',
+      outDir: 'HTDOCS_UPLOAD',
     },
     plugins: [react(), tailwindcss()],
     resolve: {

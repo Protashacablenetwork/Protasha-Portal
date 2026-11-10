@@ -527,7 +527,7 @@ export default function App() {
         const data = cloudDoc.data;
 
         if (data.transactions && Array.isArray(data.transactions)) {
-          const allTxs = data.transactions.filter((t: any) => t && t.id && !t.isDeleted && !String(t.id).startsWith('txn-init-'));
+          const allTxs = data.transactions.filter((t: any) => t && t.id && !t.isDeleted && !String(t.id).startsWith('txn-init-') && t.source !== 'ay-byay');
           const income = allTxs.filter((t: any) => t.type === 'income').reduce((sum: number, t: any) => sum + (Number(t.amount) || 0), 0);
           const expense = allTxs.filter((t: any) => t.type === 'expense').reduce((sum: number, t: any) => sum + (Number(t.amount) || 0), 0);
           
@@ -609,7 +609,7 @@ export default function App() {
       const snap = await getDoc(doc(db, 'settings', 'server_data'));
       if (snap.exists() && snap.data().data) {
         const data = snap.data().data;
-        if (data.transactions) setTransactions(data.transactions);
+        if (data.transactions) setTransactions(data.transactions.filter((t: any) => t.source !== 'ay-byay'));
         if (data.staffAccounts) setStaffAccounts(data.staffAccounts);
         if (data.channels) setChannels(cleanChannelLogos(data.channels));
         if (data.banners) setBanners(data.banners);
@@ -821,6 +821,20 @@ export default function App() {
     };
     window.addEventListener('message', handlePortalMessage);
     return () => window.removeEventListener('message', handlePortalMessage);
+  }, []);
+
+  // Real-time synchronization for staffAccounts from Ay-Byay payroll deductions
+  useEffect(() => {
+    const handleStaffChanged = (event: any) => {
+      if (event.detail && Array.isArray(event.detail)) {
+        setStaffAccounts(event.detail);
+        try {
+          safeStorage.setItem('protyasha_staff', JSON.stringify(event.detail));
+        } catch {}
+      }
+    };
+    window.addEventListener('staff-data-changed', handleStaffChanged);
+    return () => window.removeEventListener('staff-data-changed', handleStaffChanged);
   }, []);
 
   // Real-time Enforcement: Kick users out of services if they are deactivated by admin
@@ -1087,20 +1101,21 @@ export default function App() {
           }
         });
         
-        // Update local state with latest collection data
-        setTransactions(cloudTxs);
+        // Update local state with latest collection data (Separate main dashboard from professional ledger)
+        const mainTxs = cloudTxs.filter(t => t.source !== 'ay-byay');
+        setTransactions(mainTxs);
         
-        // Compute totals from live collection
-        const income = cloudTxs.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-        const expense = cloudTxs.filter(t => t.type === 'expense').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+        // Compute totals from live collection for Dashboard Balance Card
+        const income = mainTxs.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+        const expense = mainTxs.filter(t => t.type === 'expense').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
         
         setServerTotals({
           income,
           expense,
           balance: income - expense,
-          totalCount: cloudTxs.length
+          totalCount: mainTxs.length
         });
-        setHasMoreTransactions(cloudTxs.length > 50);
+        setHasMoreTransactions(mainTxs.length > 50);
         
         // Sync to safeStorage
         try {
@@ -1617,6 +1632,7 @@ export default function App() {
         trxId: `${prefix}${randomHex}`,
         recordedBy: user?.id || 'admin-master',
         recordedByGmail: user?.gmail || undefined,
+        source: 'main',
         created: Date.now()
       };
       updatedTransactions = [...transactions, newTrx];

@@ -11,8 +11,8 @@ dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = process.env.PORT || 3000;
-const isProd = process.env.NODE_ENV === 'production' || fs.existsSync(path.join(__dirname, 'dist')) || fs.existsSync(path.join(__dirname, 'docs'));
-const buildDir = fs.existsSync(path.join(__dirname, 'dist')) ? 'dist' : (fs.existsSync(path.join(__dirname, 'docs')) ? 'docs' : 'dist');
+const isProd = process.env.NODE_ENV === 'production' || fs.existsSync(path.join(__dirname, 'dist')) || fs.existsSync(path.join(__dirname, 'docs')) || fs.existsSync(path.join(__dirname, 'HTDOCS_UPLOAD'));
+const buildDir = fs.existsSync(path.join(__dirname, 'HTDOCS_UPLOAD')) ? 'HTDOCS_UPLOAD' : (fs.existsSync(path.join(__dirname, 'dist')) ? 'dist' : (fs.existsSync(path.join(__dirname, 'docs')) ? 'docs' : 'dist'));
 
 app.use(cors());
 app.use(compression());

@@ -126,9 +126,13 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
   const salaryMap = new Map<string, SalaryPayment>();
   currentMonthSalaries.forEach(s => salaryMap.set(s.staffId, s));
 
-  // Helper to match staff with staffAccounts (by phone or name)
+  // Helper to match staff with staffAccounts (by id, phone or name)
   const getMatchedStaffAccount = (staff: Staff): StaffAccount | undefined => {
     if (!staff || !staffAccounts || staffAccounts.length === 0) return undefined;
+    if (staff.id) {
+      const byId = staffAccounts.find(a => a.id === staff.id);
+      if (byId) return byId;
+    }
     const clean = (s: string) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
     const cleanPhone = (p: string) => (p || '').replace(/[^0-9]/g, '');
     const sPhone = cleanPhone(staff.phone);
@@ -337,56 +341,6 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
     });
 
     if (success) {
-      // Automatic company due settlement in "স্টাফ কালেকশন ও কোম্পানি পাওনা":
-      // If the staff or owner owes money (remainingDue > 0) and deduction was made in salary, settle that amount!
-      const matchedAcc = getMatchedStaffAccount(selectedStaffForPay);
-      if (matchedAcc && (matchedAcc.remainingDue || 0) > 0 && deductionAmount > 0) {
-        const settleAmount = Math.min(deductionAmount, matchedAcc.remainingDue);
-        if (settleAmount > 0) {
-          const collectionTx: StaffTransaction = {
-            id: `stx-sal-${Date.now()}`,
-            staffId: matchedAcc.id,
-            type: 'collection',
-            amount: settleAmount,
-            date: payFormData.paymentDate,
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            customerName: `${selectedStaffForPay.name} (${selectedStaffForPay.designation})`,
-            note: `বেতন থেকে কোম্পানি পাওনা কর্তন (${getMonthBengaliName(selectedMonth)}) - ভাউচার: ${payFormData.voucherNumber || 'SAL'}`,
-            recordedBy: 'পে-রোল সিস্টেম',
-            created: Date.now()
-          };
-
-          const oldTxs = matchedAcc.transactions || [];
-          const newTxs = [...oldTxs, collectionTx];
-          const newTotalDue = newTxs.filter(t => t.type === 'due').reduce((sum, t) => sum + (t.amount || 0), 0);
-          const newTotalCollected = newTxs.filter(t => t.type === 'collection').reduce((sum, t) => sum + (t.amount || 0), 0);
-          const newRemaining = Math.max(0, newTotalDue - newTotalCollected);
-
-          const updatedAccount: StaffAccount = {
-            ...matchedAcc,
-            totalDue: newTotalDue,
-            totalCollected: newTotalCollected,
-            remainingDue: newRemaining,
-            transactions: newTxs
-          };
-
-          const updatedAccounts = (staffAccounts || []).map(a => a.id === matchedAcc.id ? updatedAccount : a);
-          if (onSaveStaffAccounts) {
-            onSaveStaffAccounts(updatedAccounts);
-          } else {
-            safeStorage.setItem('protyasha_staff', JSON.stringify(updatedAccounts));
-            setTimeout(() => {
-              window.dispatchEvent(new CustomEvent('staff-data-changed', { detail: updatedAccounts }));
-            }, 0);
-            fetch('/api/staff', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ staffAccounts: updatedAccounts })
-            }).catch(() => {});
-          }
-        }
-      }
-
       setIsPayModalOpen(false);
     }
   };
@@ -402,44 +356,6 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
       onConfirm: async () => {
         setConfirmState(prev => ({ ...prev, isOpen: false }));
         await onDeleteSalary(existing.id);
-
-        // Revert any linked collection transaction in staffAccounts for this month if existed
-        const matchedAcc = getMatchedStaffAccount(staff);
-        if (matchedAcc && matchedAcc.transactions) {
-          const revertTarget = matchedAcc.transactions.find(t => 
-            t.type === 'collection' && 
-            t.note?.includes(getMonthBengaliName(selectedMonth)) &&
-            t.note?.includes('বেতন থেকে কোম্পানি পাওনা কর্তন')
-          );
-          if (revertTarget) {
-            const filteredTxs = matchedAcc.transactions.filter(t => t.id !== revertTarget.id);
-            const newTotalDue = filteredTxs.filter(t => t.type === 'due').reduce((sum, t) => sum + (t.amount || 0), 0);
-            const newTotalCollected = filteredTxs.filter(t => t.type === 'collection').reduce((sum, t) => sum + (t.amount || 0), 0);
-            const newRemaining = Math.max(0, newTotalDue - newTotalCollected);
-
-            const updatedAccount: StaffAccount = {
-              ...matchedAcc,
-              totalDue: newTotalDue,
-              totalCollected: newTotalCollected,
-              remainingDue: newRemaining,
-              transactions: filteredTxs
-            };
-            const updatedAccounts = (staffAccounts || []).map(a => a.id === matchedAcc.id ? updatedAccount : a);
-            if (onSaveStaffAccounts) {
-              onSaveStaffAccounts(updatedAccounts);
-            } else {
-              safeStorage.setItem('protyasha_staff', JSON.stringify(updatedAccounts));
-              setTimeout(() => {
-                window.dispatchEvent(new CustomEvent('staff-data-changed', { detail: updatedAccounts }));
-              }, 0);
-              fetch('/api/staff', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ staffAccounts: updatedAccounts })
-              }).catch(() => {});
-            }
-          }
-        }
       }
     });
   };
