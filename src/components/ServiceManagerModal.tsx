@@ -29,9 +29,6 @@ export const ServiceManagerModal: React.FC<ServiceManagerModalProps> = ({
   onClose,
   onSaveServiceStatuses
 }) => {
-  if (!isOpen) return null;
-  const isBn = lang === 'bn';
-
   const [statuses, setStatuses] = useState<Record<string, ServiceStatusConfig>>(() => {
     const initial: Record<string, ServiceStatusConfig> = { ...serviceStatuses };
     AVAILABLE_SERVICES.forEach(svc => {
@@ -64,6 +61,9 @@ export const ServiceManagerModal: React.FC<ServiceManagerModalProps> = ({
       return merged;
     });
   }, [serviceStatuses]);
+
+  if (!isOpen) return null;
+  const isBn = lang === 'bn';
 
   const SUGGESTED_TITLES = [
     { bn: 'সার্ভার আপগ্রেড চলছে', en: 'Server Upgrade in Progress' },

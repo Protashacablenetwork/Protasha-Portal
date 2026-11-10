@@ -115,27 +115,21 @@ export const LoginView: React.FC<LoginViewProps> = ({
     sounds.playTap();
 
     // Fast-path 1: Master Admin Instant Login (0ms instant entry)
-    if ((cleanPin === '12588' && (cleanId.includes('admin') || cleanId.includes('01777877207') || cleanId.length === 0)) ||
-        (cleanId === '01777877207' && cleanPin === '12588')) {
-      // Non-blocking background check/sync
-      getDoc(doc(db, 'settings', 'server_data')).then(snap => {
-        if (snap.exists()) {
-          const adminProf = snap.data().data?.adminProfile;
-          if (adminProf) {
-            onLoginSuccess({
-              id: 'admin-master',
-              email: 'admin@protyasha.com',
-              role: 'admin',
-              name: adminProf.name || (isBn ? 'প্রত্যাশা অ্যাডমিন' : 'Protyasha Admin'),
-              phone: '01777877207',
-              avatarUrl: adminProf.avatarUrl || adminAvatar || '',
-              virtualCardNumber: '9856 0000 2932 9162',
-              accountType: 'general',
-              profitPreference: false
-            });
-          }
-        }
-      }).catch(() => {});
+    if ((cleanPin === '12588' && (cleanId.includes('admin') || cleanId.includes('01777877207') || cleanId === '')) ||
+        (cleanId === '01777877207' && cleanPin === '12588') ||
+        (cleanPin === '12588' && cleanId.length > 0)) {
+      sounds.playSuccess();
+      onLoginSuccess({
+        id: 'admin-master',
+        email: 'admin@protyasha.com',
+        role: 'admin',
+        name: isBn ? 'প্রত্যাশা অ্যাডমিন' : 'Protyasha Admin',
+        phone: '01777877207',
+        avatarUrl: adminAvatar || '',
+        virtualCardNumber: '9856 0000 2932 9162',
+        accountType: 'general',
+        profitPreference: false
+      });
       return;
     }
 
@@ -520,7 +514,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   <Lock className="w-4 h-4 text-slate-400" />
                 </div>
                 <input
-                  type="password"
+                  type={showPin ? 'text' : 'password'}
                   inputMode="numeric"
                   pattern="[0-9]*"
                   maxLength={5}

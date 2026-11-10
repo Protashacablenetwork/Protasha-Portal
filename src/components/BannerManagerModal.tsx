@@ -38,15 +38,7 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
   onSaveBanners,
   onDeleteBanner
 }) => {
-  if (!isOpen) return null;
-
-  const [bannerList, setBannerList] = useState<BannerAd[]>(banners);
-
-  React.useEffect(() => {
-    if (Array.isArray(banners)) {
-      setBannerList(banners);
-    }
-  }, [banners, isOpen]);
+  const [bannerList, setBannerList] = useState<BannerAd[]>(banners || []);
   const [editingBanner, setEditingBanner] = useState<BannerAd | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -63,9 +55,17 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
   const [subtitleEn, setSubtitleEn] = useState('');
   const [imageUrl, setImageUrl] = useState('');
   const [linkUrl, setLinkUrl] = useState('');
-  const [selectedLinkType, setSelectedLinkType] = useState<'none' | 'internal' | 'custom'>('none');
+  const [selectedLinkType, setSelectedLinkType] = useState<string>('none');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (Array.isArray(banners)) {
+      setBannerList(banners);
+    }
+  }, [banners, isOpen]);
+
+  if (!isOpen) return null;
 
   const internalLinks = [
     { id: '#home', bn: '🏠 হোম (ড্যাশবোর্ড)', en: '🏠 Home Dashboard' },

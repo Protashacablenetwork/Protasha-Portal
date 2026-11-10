@@ -211,39 +211,13 @@ export default function App() {
     return [];
   });
 
-  // Helper to sanitize banners (cleans auto-fallback text from uploaded custom banners)
+  // Helper to sanitize banners (removed: cleaning logic was causing unintended data loss)
   const sanitizeBanners = (list: BannerAd[]): BannerAd[] => {
-    if (!Array.isArray(list)) return [];
-    return list.map(b => {
-      if (b.imageUrl && b.imageUrl.startsWith('data:') && (b.titleBn === 'বিজ্ঞাপন' || b.badgeBn === 'অফার')) {
-        return {
-          ...b,
-          titleBn: b.titleBn === 'বিজ্ঞাপন' ? '' : b.titleBn,
-          titleEn: b.titleEn === 'বিজ্ঞাপন' || b.titleEn === 'Advertisement' ? '' : b.titleEn,
-          badgeBn: b.badgeBn === 'অফার' ? '' : b.badgeBn,
-          badgeEn: b.badgeEn === 'Offer' ? '' : b.badgeEn,
-          subtitleBn: b.subtitleBn && b.subtitleBn.includes('শর্তাবলী') ? '' : b.subtitleBn,
-          subtitleEn: b.subtitleEn && b.subtitleEn.toLowerCase().includes('terms') ? '' : b.subtitleEn
-        };
-      }
-      return b;
-    });
+    return Array.isArray(list) ? list : [];
   };
 
-  // Dynamic Homepage Banners (Loaded strictly from Database, no demo fallback)
-  const [banners, setBanners] = useState<BannerAd[]>(() => {
-    const saved = safeStorage.getItem('protyasha_banners');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const cleaned = parsed.filter(b => b && b.id && !String(b.id).startsWith('banner-broadband-'));
-          return sanitizeBanners(cleaned);
-        }
-      } catch {}
-    }
-    return [];
-  });
+  // Dynamic Homepage Banners (Cloud-first)
+  const [banners, setBanners] = useState<BannerAd[]>([]);
 
   // Helper to filter out legacy dummy/demo notifications
   const cleanDemoNotifications = (list: NotificationItem[]): NotificationItem[] => {
@@ -279,23 +253,8 @@ export default function App() {
     });
   };
 
-  // Notifications State (Sanitized to strictly remove demo notifications)
-  const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
-    const saved = safeStorage.getItem('protyasha_notifications');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        const cleaned = cleanDemoNotifications(parsed);
-        if (cleaned.length !== parsed.length) {
-          safeStorage.setItem('protyasha_notifications', JSON.stringify(cleaned));
-        }
-        return cleaned;
-      } catch {
-        return cleanDemoNotifications(initialNotifications);
-      }
-    }
-    return cleanDemoNotifications(initialNotifications);
-  });
+  // Notifications State (Cloud-first)
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
   // Per-User Notification Read Tracking
   const userKey = user ? (user.id || user.phone || user.role) : 'visitor';
@@ -383,42 +342,34 @@ export default function App() {
 
     try {
       unsubDoc = onSnapshot(doc(db, 'settings', 'app_banners'), (snap) => {
+        console.log('Firestore app_banners snap exists:', snap.exists());
         if (snap.exists()) {
           const data = snap.data();
+          console.log('Firestore app_banners data:', data);
           if (data && Array.isArray(data.banners)) {
-            const clean = data.banners.filter((b: any) => b && b.id && !String(b.id).startsWith('banner-broadband-'));
+            const clean = data.banners.filter((b: any) => b && b.id);
+            console.log('Setting banners from Firestore:', clean);
             setBanners(clean);
             try {
               safeStorage.setItem('protyasha_banners', JSON.stringify(clean));
-            } catch {}
+            } catch (e) {
+              console.error('safeStorage.setItem error in listener:', e);
+            }
           }
         }
       }, (err) => {
+        console.error('Firestore app_banners error:', err);
         handleFirestoreError(err, OperationType.GET, 'settings/app_banners');
       });
 
-      unsubColl = onSnapshot(collection(db, 'banners'), (snapshot) => {
-        const cloudBanners: BannerAd[] = [];
-        snapshot.forEach(dSnap => {
-          const b = dSnap.data() as BannerAd;
-          if (b && b.id && !String(b.id).startsWith('banner-broadband-')) {
-            cloudBanners.push(b);
-          }
-        });
-        setBanners(cloudBanners);
-        try {
-          safeStorage.setItem('protyasha_banners', JSON.stringify(cloudBanners));
-        } catch {}
-      }, (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'banners');
-      });
+      // Dedicated document listener is the single source of truth
+      unsubColl = null;
     } catch (e) {
       console.warn('Banners Firestore listener setup notice:', e);
     }
 
     return () => {
       if (unsubDoc) unsubDoc();
-      if (unsubColl) unsubColl();
     };
   }, []);
 
@@ -592,7 +543,7 @@ export default function App() {
         }
 
         if (data.banners && Array.isArray(data.banners)) {
-          const cleanBanners = data.banners.filter((b: any) => b && b.id && !String(b.id).startsWith('banner-broadband-'));
+          const cleanBanners = data.banners.filter((b: any) => b && b.id);
           setBanners(cleanBanners);
         }
         if (data.channels) setChannels(cleanChannelLogos(data.channels));
@@ -1176,7 +1127,7 @@ export default function App() {
           // Note: Transactions are handled by direct collection listener above
           
           if (Array.isArray(d.banners)) {
-            const clean = d.banners.filter((b: any) => b && b.id && !String(b.id).startsWith('banner-broadband-'));
+            const clean = d.banners.filter((b: any) => b && b.id);
             setBanners(clean);
           }
           if (Array.isArray(d.channels) && d.channels.length > 0) {
@@ -1877,26 +1828,34 @@ export default function App() {
   };
 
   const handleSaveBanners = (updated: BannerAd[]) => {
-    const cleanBanners = updated.filter(b => b && b.id && !String(b.id).startsWith('banner-broadband-'));
+    console.log('handleSaveBanners called with:', updated);
+    const cleanBanners = updated.filter(b => b && b.id);
+    console.log('cleanBanners:', cleanBanners);
     setBanners(cleanBanners);
     try {
       safeStorage.setItem('protyasha_banners', JSON.stringify(cleanBanners));
-    } catch {}
+    } catch (e) {
+      console.error('safeStorage.setItem error:', e);
+    }
 
     // Dedicated Firestore snapshot document
     safeSetDoc(doc(db, 'settings', 'app_banners'), {
       banners: cleanBanners,
       updatedAt: new Date().toISOString()
-    }).catch(() => {});
+    }).then(() => console.log('Firestore app_banners updated successfully'))
+      .catch((e) => console.error('Firestore app_banners error:', e));
 
     // Save each individual banner to collection 'banners'
     cleanBanners.forEach(b => {
-      safeSetDoc(doc(db, 'banners', String(b.id)), b).catch(() => {});
+      safeSetDoc(doc(db, 'banners', String(b.id)), b)
+        .then(() => console.log('Firestore banner updated:', b.id))
+        .catch((e) => console.error('Firestore banner update error:', b.id, e));
     });
 
     safeSetDoc(doc(db, 'settings', 'server_data'), {
       data: { banners: cleanBanners }
-    }, { merge: true }).catch(() => {});
+    }, { merge: true }).then(() => console.log('Firestore server_data updated successfully'))
+      .catch((e) => console.error('Firestore server_data error:', e));
 
     syncServerData({ banners: cleanBanners });
     logAction('Updated Banners', 'বিজ্ঞাপন ব্যানার পরিবর্তন', `সক্রিয় বিজ্ঞাপন সংখ্যা: ${cleanBanners.length}`);
@@ -1911,6 +1870,11 @@ export default function App() {
 
     // Dedicated deletion from 'banners' collection
     safeDeleteDoc(doc(db, 'banners', String(bannerId))).catch(() => {});
+
+    // Save each remaining banner to ensure clean persistence
+    updated.forEach(b => {
+      safeSetDoc(doc(db, 'banners', String(b.id)), b).catch(() => {});
+    });
 
     // Update dedicated snapshot document
     safeSetDoc(doc(db, 'settings', 'app_banners'), {

@@ -85,25 +85,23 @@ export const FooterSettingsModal: React.FC<FooterSettingsModalProps> = ({
   onSave,
   onSaveBanners
 }) => {
-  if (!isOpen) return null;
-
   const isBn = lang === 'bn';
 
   // Basic footer items
-  const [storeBn, setStoreBn] = useState(config.store.bn);
-  const [storeEn, setStoreEn] = useState(config.store.en);
-  const [storeUrl, setStoreUrl] = useState(config.store.url || '#store');
+  const [storeBn, setStoreBn] = useState(config?.store?.bn || '');
+  const [storeEn, setStoreEn] = useState(config?.store?.en || '');
+  const [storeUrl, setStoreUrl] = useState(config?.store?.url || '#store');
 
-  const [offerBn, setOfferBn] = useState(config.offer.bn);
-  const [offerEn, setOfferEn] = useState(config.offer.en);
-  const [offerUrl, setOfferUrl] = useState(config.offer.url || '#offer');
+  const [offerBn, setOfferBn] = useState(config?.offer?.bn || '');
+  const [offerEn, setOfferEn] = useState(config?.offer?.en || '');
+  const [offerUrl, setOfferUrl] = useState(config?.offer?.url || '#offer');
 
-  const [helpBn, setHelpBn] = useState(config.help.bn);
-  const [helpEn, setHelpEn] = useState(config.help.en);
-  const [helpUrl, setHelpUrl] = useState(config.help.url || '#help');
+  const [helpBn, setHelpBn] = useState(config?.help?.bn || '');
+  const [helpEn, setHelpEn] = useState(config?.help?.en || '');
+  const [helpUrl, setHelpUrl] = useState(config?.help?.url || '#help');
 
   // Offers List Management (Banners/Offers)
-  const [offerList, setOfferList] = useState<BannerAd[]>(banners);
+  const [offerList, setOfferList] = useState<BannerAd[]>(banners || []);
 
   // New Offer Form State
   const [isAddingOffer, setIsAddingOffer] = useState(false);
@@ -119,6 +117,8 @@ export const FooterSettingsModal: React.FC<FooterSettingsModalProps> = ({
   const [offerFormError, setOfferFormError] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  if (!isOpen) return null;
 
   // Quick preset broadband internet images for convenience
   const quickPresets = [

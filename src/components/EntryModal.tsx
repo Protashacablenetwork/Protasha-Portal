@@ -42,7 +42,6 @@ export const EntryModal: React.FC<EntryModalProps> = ({
   onClose,
   onSave
 }) => {
-  if (!isOpen) return null;
   const t = translations[lang];
 
   const [type, setType] = useState<TransactionType>(initialType);
@@ -90,6 +89,8 @@ export const EntryModal: React.FC<EntryModalProps> = ({
       setCategory(initialType === 'income' ? 'বিল কালেকশন' : 'অফিস খরচ');
     }
   }, [editingTransaction, initialType, initialMethod]);
+
+  if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

@@ -36,6 +36,8 @@ export const NotificationDetailModal: React.FC<NotificationDetailModalProps> = (
   onOpenWeather,
   onOpenPrayerTimes
 }) => {
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
   if (!notification) return null;
 
   const isBn = lang === 'bn';
@@ -76,8 +78,6 @@ export const NotificationDetailModal: React.FC<NotificationDetailModalProps> = (
         return 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200';
     }
   };
-
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   return (
     <>

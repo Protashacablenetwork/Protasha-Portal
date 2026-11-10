@@ -48,21 +48,8 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
   onEditNotification,
   initialEditingNotif
 }) => {
-  if (!isOpen) return null;
-  const t = translations[lang];
-  const isBn = lang === 'bn';
-  const isAdmin = user?.role === 'admin';
   // Filter Tab State: 'all' | 'unread' | 'read'
   const [filterTab, setFilterTab] = useState<'all' | 'unread' | 'read'>('all');
-
-  const unreadCount = notifications.filter(n => !n.isRead).length;
-  const readCount = notifications.filter(n => n.isRead).length;
-
-  const filteredNotifications = notifications.filter(n => {
-    if (filterTab === 'unread') return !n.isRead;
-    if (filterTab === 'read') return n.isRead;
-    return true;
-  });
 
   // Admin New Notification Composer State
   const [isComposing, setIsComposing] = useState(false);
@@ -73,6 +60,8 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
   const [notifAmount, setNotifAmount] = useState<string>('');
   const [notifImage, setNotifImage] = useState<string>('');
   const [formError, setFormError] = useState('');
+
+  const isBn = lang === 'bn';
 
   React.useEffect(() => {
     if (initialEditingNotif) {
@@ -85,6 +74,21 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
       setIsComposing(true);
     }
   }, [initialEditingNotif, isBn]);
+
+  if (!isOpen) return null;
+
+  const t = translations[lang];
+  const isAdmin = user?.role === 'admin';
+
+  const unreadCount = (notifications || []).filter(n => n && !n.isRead).length;
+  const readCount = (notifications || []).filter(n => n && n.isRead).length;
+
+  const filteredNotifications = (notifications || []).filter(n => {
+    if (!n) return false;
+    if (filterTab === 'unread') return !n.isRead;
+    if (filterTab === 'read') return n.isRead;
+    return true;
+  });
 
   // Handle Edit Trigger
   const startEdit = (notif: NotificationItem) => {

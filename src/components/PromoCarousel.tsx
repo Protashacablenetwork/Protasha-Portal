@@ -133,11 +133,9 @@ export const PromoCarousel: React.FC<PromoCarouselProps> = ({
     }
   };
 
-  if (activeBanners.length === 0) return null;
-
   // Real active banner index for pagination bullets (0-based)
   const realSlideIndex = useMemo(() => {
-    if (isSingle) return 0;
+    if (activeBanners.length === 0 || isSingle) return 0;
     if (currentIndex === 0) return activeBanners.length - 1;
     if (currentIndex === activeBanners.length + 1) return 0;
     const idx = currentIndex - 1;

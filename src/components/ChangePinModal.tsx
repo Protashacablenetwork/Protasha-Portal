@@ -16,12 +16,12 @@ export const ChangePinModal: React.FC<ChangePinModalProps> = ({
   onClose,
   onPinChanged
 }) => {
-  if (!isOpen) return null;
-
   const [currentPin, setCurrentPin] = useState('');
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [error, setError] = useState('');
+
+  if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
