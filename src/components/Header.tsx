@@ -41,6 +41,7 @@ export const Header: React.FC<HeaderProps> = ({
   const displayAvatar = rawAvatar && !rawAvatar.startsWith('/uploads/') ? rawAvatar : (rawAvatar.startsWith('data:image/') ? rawAvatar : '');
 
   const [internalWeather, setInternalWeather] = useState<WeatherData | null>(null);
+  const [isScrolled, setIsScrolled] = useState(false);
 
   const loadWeather = () => {
     fetchLiveWeather().then(data => {
@@ -51,36 +52,30 @@ export const Header: React.FC<HeaderProps> = ({
   useEffect(() => {
     loadWeather();
     const interval = setInterval(loadWeather, 10 * 60 * 1000);
-    return () => clearInterval(interval);
+    
+    const handleScroll = () => {
+      setIsScrolled(window.scrollY > 50);
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('scroll', handleScroll);
+    };
   }, []);
 
   const weatherData = propWeatherData || internalWeather;
 
   return (
-    <div className="relative w-full overflow-hidden select-none">
-      {/* Scenic Watercolor Landscape Banner */}
-      <div className="relative h-44 w-full bg-gradient-to-b from-amber-50 to-orange-100 dark:from-slate-900 dark:to-slate-800">
-        <img
-          src={scenicLandscape}
-          alt="Scenic Bangladeshi Landscape"
-          referrerPolicy="no-referrer"
-          className="w-full h-full object-cover object-center opacity-85 transition-opacity duration-300"
-        />
-
-        {/* Time-of-day dynamic overlay effect */}
-        <div className={`absolute inset-0 pointer-events-none transition-colors duration-1000 ${
-          new Date().getHours() >= 18 || new Date().getHours() < 6 
-            ? 'bg-indigo-900/40' // Night
-            : new Date().getHours() >= 16 
-              ? 'bg-orange-500/20' // Evening
-              : 'bg-transparent' // Day
-        }`} />
-
-        {/* Soft overlay gradient to ensure high contrast */}
-        <div className="absolute inset-0 bg-gradient-to-b from-amber-50/70 via-transparent to-amber-100/90 dark:from-slate-900/80 dark:to-slate-950/90 pointer-events-none" />
-
-        {/* Top App Bar inside Header */}
-        <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4 pt-3 pb-2">
+    <div className="relative w-full select-none">
+      {/* Sticky Top App Bar - Stays at top, changes from transparent to white */}
+      <div className={`sticky top-0 z-50 w-full transition-all duration-300 ${
+        isScrolled 
+          ? 'bg-white dark:bg-slate-900 shadow-md border-b border-slate-200 dark:border-slate-800' 
+          : 'bg-transparent'
+      }`}>
+        <div className="flex items-center justify-between px-4 pt-3 pb-2">
           {/* Logo & Greeting */}
           <div
             onClick={onOpenProfile}
@@ -107,7 +102,9 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-1.5">
-                <p className="text-xs font-medium text-slate-700 dark:text-slate-300 tracking-wide">
+                <p className={`text-[10px] sm:text-xs font-bold tracking-wide transition-colors duration-300 ${
+                  isScrolled ? 'text-slate-600 dark:text-slate-400' : 'text-slate-900 dark:text-slate-100'
+                }`}>
                   {greeting}
                 </p>
                 {isAdmin ? (
@@ -126,7 +123,9 @@ export const Header: React.FC<HeaderProps> = ({
                   </span>
                 )}
               </div>
-              <h2 className="text-sm font-bold text-slate-900 dark:text-white leading-tight">
+              <h2 className={`text-xs sm:text-sm font-black transition-colors duration-300 ${
+                isScrolled ? 'text-slate-900 dark:text-white' : 'text-slate-900 dark:text-white drop-shadow-sm'
+              }`}>
                 {lang === 'bn' ? 'প্রত্যাশা ক্যাবল নেটওয়ার্ক' : 'Protasha Cable Network'}
               </h2>
             </div>
@@ -134,66 +133,73 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Right Action Icons: Live Weather & Notification Bell */}
           <div className="flex items-center gap-1.5 sm:gap-2">
-            {/* Live Real-time Auto-Location Weather Button (Red-circled area) */}
+            {/* Live Weather Button */}
             <button
               onClick={() => {
                 sounds.playTap();
                 onOpenWeather();
               }}
-              className="h-10 px-2.5 rounded-full bg-white/90 dark:bg-slate-800/90 backdrop-blur-md shadow-sm border border-white/70 dark:border-slate-700 flex items-center gap-1.5 text-slate-800 dark:text-slate-100 hover:bg-white hover:ring-2 hover:ring-rose-500/30 active:scale-95 transition-all cursor-pointer group"
-              title={lang === 'bn' ? '৭ দিনের আবহাওয়া বার্তা দেখুন' : 'View 7-day weather forecast'}
+              className={`h-10 px-2.5 rounded-full backdrop-blur-md shadow-sm border flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer group ${
+                isScrolled 
+                  ? 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100' 
+                  : 'bg-white/40 border-white/40 text-slate-900 dark:text-white'
+              }`}
             >
-              {/* Dynamic Animated Mini Icon */}
               <span className="flex items-center justify-center">
                 {weatherData?.conditionType === 'rain' ? (
-                  <CloudRain className="w-4 h-4 text-sky-500 animate-bounce [animation-duration:2.5s]" />
+                  <CloudRain className="w-4 h-4 text-sky-600" />
                 ) : weatherData?.conditionType === 'thunder' ? (
-                  <CloudLightning className="w-4 h-4 text-amber-500 animate-pulse" />
+                  <CloudLightning className="w-4 h-4 text-amber-600" />
                 ) : weatherData?.conditionType === 'cloud' ? (
-                  <Cloud className="w-4 h-4 text-slate-500" />
+                  <Cloud className="w-4 h-4 text-slate-600" />
                 ) : (
-                  <Sun className="w-4 h-4 text-amber-500" />
+                  <Sun className="w-4 h-4 text-amber-600" />
                 )}
               </span>
               <div className="flex flex-col text-left leading-none">
-                <span className="text-[11px] font-black text-slate-900 dark:text-white">
+                <span className="text-[11px] font-black">
                   {weatherData ? `${toBengaliNumber(weatherData.currentTemp)}°C` : '২৮°C'}
                 </span>
                 <span className="text-[9px] font-extrabold text-rose-600 dark:text-rose-400 truncate max-w-[80px]">
-                  {weatherData?.cityBn || 'ঢাকা'}
+                  {weatherData?.cityBn || 'জামালপুর'}
                 </span>
               </div>
             </button>
 
-            {/* Prayer Times & Sun Button (Icon Only) */}
-            {onOpenPrayerTimes && (
-              <button
-                onClick={() => {
-                  sounds.playTap();
-                  onOpenPrayerTimes();
-                }}
-                className="w-10 h-10 rounded-full bg-white/90 dark:bg-slate-800/90 backdrop-blur-md shadow-sm border border-white/70 dark:border-slate-700 flex items-center justify-center text-slate-800 dark:text-slate-100 hover:bg-white hover:ring-2 hover:ring-amber-500/30 active:scale-95 transition-all cursor-pointer shrink-0 text-base"
-                title={lang === 'bn' ? 'নামাজের সময়সূচি ও সূর্যোদয়-সূর্যাস্ত' : 'Prayer Times & Sun Schedule'}
-              >
-                🕌
-              </button>
-            )}
-
-            {/* Notification Bell with Badge */}
+            {/* Notification Bell */}
             <button
               onClick={onOpenNotifications}
-              aria-label="Notifications"
-              className="relative w-10 h-10 rounded-full bg-white/90 dark:bg-slate-800/90 backdrop-blur-md shadow-sm border border-white/70 dark:border-slate-700 flex items-center justify-center text-slate-800 dark:text-slate-100 hover:bg-white hover:ring-2 hover:ring-rose-500/30 active:scale-95 transition-all cursor-pointer shrink-0"
+              className={`relative w-10 h-10 rounded-full backdrop-blur-md shadow-sm border flex items-center justify-center transition-all active:scale-95 cursor-pointer shrink-0 ${
+                isScrolled 
+                  ? 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100' 
+                  : 'bg-white/40 border-white/40 text-slate-900 dark:text-white'
+              }`}
             >
-              <Bell className="w-5 h-5 text-slate-800 dark:text-slate-100" />
+              <Bell className="w-5 h-5" />
               {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 bg-[#E52E2E] text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-md shadow-rose-600/40 ring-2 ring-white dark:ring-slate-900 animate-pulse">
-                  {lang === 'bn' ? toBengaliNumber(unreadCount < 10 ? `0${unreadCount}` : unreadCount) : (unreadCount < 10 ? `0${unreadCount}` : unreadCount)}
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-4.5 px-1 bg-[#E52E2E] text-white text-[9px] font-black rounded-full flex items-center justify-center shadow-md animate-pulse ring-2 ring-white dark:ring-slate-900">
+                  {lang === 'bn' ? toBengaliNumber(unreadCount) : unreadCount}
                 </span>
               )}
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Scenic Watercolor Landscape Banner - Pulled under the app bar and scrolls up */}
+      <div className="relative -mt-[56px] h-48 w-full z-0 overflow-hidden">
+        <img
+          src={scenicLandscape}
+          alt="Scenic Bangladeshi Landscape"
+          referrerPolicy="no-referrer"
+          className="w-full h-full object-cover object-center opacity-90"
+        />
+
+        {/* Dynamic Overlays */}
+        <div className={`absolute inset-0 transition-colors duration-1000 ${
+          new Date().getHours() >= 18 || new Date().getHours() < 6 ? 'bg-indigo-900/30' : 'bg-transparent'
+        }`} />
+        <div className="absolute inset-0 bg-gradient-to-b from-amber-50/40 via-transparent to-white dark:to-slate-900 pointer-events-none" />
       </div>
     </div>
   );

@@ -350,11 +350,6 @@ export default function App() {
             const clean = data.banners.filter((b: any) => b && b.id);
             console.log('Setting banners from Firestore:', clean);
             setBanners(clean);
-            try {
-              safeStorage.setItem('protyasha_banners', JSON.stringify(clean));
-            } catch (e) {
-              console.error('safeStorage.setItem error in listener:', e);
-            }
           }
         }
       }, (err) => {
@@ -1828,9 +1823,9 @@ export default function App() {
   };
 
   const handleSaveBanners = (updated: BannerAd[]) => {
-    console.log('handleSaveBanners called with:', updated);
+    console.log('DEBUG: handleSaveBanners received:', updated);
     const cleanBanners = updated.filter(b => b && b.id);
-    console.log('cleanBanners:', cleanBanners);
+    console.log('DEBUG: cleanBanners to be saved:', cleanBanners);
     setBanners(cleanBanners);
     try {
       safeStorage.setItem('protyasha_banners', JSON.stringify(cleanBanners));
