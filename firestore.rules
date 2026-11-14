@@ -1,8 +1,354 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Global default-deny safety net
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function isActiveRequest() {
+      return request.time != null;
+    }
+
+    function isValidTransaction(data) {
+      return data.keys().hasAll(['id', 'type', 'amount']) &&
+        data.keys().hasOnly([
+          'id', 'trxId', 'type', 'method', 'bankName', 'person', 'phone',
+          'description', 'category', 'categoryType', 'amount', 'date', 'time',
+          'paymentMethod', 'purpose', 'note', 'recordedBy', 'recordedByGmail',
+          'source', 'isDeleted', 'created', 'createdAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+        data.type in ['income', 'expense'] &&
+        data.amount is number &&
+        (!('trxId' in data) || (data.trxId is string && data.trxId.size() <= 64)) &&
+        (!('method' in data) || (data.method is string && data.method.size() <= 100)) &&
+        (!('bankName' in data) || (data.bankName is string && data.bankName.size() <= 150)) &&
+        (!('person' in data) || (data.person is string && data.person.size() <= 200)) &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 32)) &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 500)) &&
+        (!('category' in data) || (data.category is string && data.category.size() <= 150)) &&
+        (!('categoryType' in data) || data.categoryType in ['income', 'expense']) &&
+        (!('date' in data) || (data.date is string && data.date.size() <= 32)) &&
+        (!('time' in data) || (data.time is string && data.time.size() <= 32)) &&
+        (!('paymentMethod' in data) || (data.paymentMethod is string && data.paymentMethod.size() <= 100)) &&
+        (!('purpose' in data) || (data.purpose is string && data.purpose.size() <= 300)) &&
+        (!('note' in data) || (data.note is string && data.note.size() <= 5000)) &&
+        (!('recordedBy' in data) || data.recordedBy == null || (data.recordedBy is string && data.recordedBy.size() <= 128)) &&
+        (!('recordedByGmail' in data) || data.recordedByGmail == null || (data.recordedByGmail is string && data.recordedByGmail.size() <= 200)) &&
+        (!('source' in data) || (data.source is string && data.source.size() <= 32)) &&
+        (!('isDeleted' in data) || data.isDeleted is bool) &&
+        (!('created' in data) || data.created is number) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64));
+    }
+
+    function isValidBanner(data) {
+      return data.keys().hasAll(['id', 'imageUrl', 'isActive']) &&
+        data.keys().hasOnly([
+          'id', 'badgeBn', 'badgeEn', 'titleBn', 'titleEn',
+          'subtitleBn', 'subtitleEn', 'imageUrl', 'linkUrl',
+          'isActive', 'priority', 'updatedAt', 'createdAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+        data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 900000 &&
+        data.isActive is bool &&
+        (!('badgeBn' in data) || (data.badgeBn is string && data.badgeBn.size() <= 100)) &&
+        (!('badgeEn' in data) || (data.badgeEn is string && data.badgeEn.size() <= 100)) &&
+        (!('titleBn' in data) || (data.titleBn is string && data.titleBn.size() <= 200)) &&
+        (!('titleEn' in data) || (data.titleEn is string && data.titleEn.size() <= 200)) &&
+        (!('subtitleBn' in data) || (data.subtitleBn is string && data.subtitleBn.size() <= 400)) &&
+        (!('subtitleEn' in data) || (data.subtitleEn is string && data.subtitleEn.size() <= 400)) &&
+        (!('linkUrl' in data) || (data.linkUrl is string && data.linkUrl.size() <= 500)) &&
+        (!('priority' in data) || data.priority is number) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64));
+    }
+
+    function isValidChannel(data) {
+      return data.keys().hasAll(['id', 'name', 'labelBn', 'labelEn']) &&
+        data.keys().hasOnly([
+          'id', 'name', 'labelBn', 'labelEn', 'icon', 'imageUrl',
+          'color', 'bg', 'border', 'isDefault', 'order', 'updatedAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        data.labelBn is string && data.labelBn.size() <= 150 &&
+        data.labelEn is string && data.labelEn.size() <= 150 &&
+        (!('icon' in data) || (data.icon is string && data.icon.size() <= 64)) &&
+        (!('imageUrl' in data) || data.imageUrl == null || (data.imageUrl is string && data.imageUrl.size() <= 900000)) &&
+        (!('color' in data) || (data.color is string && data.color.size() <= 100)) &&
+        (!('bg' in data) || (data.bg is string && data.bg.size() <= 100)) &&
+        (!('border' in data) || (data.border is string && data.border.size() <= 100)) &&
+        (!('isDefault' in data) || data.isDefault is bool) &&
+        (!('order' in data) || data.order is number) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidStaff(data) {
+      return data.keys().hasAll(['id', 'name', 'phone']) &&
+        data.keys().hasOnly([
+          'id', 'name', 'phone', 'role', 'designation', 'userCode', 'baseSalary',
+          'avatarUrl', 'address', 'reference', 'totalDue', 'totalCollected',
+          'remainingDue', 'notes', 'isActive', 'recordedBy', 'createdAt',
+          'updatedAt', 'transactions'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 150 &&
+        data.phone is string && data.phone.size() <= 32 &&
+        (!('role' in data) || (data.role is string && data.role.size() <= 150)) &&
+        (!('designation' in data) || (data.designation is string && data.designation.size() <= 150)) &&
+        (!('userCode' in data) || (data.userCode is string && data.userCode.size() <= 64)) &&
+        (!('baseSalary' in data) || data.baseSalary is number) &&
+        (!('avatarUrl' in data) || data.avatarUrl == null || (data.avatarUrl is string && data.avatarUrl.size() <= 900000)) &&
+        (!('address' in data) || (data.address is string && data.address.size() <= 300)) &&
+        (!('reference' in data) || (data.reference is string && data.reference.size() <= 200)) &&
+        (!('totalDue' in data) || data.totalDue is number) &&
+        (!('totalCollected' in data) || data.totalCollected is number) &&
+        (!('remainingDue' in data) || data.remainingDue is number) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 2000)) &&
+        (!('isActive' in data) || data.isActive is bool) &&
+        (!('recordedBy' in data) || data.recordedBy == null || (data.recordedBy is string && data.recordedBy.size() <= 128)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64)) &&
+        (!('transactions' in data) || (data.transactions is list && data.transactions.size() <= 500));
+    }
+
+    function isValidSalary(data) {
+      return data.keys().hasAll(['id', 'staffId', 'month', 'baseSalary', 'netSalary', 'paymentStatus']) &&
+        data.keys().hasOnly([
+          'id', 'staffId', 'staffName', 'staffDesignation', 'month',
+          'baseSalary', 'bonusOrAllowance', 'deductionOrAdvance', 'netSalary',
+          'paymentStatus', 'paymentDate', 'paymentMethod', 'voucherNumber',
+          'note', 'transactionId', 'recordedBy', 'recordedByGmail', 'createdAt', 'updatedAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+        data.staffId is string && data.staffId.size() >= 1 && data.staffId.size() <= 128 &&
+        data.month is string && data.month.size() >= 4 && data.month.size() <= 16 &&
+        data.baseSalary is number &&
+        data.netSalary is number &&
+        data.paymentStatus in ['paid', 'pending'] &&
+        (!('staffName' in data) || (data.staffName is string && data.staffName.size() <= 150)) &&
+        (!('staffDesignation' in data) || (data.staffDesignation is string && data.staffDesignation.size() <= 150)) &&
+        (!('bonusOrAllowance' in data) || data.bonusOrAllowance is number) &&
+        (!('deductionOrAdvance' in data) || data.deductionOrAdvance is number) &&
+        (!('paymentDate' in data) || (data.paymentDate is string && data.paymentDate.size() <= 32)) &&
+        (!('paymentMethod' in data) || (data.paymentMethod is string && data.paymentMethod.size() <= 100)) &&
+        (!('voucherNumber' in data) || (data.voucherNumber is string && data.voucherNumber.size() <= 64)) &&
+        (!('note' in data) || (data.note is string && data.note.size() <= 2000)) &&
+        (!('transactionId' in data) || (data.transactionId is string && data.transactionId.size() <= 128)) &&
+        (!('recordedBy' in data) || data.recordedBy == null || (data.recordedBy is string && data.recordedBy.size() <= 128)) &&
+        (!('recordedByGmail' in data) || data.recordedByGmail == null || (data.recordedByGmail is string && data.recordedByGmail.size() <= 200)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidOwner(data) {
+      return data.keys().hasAll(['id', 'name', 'shareUnits']) &&
+        data.keys().hasOnly([
+          'id', 'name', 'phone', 'address', 'notes',
+          'shareUnits', 'avatarUrl', 'isHalf', 'createdAt', 'updatedAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 150 &&
+        data.shareUnits is number &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 32)) &&
+        (!('address' in data) || (data.address is string && data.address.size() <= 300)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
+        (!('avatarUrl' in data) || data.avatarUrl == null || (data.avatarUrl is string && data.avatarUrl.size() <= 900000)) &&
+        (!('isHalf' in data) || data.isHalf is bool) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'role', 'status']) &&
+        data.keys().hasOnly([
+          'id', 'name', 'phone', 'pin', 'avatarUrl', 'gmail',
+          'boundMethods', 'readNotifications', 'role', 'status',
+          'virtualCardNumber', 'recordedBy', 'createdAt', 'updatedAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+        data.role in ['admin', 'sub-admin', 'user', 'visitor'] &&
+        data.status in ['active', 'suspended'] &&
+        (!('name' in data) || (data.name is string && data.name.size() <= 150)) &&
+        (!('phone' in data) || (data.phone is string && data.phone.size() <= 32)) &&
+        (!('pin' in data) || (data.pin is string && data.pin.size() <= 32)) &&
+        (!('avatarUrl' in data) || data.avatarUrl == null || (data.avatarUrl is string && data.avatarUrl.size() <= 900000)) &&
+        (!('gmail' in data) || data.gmail == null || (data.gmail is string && data.gmail.size() <= 200)) &&
+        (!('boundMethods' in data) || (data.boundMethods is list && data.boundMethods.size() <= 10)) &&
+        (!('readNotifications' in data) || (data.readNotifications is list && data.readNotifications.size() <= 500)) &&
+        (!('virtualCardNumber' in data) || (data.virtualCardNumber is string && data.virtualCardNumber.size() <= 64)) &&
+        (!('recordedBy' in data) || data.recordedBy == null || (data.recordedBy is string && data.recordedBy.size() <= 128)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidInventoryItem(data) {
+      return data.keys().hasAll(['id', 'name', 'category', 'unit', 'currentStock', 'unitCost']) &&
+        data.keys().hasOnly([
+          'id', 'name', 'category', 'unit', 'currentStock', 'minStockAlert',
+          'unitCost', 'supplier', 'location', 'notes', 'recordedBy', 'updatedAt', 'createdAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 200 &&
+        data.category is string && data.category.size() <= 150 &&
+        data.unit is string && data.unit.size() <= 64 &&
+        data.currentStock is number &&
+        data.unitCost is number &&
+        (!('minStockAlert' in data) || data.minStockAlert is number) &&
+        (!('supplier' in data) || (data.supplier is string && data.supplier.size() <= 200)) &&
+        (!('location' in data) || (data.location is string && data.location.size() <= 200)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 2000)) &&
+        (!('recordedBy' in data) || data.recordedBy == null || (data.recordedBy is string && data.recordedBy.size() <= 128)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64));
+    }
+
+    function isValidInventoryLog(data) {
+      return data.keys().hasAll(['id', 'itemId', 'type', 'quantity', 'date']) &&
+        data.keys().hasOnly([
+          'id', 'itemId', 'itemName', 'type', 'quantity', 'date',
+          'recipientOrSource', 'costPerUnit', 'totalCost', 'addToExpense',
+          'addedToExpense', 'expenseCategory', 'paymentMethod', 'transactionId',
+          'note', 'recordedBy', 'createdAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+        data.itemId is string && data.itemId.size() >= 1 && data.itemId.size() <= 128 &&
+        data.type in ['in', 'out', 'return', 'damaged'] &&
+        data.quantity is number &&
+        data.date is string && data.date.size() <= 32 &&
+        (!('itemName' in data) || (data.itemName is string && data.itemName.size() <= 200)) &&
+        (!('recipientOrSource' in data) || (data.recipientOrSource is string && data.recipientOrSource.size() <= 200)) &&
+        (!('costPerUnit' in data) || data.costPerUnit is number) &&
+        (!('totalCost' in data) || data.totalCost is number) &&
+        (!('addToExpense' in data) || data.addToExpense is bool) &&
+        (!('addedToExpense' in data) || data.addedToExpense is bool) &&
+        (!('expenseCategory' in data) || (data.expenseCategory is string && data.expenseCategory.size() <= 150)) &&
+        (!('paymentMethod' in data) || (data.paymentMethod is string && data.paymentMethod.size() <= 100)) &&
+        (!('transactionId' in data) || (data.transactionId is string && data.transactionId.size() <= 128)) &&
+        (!('note' in data) || (data.note is string && data.note.size() <= 2000)) &&
+        (!('recordedBy' in data) || data.recordedBy == null || (data.recordedBy is string && data.recordedBy.size() <= 128)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64));
+    }
+
+    function isValidAyByayConfig(data) {
+      return data.keys().hasAll(['companyName', 'currencySymbol']) &&
+        data.keys().hasOnly([
+          'autoSync', 'lastSyncTime', 'syncStatus', 'syncMessage',
+          'companyName', 'currencySymbol', 'activeMonth', 'managedMonths', 'updatedAt'
+        ]) &&
+        data.companyName is string && data.companyName.size() <= 200 &&
+        data.currencySymbol is string && data.currencySymbol.size() <= 16 &&
+        (!('autoSync' in data) || data.autoSync is bool) &&
+        (!('lastSyncTime' in data) || data.lastSyncTime == null || (data.lastSyncTime is string && data.lastSyncTime.size() <= 64)) &&
+        (!('syncStatus' in data) || (data.syncStatus is string && data.syncStatus.size() <= 64)) &&
+        (!('syncMessage' in data) || (data.syncMessage is string && data.syncMessage.size() <= 300)) &&
+        (!('activeMonth' in data) || (data.activeMonth is string && data.activeMonth.size() <= 16)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64)) &&
+        (!('managedMonths' in data) || (data.managedMonths is list && data.managedMonths.size() <= 120));
+    }
+
+    function isValidSettingsDoc(data) {
+      return data is map && data.keys().size() >= 1 && data.keys().size() <= 30;
+    }
+
+    match /transactions/{txId} {
+      allow get: if isValidId(txId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(txId) && isValidTransaction(incoming());
+      allow delete: if isValidId(txId);
+    }
+
+    match /ay_byay_transactions/{txId} {
+      allow get: if isValidId(txId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(txId) && isValidTransaction(incoming());
+      allow delete: if isValidId(txId);
+    }
+
+    match /banners/{bannerId} {
+      allow get: if isValidId(bannerId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(bannerId) && isValidBanner(incoming());
+      allow delete: if isValidId(bannerId);
+    }
+
+    match /channels/{channelId} {
+      allow get: if isValidId(channelId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(channelId) && isValidChannel(incoming());
+      allow delete: if isValidId(channelId);
+    }
+
+    match /staff/{staffId} {
+      allow get: if isValidId(staffId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(staffId) && isValidStaff(incoming());
+      allow delete: if isValidId(staffId);
+    }
+
+    match /ay_byay_salaries/{salaryId} {
+      allow get: if isValidId(salaryId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(salaryId) && isValidSalary(incoming());
+      allow delete: if isValidId(salaryId);
+    }
+
+    match /staff_salaries/{salaryId} {
+      allow get: if isValidId(salaryId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(salaryId) && isValidSalary(incoming());
+      allow delete: if isValidId(salaryId);
+    }
+
+    match /quick_hisab_owners/{ownerId} {
+      allow get: if isValidId(ownerId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(ownerId) && isValidOwner(incoming());
+      allow delete: if isValidId(ownerId);
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(userId) && isValidUser(incoming());
+      allow delete: if isValidId(userId);
+    }
+
+    match /ay_byay_inventory/{itemId} {
+      allow get: if isValidId(itemId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(itemId) && isValidInventoryItem(incoming());
+      allow delete: if isValidId(itemId);
+    }
+
+    match /ay_byay_inventory_logs/{logId} {
+      allow get: if isValidId(logId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(logId) && isValidInventoryLog(incoming());
+      allow delete: if isValidId(logId);
+    }
+
+    match /ay_byay_config/{configId} {
+      allow get: if isValidId(configId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(configId) && isValidAyByayConfig(incoming());
+      allow delete: if isValidId(configId);
+    }
+
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(settingId) && isValidSettingsDoc(incoming());
+      allow delete: if isValidId(settingId);
     }
   }
 }

@@ -38,6 +38,9 @@ import { translations } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import { safeStorage } from '../utils/safeStorage';
 import { compressImage } from '../utils/imageCompressor';
+import { db } from '../utils/firebase';
+import { enableNetwork, disableNetwork } from 'firebase/firestore';
+import { signInWithGoogleDrive } from '../utils/googleDrive';
 
 interface ProfileViewProps {
   user: UserSession | null;
@@ -125,6 +128,50 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   // Persistent Toast State on Profile Page
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [successToastMessage, setSuccessToastMessage] = useState('');
+
+  // Offline Mode & Auto-Sync State
+  const [offlineMode, setOfflineMode] = useState(() => {
+    return safeStorage.getItem('protyasha_offline_mode') === 'true';
+  });
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const handleToggleOfflineMode = async (val: boolean) => {
+    sounds.playTap();
+    setOfflineMode(val);
+    safeStorage.setItem('protyasha_offline_mode', String(val));
+    try {
+      if (val) {
+        await disableNetwork(db);
+        setSuccessToastMessage(isBn ? 'অফলাইন মোড চালু হয়েছে। অ্যাপ এখন লোকাল ক্যাশ থেকে চলবে।' : 'Offline mode enabled. App running from local cache.');
+      } else {
+        await enableNetwork(db);
+        setSuccessToastMessage(isBn ? 'অনলাইন মোড চালু হয়েছে। রিয়েলটাইম সিংক সক্রিয়।' : 'Online mode enabled. Real-time sync active.');
+      }
+      setShowSuccessToast(true);
+      setTimeout(() => setShowSuccessToast(false), 4000);
+    } catch (err) {
+      console.error('Error toggling offline mode:', err);
+    }
+  };
+
+  const handleManualSyncNow = async () => {
+    sounds.playTap();
+    setIsSyncing(true);
+    try {
+      await enableNetwork(db);
+      setOfflineMode(false);
+      safeStorage.setItem('protyasha_offline_mode', 'false');
+      sounds.playSuccess();
+      setSuccessToastMessage(isBn ? 'রিয়েলটাইম ক্লাউড ডেটা সফলভাবে সিংক হয়েছে!' : 'Cloud data successfully synchronized!');
+      setShowSuccessToast(true);
+      setTimeout(() => setShowSuccessToast(false), 4000);
+    } catch (err) {
+      setSuccessToastMessage(isBn ? 'সিংক করতে নেটওয়ার্ক কানেকশন প্রয়োজন' : 'Network connection required to sync');
+      setShowSuccessToast(true);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   useEffect(() => {
     if (user?.name) setUserName(user.name);
@@ -503,7 +550,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
         )}
 
-        {/* Clean Settings and Tools Menu (Redundant duplicate profile/pin rows completely removed!) */}
+        {/* Clean Settings and Tools Menu */}
         <div className="rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
           
           {/* Language Switcher Row */}
@@ -753,6 +800,52 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </button>
             </>
           )}
+
+          {/* Offline Mode & Auto-Sync Toggle Row (Placed at the very bottom of the list) */}
+          <div className="p-4 flex items-center justify-between bg-gradient-to-r from-amber-50/40 to-orange-50/30 dark:from-amber-950/20 dark:to-orange-950/10">
+            <div className="flex items-center gap-3">
+              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${offlineMode ? 'bg-amber-500 text-white shadow-md' : 'bg-emerald-500 text-white shadow-md'}`}>
+                {offlineMode ? <Cloud className="w-5 h-5" /> : <UploadCloud className="w-5 h-5" />}
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                  <span>{isBn ? 'অফলাইন মোড ও অটো-সিংক' : 'Offline Mode & Auto-Sync'}</span>
+                  <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${offlineMode ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300'}`}>
+                    {offlineMode ? (isBn ? 'অফলাইন' : 'Offline') : (isBn ? 'অনলাইন' : 'Online')}
+                  </span>
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {offlineMode 
+                    ? (isBn ? 'লোকাল ক্যাশ থেকে চলছে (নেট সংযোগ ছাড়া কাজ করুন)' : 'Running offline from local cache')
+                    : (isBn ? 'নেট সংযোগ পেলেই রিয়েল ডেটা সিংক হবে' : 'Auto-syncing real data when connected')}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {offlineMode && (
+                <button
+                  onClick={handleManualSyncNow}
+                  disabled={isSyncing}
+                  className="px-2.5 py-1.5 rounded-xl bg-emerald-600 text-white text-[11px] font-bold active:scale-95 transition-all flex items-center gap-1 shadow-sm"
+                >
+                  {isSyncing ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />}
+                  <span>{isBn ? 'সিংক' : 'Sync'}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => handleToggleOfflineMode(!offlineMode)}
+                className={`w-12 h-7 rounded-full transition-colors relative p-1 cursor-pointer ${
+                  offlineMode ? 'bg-amber-500' : 'bg-emerald-500'
+                }`}
+              >
+                <div className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${
+                  offlineMode ? 'translate-x-0' : 'translate-x-5'
+                }`} />
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Logout Button */}
@@ -1203,7 +1296,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                           onClick={async () => {
                             try {
                               setIsSaving(true);
-                              const { signInWithGoogleDrive } = await import('../utils/googleDrive');
                               const result = await signInWithGoogleDrive();
                               if (result.user.email && onBindMethods) {
                                 await onBindMethods({ gmail: result.user.email });

@@ -1,11 +1,12 @@
 {
-  "projectId": "ambient-index-rz2vd",
-  "appId": "1:418397015448:web:dd6c886f62f68414542fed",
-  "apiKey": "AIzaSyD8VwLQQQjUxXpJcLi64tzqVYXKvKhrGTQ",
-  "authDomain": "ambient-index-rz2vd.firebaseapp.com",
-  "storageBucket": "ambient-index-rz2vd.firebasestorage.app",
-  "messagingSenderId": "418397015448",
+  "projectId": "gen-lang-client-0866907753",
+  "appId": "1:1003306673691:web:23db6ebdc319e6a6df3abe",
+  "apiKey": "AIzaSyAPqy-Vy7r3QKvN7qeBG4pcnQakNR-gfuk",
+  "authDomain": "gen-lang-client-0866907753.firebaseapp.com",
+  "firestoreDatabaseId": "staff-collection-db",
+  "storageBucket": "gen-lang-client-0866907753.firebasestorage.app",
+  "messagingSenderId": "1003306673691",
   "measurementId": "",
-  "oAuthClientId": "",
+  "oAuthClientId": "1003306673691-28n3id5nk33r91a7msidc929qbhabtvb.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

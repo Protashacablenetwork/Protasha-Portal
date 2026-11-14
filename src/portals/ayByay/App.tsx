@@ -43,8 +43,8 @@ import {
 import { ArrowDownToLine, CheckCircle2, AlertCircle, ArrowLeft, Boxes, BarChart3, Sparkles, PlusCircle, FileSpreadsheet } from 'lucide-react';
 import { StaffAccount, QuickHisabOwner, UserSession } from '../../types';
 import { initialTransactions } from '../../data/initialData';
-import { staffDb, safeSetDoc, safeDeleteDoc, isFirestoreQuotaExceeded, handleFirestoreError, OperationType } from '../../utils/firebase';
-import { collection, doc, onSnapshot, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { staffDb, safeSetDoc, safeDeleteDoc, handleFirestoreError, OperationType } from '../../utils/firebase';
+import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { safeStorage } from '../../utils/safeStorage';
 
 interface AyByayPortalProps {
@@ -127,11 +127,9 @@ export function AyByayPortal({
 
   // Real-time synchronization with Google Cloud Firestore for Staff Accounts
   useEffect(() => {
-    if (isFirestoreQuotaExceeded()) return;
     try {
       const q = collection(staffDb, 'staff');
-      let unsubscribe: (() => void) | null = null;
-      unsubscribe = onSnapshot(q, (snapshot) => {
+      const unsubscribe = onSnapshot(q, (snapshot) => {
         const cloudStaff: StaffAccount[] = [];
         snapshot.forEach(docSnap => {
           const data = docSnap.data() as StaffAccount;
@@ -142,14 +140,9 @@ export function AyByayPortal({
         setStaffAccounts(cloudStaff);
         safeStorage.setItem('protyasha_staff', JSON.stringify(cloudStaff));
       }, (err) => {
-        const wasQuota = handleFirestoreError(err, OperationType.LIST, 'staff');
-        if (wasQuota && unsubscribe) {
-          try { unsubscribe(); } catch {}
-        }
+        handleFirestoreError(err, OperationType.LIST, 'staff');
       });
-      return () => {
-        if (unsubscribe) unsubscribe();
-      };
+      return () => unsubscribe();
     } catch (e) {
       console.warn('AyByay staff listener error:', e);
     }
@@ -157,11 +150,9 @@ export function AyByayPortal({
 
   // Real-time synchronization with Google Cloud Firestore for Staff Salaries
   useEffect(() => {
-    if (isFirestoreQuotaExceeded()) return;
     try {
       const q = collection(staffDb, 'ay_byay_salaries');
-      let unsubscribe: (() => void) | null = null;
-      unsubscribe = onSnapshot(q, (snapshot) => {
+      const unsubscribe = onSnapshot(q, (snapshot) => {
         const cloudSalaries: SalaryPayment[] = [];
         snapshot.forEach(docSnap => {
           const data = docSnap.data() as SalaryPayment;
@@ -170,39 +161,118 @@ export function AyByayPortal({
           }
         });
         setSalaries(cloudSalaries);
-        safeStorage.setItem('isp_cache_salaries', JSON.stringify(cloudSalaries)); 
+        safeStorage.setItem('isp_cache_salaries', JSON.stringify(cloudSalaries));
         window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { type: 'salaries', data: cloudSalaries } }));
       }, (err) => {
         handleFirestoreError(err, OperationType.LIST, 'ay_byay_salaries');
       });
-      return () => { if (unsubscribe) unsubscribe(); };
-    } catch (e) { console.warn('Salaries listener error:', e); }
+      return () => unsubscribe();
+    } catch (e) {
+      console.warn('Salaries listener error:', e);
+    }
   }, []);
 
-  // Real-time synchronization for Transactions
+  // Real-time synchronization for Ay-Byay Transactions
   useEffect(() => {
-    if (isFirestoreQuotaExceeded()) return;
     try {
       const q = collection(staffDb, 'ay_byay_transactions');
-      let unsubscribe: (() => void) | null = null;
-      unsubscribe = onSnapshot(q, (snapshot) => {
+      const unsubscribe = onSnapshot(q, (snapshot) => {
         const cloudTx: Transaction[] = [];
         snapshot.forEach(docSnap => {
           const data = docSnap.data() as any;
-          if (data && data.id && !data.isDeleted && data.source === 'ay-byay') cloudTx.push(data);
+          if (data && (data.id || docSnap.id) && !data.isDeleted && (!data.source || data.source === 'ay-byay')) {
+            cloudTx.push({ ...data, id: data.id || docSnap.id });
+          }
         });
-        
-        // Update state with cloud data (even if empty, to reflect deletions)
+
         const sorted = cloudTx.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
         setTransactions(sorted);
-        
-        safeStorage.setItem('isp_cache_txns', JSON.stringify(sorted)); 
+        safeStorage.setItem('isp_cache_txns', JSON.stringify(sorted));
         window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { type: 'transactions', data: sorted } }));
       }, (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'transactions');
+        handleFirestoreError(err, OperationType.LIST, 'ay_byay_transactions');
       });
-      return () => { if (unsubscribe) unsubscribe(); };
-    } catch (e) { console.warn('Transactions listener error:', e); }
+      return () => unsubscribe();
+    } catch (e) {
+      console.warn('Transactions listener error:', e);
+    }
+  }, []);
+
+  // Real-time synchronization for Inventory Items
+  useEffect(() => {
+    try {
+      const q = collection(staffDb, 'ay_byay_inventory');
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const items: InventoryItem[] = [];
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data() as InventoryItem;
+          if (data && (data.id || docSnap.id)) {
+            items.push({ ...data, id: data.id || docSnap.id });
+          }
+        });
+        items.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+        setInventoryItems(items);
+        try { safeStorage.setItem('isp_cache_inventory', JSON.stringify(items)); } catch {}
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'ay_byay_inventory');
+      });
+      return () => unsubscribe();
+    } catch (e) {
+      console.warn('Inventory items listener error:', e);
+    }
+  }, []);
+
+  // Real-time synchronization for Inventory Movement Logs
+  useEffect(() => {
+    try {
+      const q = collection(staffDb, 'ay_byay_inventory_logs');
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const logs: InventoryLog[] = [];
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data() as InventoryLog;
+          if (data && (data.id || docSnap.id)) {
+            logs.push({ ...data, id: data.id || docSnap.id });
+          }
+        });
+        logs.sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
+        setInventoryLogs(logs);
+        try { safeStorage.setItem('isp_cache_inventory_logs', JSON.stringify(logs)); } catch {}
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'ay_byay_inventory_logs');
+      });
+      return () => unsubscribe();
+    } catch (e) {
+      console.warn('Inventory logs listener error:', e);
+    }
+  }, []);
+
+  // Real-time synchronization for Ay-Byay Config & Managed Months
+  useEffect(() => {
+    try {
+      const cfgRef = doc(staffDb, 'ay_byay_config', 'main');
+      const unsubscribe = onSnapshot(cfgRef, (snap) => {
+        if (snap.exists()) {
+          const cloudCfg = snap.data() as Partial<AppConfig>;
+          setConfig(prev => {
+            const merged = { ...prev, ...cloudCfg };
+            try { safeStorage.setItem('isp_admin_saved_config', JSON.stringify(merged)); } catch {}
+            return merged;
+          });
+          if (Array.isArray(cloudCfg.managedMonths) && cloudCfg.managedMonths.length > 0) {
+            setManagedMonths(prev => {
+              const mergedMonths = Array.from(new Set([...(cloudCfg.managedMonths || []), ...prev]));
+              try { safeStorage.setItem('isp_managed_months', JSON.stringify(mergedMonths)); } catch {}
+              return mergedMonths;
+            });
+          }
+        }
+      }, (err) => {
+        handleFirestoreError(err, OperationType.GET, 'ay_byay_config/main');
+      });
+      return () => unsubscribe();
+    } catch (e) {
+      console.warn('AyByay config listener error:', e);
+    }
   }, []);
 
   const handleSaveStaffAccounts = (updated: StaffAccount[]) => {
@@ -214,7 +284,12 @@ export function AyByayPortal({
       setTimeout(() => {
         window.dispatchEvent(new CustomEvent('staff-data-changed', { detail: updated }));
       }, 0);
-      safeSetDoc(doc(staffDb, 'settings', 'staff_accounts_snapshot'), { staffAccounts: updated, updatedAt: new Date().toISOString() }).catch(() => {});
+      updated.forEach(staff => {
+        safeSetDoc(doc(staffDb, 'staff', String(staff.id)), {
+          ...staff,
+          phone: staff.phone || ''
+        }).catch(() => {});
+      });
     }
   };
 
@@ -634,11 +709,19 @@ export function AyByayPortal({
   const handleAddInventoryItem = async (item: Partial<InventoryItem>) => {
     try {
       const id = item.id || `INV-${Date.now()}`;
-      const payload = { 
-        ...item, 
-        id, 
-        recordedBy: currentUser?.id,
-        updatedAt: new Date().toISOString() 
+      const payload = {
+        id,
+        name: item.name || 'মালামাল',
+        category: item.category || 'other',
+        unit: item.unit || 'পিস',
+        currentStock: Number(item.currentStock) || 0,
+        minStockAlert: Number(item.minStockAlert) || 0,
+        unitCost: Number(item.unitCost) || 0,
+        supplier: item.supplier,
+        location: item.location,
+        notes: item.notes,
+        recordedBy: currentUser?.id || 'admin-primary',
+        updatedAt: new Date().toISOString()
       };
       await safeSetDoc(doc(staffDb, 'ay_byay_inventory', id), payload);
       setSyncToast({ message: 'মালামাল সফলভাবে সংরক্ষিত হয়েছে', type: 'success' });
@@ -1235,10 +1318,11 @@ export function AyByayPortal({
     try {
       const salRecord = salaries.find(s => s.id === id);
 
-      // 1. Delete directly from Google Cloud Firestore staffDb collection 'ay_byay_salaries'
+      // 1. Delete directly from Google Cloud Firestore staffDb collections
       await safeDeleteDoc(doc(staffDb, 'ay_byay_salaries', id)).catch(err => {
         handleFirestoreError(err, OperationType.DELETE, `ay_byay_salaries/${id}`);
       });
+      safeDeleteDoc(doc(staffDb, 'staff_salaries', id)).catch(() => {});
 
       // 2. Remove linked expense transaction from Ay-Byay Firestore
       const linkedTxId = `tx-sal-${id}`;

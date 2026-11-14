@@ -94,7 +94,47 @@ export const initialAppUsers: AppUser[] = [
 
 export const initialTransactions: Transaction[] = [];
 
-export const initialBanners: BannerAd[] = [];
+export const initialBanners: BannerAd[] = [
+  {
+    id: 'banner-demo-1',
+    badgeBn: '',
+    badgeEn: '',
+    titleBn: '',
+    titleEn: '',
+    subtitleBn: '',
+    subtitleEn: '',
+    imageUrl: 'https://i.postimg.cc/mkZ5K2WX/76767.webp',
+    linkUrl: '#',
+    isActive: true,
+    priority: 1
+  },
+  {
+    id: 'banner-demo-2',
+    badgeBn: '',
+    badgeEn: '',
+    titleBn: '',
+    titleEn: '',
+    subtitleBn: '',
+    subtitleEn: '',
+    imageUrl: 'https://i.postimg.cc/WzKwS2Nj/Picture-2026-11-12-12-02-17.webp',
+    linkUrl: '#',
+    isActive: true,
+    priority: 2
+  },
+  {
+    id: 'banner-demo-3',
+    badgeBn: '',
+    badgeEn: '',
+    titleBn: '',
+    titleEn: '',
+    subtitleBn: '',
+    subtitleEn: '',
+    imageUrl: 'https://i.postimg.cc/63WcpjbX/Picture-2026-11-12-12-02-16.webp',
+    linkUrl: '#',
+    isActive: true,
+    priority: 3
+  }
+];
 
 export const initialNotifications: NotificationItem[] = [];
 

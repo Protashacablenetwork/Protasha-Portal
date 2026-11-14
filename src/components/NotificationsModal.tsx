@@ -67,7 +67,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
     if (initialEditingNotif) {
       setEditingNotif(initialEditingNotif);
       setNotifTitle(isBn ? initialEditingNotif.titleBn : initialEditingNotif.titleEn);
-      setNotifBody(isBn ? initialEditingNotif.bodyBn : initialEditingNotif.bodyEn);
+      setNotifBody((isBn ? initialEditingNotif.bodyBn : initialEditingNotif.bodyEn).replace(/পরামর্শ:\s*(পরামর্শ:|সতর্কবার্তা:|সতর্কতা:|সুসংবাদ:|বার্তা:)/g, '$1'));
       setNotifType(initialEditingNotif.type);
       setNotifAmount(initialEditingNotif.amount?.toString() || '');
       setNotifImage(initialEditingNotif.image || '');
@@ -556,7 +556,9 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
                         ? 'font-semibold text-slate-800 dark:text-slate-100'
                         : 'font-normal text-slate-500 dark:text-slate-400'
                     }`}>
-                      {isBn ? item.bodyBn : item.bodyEn}
+                      {isBn
+                        ? (item.bodyBn || item.messageBn || '').replace(/পরামর্শ:\s*(পরামর্শ:|সতর্কবার্তা:|সতর্কতা:|সুসংবাদ:|বার্তা:)/g, '$1')
+                        : (item.bodyEn || item.messageEn || '')}
                     </p>
 
                     <div className="flex items-center justify-end mt-2">

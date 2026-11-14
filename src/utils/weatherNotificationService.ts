@@ -199,7 +199,7 @@ Safety Guidelines:
     adviceBn = goodWeatherAdvices[adviceIndex];
   }
 
-  const broadcastBodyBn = `【${weather.cityBn} আবহাওয়া বুলেটিন】\n• আকাশ: ${weather.conditionBn}\n• বর্তমান তাপমাত্রা: ${tempBn} (সর্বোচ্চ: ${highBn} / সর্বনিম্ন: ${lowBn})\n• বাতাসের বেগ: ${windBn} | আর্দ্রতা: ${humidityBn}\n• বৃষ্টির সম্ভাবনা: ${rainProbBn}\n\nপরামর্শ: ${adviceBn}`;
+  const broadcastBodyBn = `【${weather.cityBn} আবহাওয়া বুলেটিন】\n• আকাশ: ${weather.conditionBn}\n• বর্তমান তাপমাত্রা: ${tempBn} (সর্বোচ্চ: ${highBn} / সর্বনিম্ন: ${lowBn})\n• বাতাসের বেগ: ${windBn} | আর্দ্রতা: ${humidityBn}\n• বৃষ্টির সম্ভাবনা: ${rainProbBn}\n\n${adviceBn}`;
   const broadcastBodyEn = `【${weather.cityEn} Weather Bulletin】\nCondition: ${weather.conditionEn} | Temp: ${weather.currentTemp}°C (H: ${weather.daily[0]?.tempMax}°C / L: ${weather.daily[0]?.tempMin}°C) | Wind: ${weather.windSpeed} km/h | Humidity: ${weather.humidity}%.`;
 
   return {

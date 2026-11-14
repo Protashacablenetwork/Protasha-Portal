@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Bell, ShieldCheck, Sun, CloudRain, Cloud, CloudLightning } from 'lucide-react';
+import { Bell, ShieldCheck, Sun, CloudRain, Cloud, CloudLightning, Moon } from 'lucide-react';
 import { Language, UserSession } from '../types';
 import { getGreeting, toBengaliNumber } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import { safeStorage } from '../utils/safeStorage';
-import { fetchLiveWeather, WeatherData } from '../utils/weatherService';
+import { fetchLiveWeather, WeatherData, ALL_BANGLADESH_DISTRICTS } from '../utils/weatherService';
+import { getActivePrayerCardData, calculateLocalPrayerTimes } from '../utils/prayerTimeService';
 import scenicLandscape from '../assets/images/scenic_river_bridge_landscape_1792226647109.jpg';
 
 interface HeaderProps {
@@ -42,6 +43,7 @@ export const Header: React.FC<HeaderProps> = ({
 
   const [internalWeather, setInternalWeather] = useState<WeatherData | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
+  const [waqtInfo, setWaqtInfo] = useState<any>(null);
 
   const loadWeather = () => {
     fetchLiveWeather().then(data => {
@@ -49,9 +51,21 @@ export const Header: React.FC<HeaderProps> = ({
     }).catch(() => {});
   };
 
+  const updatePrayerTime = () => {
+    try {
+      const savedDistrict = safeStorage.getItem('protyasha_selected_district') || 'জামালপুর';
+      const district = ALL_BANGLADESH_DISTRICTS.find(d => d.nameBn === savedDistrict || d.nameEn.toLowerCase() === savedDistrict.toLowerCase()) || ALL_BANGLADESH_DISTRICTS.find(d => d.nameBn === 'জামালপুর')!;
+      const timings = calculateLocalPrayerTimes(district);
+      const waqt = getActivePrayerCardData(timings);
+      setWaqtInfo({ ...waqt, cityBn: district.nameBn });
+    } catch {}
+  };
+
   useEffect(() => {
     loadWeather();
+    updatePrayerTime();
     const interval = setInterval(loadWeather, 10 * 60 * 1000);
+    const prayerInterval = setInterval(updatePrayerTime, 30 * 1000);
     
     const handleScroll = () => {
       setIsScrolled(window.scrollY > 20);
@@ -61,6 +75,7 @@ export const Header: React.FC<HeaderProps> = ({
     
     return () => {
       clearInterval(interval);
+      clearInterval(prayerInterval);
       window.removeEventListener('scroll', handleScroll);
     };
   }, []);
@@ -142,8 +157,28 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* Right Action Icons: Live Weather & Notification Bell */}
+          {/* Right Action Icons: Prayer Times, Live Weather & Notification Bell */}
           <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* Live Prayer Times Button in Header (Icon Only 🕌) */}
+            {onOpenPrayerTimes && (
+              <button
+                onClick={() => {
+                  sounds.playTap();
+                  onOpenPrayerTimes();
+                }}
+                title={lang === 'bn' ? 'নামাজের সময়সূচী ও ক্যালেন্ডার' : 'Prayer Times & Calendar'}
+                className={`w-10 h-10 rounded-full backdrop-blur-md shadow-sm border flex items-center justify-center transition-all active:scale-95 cursor-pointer shrink-0 ${
+                  isScrolled 
+                    ? 'bg-emerald-50/90 dark:bg-emerald-950/50 border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200' 
+                    : 'bg-emerald-900/40 border-emerald-400/40 text-white shadow-lg backdrop-blur-md'
+                }`}
+              >
+                <span className="text-base select-none">
+                  🕌
+                </span>
+              </button>
+            )}
+
             {/* Live Weather Button */}
             <button
               onClick={() => {

@@ -1,54 +1,53 @@
 import { initializeApp } from 'firebase/app';
 import { safeStorage } from './safeStorage';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer, setDoc, deleteDoc } from 'firebase/firestore';
+import {
+  initializeFirestore,
+  enableNetwork,
+  doc,
+  getDocFromServer,
+  setDoc,
+  deleteDoc,
+  DocumentReference,
+  SetOptions
+} from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
+const databaseId = (firebaseConfig as any).firestoreDatabaseId || 'staff-collection-db';
 
-// Main database (original)
-export const db = getFirestore(app);
+// Initialize Firestore against the newly provisioned database with long-polling auto-detection
+// to prevent NS_BINDING_ABORTED / WebChannel drops across proxies and browsers.
+export const db = initializeFirestore(
+  app,
+  { experimentalAutoDetectLongPolling: true },
+  databaseId
+);
 
-// Staff database (separate - but falling back to default for compatibility if not provisioned)
-export const staffDb = getFirestore(app);
+// Unified reference to the active provisioned Firestore database
+export const staffDb = db;
 
 export const auth = getAuth(app);
 
-export const FIRESTORE_UPGRADE_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${(firebaseConfig as any).firestoreDatabaseId || 'staff-collection-db'}/data?openUpgradeDialog=true`;
-
-import { disableNetwork, enableNetwork } from 'firebase/firestore';
+export const FIRESTORE_UPGRADE_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${databaseId}/data?openUpgradeDialog=true`;
 
 const QUOTA_KEY = 'firestore_quota_exceeded';
 const QUOTA_RESET_KEY = 'firestore_quota_reset_time';
+let sessionQuotaExceeded = false;
+
+// Clear any legacy localStorage quota lockouts on boot and ensure network is active
+try {
+  safeStorage.removeItem(QUOTA_KEY);
+  safeStorage.removeItem(QUOTA_RESET_KEY);
+  enableNetwork(db).catch(() => {});
+} catch {}
 
 export function isFirestoreQuotaExceeded(): boolean {
-  try {
-    const isExceeded = safeStorage.getItem(QUOTA_KEY) === 'true';
-    const resetTime = parseInt(safeStorage.getItem(QUOTA_RESET_KEY) || '0', 10);
-    
-    if (isExceeded && Date.now() < resetTime) {
-      return true;
-    }
-    if (isExceeded && Date.now() >= resetTime) {
-      safeStorage.removeItem(QUOTA_KEY);
-      safeStorage.removeItem(QUOTA_RESET_KEY);
-      enableNetwork(db).catch(() => {});
-    }
-  } catch {
-    // ignore
-  }
-  return false;
+  return sessionQuotaExceeded;
 }
 
 export function setFirestoreQuotaExceeded() {
-  try {
-    const resetTime = Date.now() + 60 * 60 * 1000; // 1-hour backoff (persisted)
-    safeStorage.setItem(QUOTA_KEY, 'true');
-    safeStorage.setItem(QUOTA_RESET_KEY, resetTime.toString());
-    disableNetwork(db).catch(() => {});
-  } catch {
-    // ignore
-  }
+  sessionQuotaExceeded = true;
 }
 
 export enum OperationType {
@@ -77,14 +76,46 @@ export interface FirestoreErrorInfo {
   };
 }
 
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): boolean {
+/**
+ * Recursively remove undefined properties from objects/arrays because Firestore
+ * rejects documents containing `undefined` anywhere in the payload.
+ */
+export function stripUndefined<T>(value: T): T {
+  if (value === null || value === undefined) return value;
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => item !== undefined)
+      .map((item) => stripUndefined(item)) as unknown as T;
+  }
+  if (typeof value === 'object' && !(value instanceof Date)) {
+    const cleaned: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (v !== undefined) {
+        cleaned[k] = stripUndefined(v);
+      }
+    }
+    return cleaned as T;
+  }
+  return value;
+}
+
+export function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): boolean {
   const errMsg = error instanceof Error ? error.message : String(error);
-  const isQuota = errMsg.includes('RESOURCE_EXHAUSTED') || errMsg.includes('Quota limit exceeded') || errMsg.includes('quota metric') || (error as any)?.code === 8 || (error as any)?.code === 'resource-exhausted';
+  const isQuota =
+    errMsg.includes('RESOURCE_EXHAUSTED') ||
+    errMsg.includes('Quota limit exceeded') ||
+    errMsg.includes('quota metric') ||
+    (error as any)?.code === 8 ||
+    (error as any)?.code === 'resource-exhausted';
 
   if (isQuota) {
-    if (!isFirestoreQuotaExceeded()) {
+    if (!sessionQuotaExceeded) {
       setFirestoreQuotaExceeded();
-      console.warn('[Firestore Spark Tier Quota Notice]: Daily write/read units limit reached on Google Cloud Firestore free tier. Seamlessly switched to local offline storage (safeStorage/IndexedDB) and local server persistence. All app data is 100% saved and protected. Quota resets daily at midnight Pacific Time.');
+      console.warn('[Firestore Quota Notice]: Daily free tier read/write quota reached.');
     }
     return true;
   }
@@ -97,73 +128,65 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
       tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || []
+      providerInfo:
+        auth.currentUser?.providerData?.map((provider) => ({
+          providerId: provider.providerId,
+          email: provider.email,
+        })) || [],
     },
     operationType,
-    path
+    path,
   };
-  console.warn('[Firestore Operation Notice]:', JSON.stringify(errInfo));
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
   return false;
 }
 
-// Safe Firestore write helper that checks quota before calling and prevents unhandled stream errors
-export async function safeSetDoc(docRef: any, data: any, options?: any) {
-  if (isFirestoreQuotaExceeded()) {
-    return;
-  }
+// Safe Firestore write helper that strips undefined and reports structured errors
+export async function safeSetDoc(
+  docRef: DocumentReference<any>,
+  data: any,
+  options?: SetOptions
+): Promise<void> {
+  const cleanData = stripUndefined(data);
   try {
     if (options) {
-      await setDoc(docRef, data, options);
+      await setDoc(docRef, cleanData, options);
     } else {
-      await setDoc(docRef, data);
+      await setDoc(docRef, cleanData);
     }
   } catch (err: any) {
-    const msg = err?.message || String(err);
-    if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('Quota') || err?.code === 'resource-exhausted' || err?.code === 8) {
-      setFirestoreQuotaExceeded();
-      console.warn('[Firestore Free Quota]: Daily writes capped. Local persistence active.');
-      return;
+    const wasQuota = handleFirestoreError(err, OperationType.WRITE, docRef?.path || null);
+    if (!wasQuota) {
+      throw err;
     }
-    handleFirestoreError(err, OperationType.WRITE, docRef?.path || null);
   }
 }
 
-// Safe Firestore delete helper that checks quota before calling
-export async function safeDeleteDoc(docRef: any) {
-  if (isFirestoreQuotaExceeded()) {
-    return;
-  }
+// Safe Firestore delete helper that reports structured errors
+export async function safeDeleteDoc(docRef: DocumentReference<any>): Promise<void> {
   try {
     await deleteDoc(docRef);
   } catch (err: any) {
-    const msg = err?.message || String(err);
-    if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('Quota') || err?.code === 'resource-exhausted' || err?.code === 8) {
-      setFirestoreQuotaExceeded();
-      return;
+    const wasQuota = handleFirestoreError(err, OperationType.DELETE, docRef?.path || null);
+    if (!wasQuota) {
+      throw err;
     }
-    handleFirestoreError(err, OperationType.DELETE, docRef?.path || null);
   }
 }
 
-// Validation connection to Firestore on initialization
-export async function testFirestoreConnection() {
+// Validate connection to the newly provisioned Firestore database on boot
+export async function testFirestoreConnection(): Promise<boolean> {
   try {
     await getDocFromServer(doc(db, 'settings', 'connection_test'));
-    console.log('[Firestore] Cloud connection verified successfully.');
+    return true;
   } catch (error) {
-    console.warn('[Firestore Connection Notice]:', error instanceof Error ? error.message : error);
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error('Please check your Firebase configuration.');
+    } else {
+      console.warn('[Firestore Connection Notice]:', error instanceof Error ? error.message : error);
+    }
+    return false;
   }
 }
 
-// Initial check: if quota already exceeded, stop network immediately
-if (isFirestoreQuotaExceeded()) {
-  disableNetwork(db).catch(() => {});
-  console.warn('[Firestore] Free tier quota reached. Offline mode active.');
-} else {
-  // Self-test on load if NOT in quota lockout
-  testFirestoreConnection();
-}
-
+testFirestoreConnection();

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { db, staffDb, auth, handleFirestoreError, OperationType, safeSetDoc, safeDeleteDoc, isFirestoreQuotaExceeded } from './utils/firebase';
-import { collection, doc, onSnapshot, getDoc, getDocs, query, where, limit } from 'firebase/firestore';
+import { db, staffDb, handleFirestoreError, OperationType, safeSetDoc, safeDeleteDoc } from './utils/firebase';
+import { collection, doc, onSnapshot, getDoc, getDocs } from 'firebase/firestore';
 import { 
   Language, 
   Transaction, 
@@ -10,20 +10,19 @@ import {
   NotificationItem, 
   PaymentChannel, 
   BannerAd,
-  AppUser,
   StaffAccount,
   ServiceStatusConfig,
   QuickHisabOwner
 } from './types';
 import confetti from 'canvas-confetti';
 import { 
-  initialTransactions, 
   initialNotifications, 
   initialFooterConfig,
   initialBanners,
   initialPaymentChannels,
   initialStaffAccounts,
-  initialQuickHisabOwners
+  initialQuickHisabOwners,
+  initialAppUsers
 } from './data/initialData';
 import { sounds } from './utils/audio';
 import { savePersistentImage, getPersistentImage, getSyncPersistentImage, deletePersistentImage } from './utils/imageStorage';
@@ -65,6 +64,8 @@ import { fetchLiveWeather, WeatherData, detectPreciseLocation, DistrictInfo, get
 import { checkAndGenerateWeatherNotifications } from './utils/weatherNotificationService';
 import { checkAndGeneratePrayerNotifications } from './utils/prayerTimeService';
 import { safeStorage } from './utils/safeStorage';
+import { getDriveAccessToken, uploadBackupToGoogleDrive } from './utils/googleDrive';
+import { collectMasterBackupData } from './utils/backupCollector';
 
 export default function App() {
   // Language
@@ -204,7 +205,7 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.filter(t => t && t.id && !String(t.id).startsWith('txn-init-') && !t.isDeleted);
+          return parsed.filter(t => t && t.id && !String(t.id).startsWith('txn-init-') && t.source !== 'ay-byay');
         }
       }
     } catch {}
@@ -216,21 +217,42 @@ export default function App() {
     return Array.isArray(list) ? list : [];
   };
 
-  // Dynamic Homepage Banners (Cloud-first)
-  const [banners, setBanners] = useState<BannerAd[]>([]);
+  // Dynamic Homepage Banners (Cloud-first with fallback to initialBanners)
+  const [banners, setBanners] = useState<BannerAd[]>(() => {
+    try {
+      const saved = safeStorage.getItem('protyasha_banners');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.filter(b => b && b.id);
+        }
+      }
+    } catch {}
+    return initialBanners;
+  });
 
-  // Helper to filter out legacy dummy/demo notifications
+  // Helper to filter out legacy dummy/demo notifications and sanitize duplicate weather advice prefixes
   const cleanDemoNotifications = (list: NotificationItem[]): NotificationItem[] => {
     if (!Array.isArray(list)) return [];
-    return list.filter(n => {
-      const id = n.id || '';
-      const titleBn = n.titleBn || '';
-      const titleEn = n.titleEn || '';
-      if (id === 'notif-1' || id === 'notif-2' || id === 'notif-3' || id.startsWith('demo-')) return false;
-      if (titleBn.includes('স্বাগতম') || titleEn.toLowerCase().includes('welcome')) return false;
-      if (titleBn.includes('ক্যাশব্যাক ৫০') || titleBn.includes('ডেমো')) return false;
-      return true;
-    });
+    const sanitizeBodyBn = (text?: string) =>
+      typeof text === 'string'
+        ? text.replace(/পরামর্শ:\s*(পরামর্শ:|সতর্কবার্তা:|সতর্কতা:|সুসংবাদ:|বার্তা:)/g, '$1')
+        : text;
+    return list
+      .filter(n => {
+        const id = n.id || '';
+        const titleBn = n.titleBn || '';
+        const titleEn = n.titleEn || '';
+        if (id === 'notif-1' || id === 'notif-2' || id === 'notif-3' || id.startsWith('demo-')) return false;
+        if (titleBn.includes('স্বাগতম') || titleEn.toLowerCase().includes('welcome')) return false;
+        if (titleBn.includes('ক্যাশব্যাক ৫০') || titleBn.includes('ডেমো')) return false;
+        return true;
+      })
+      .map(n => ({
+        ...n,
+        bodyBn: sanitizeBodyBn(n.bodyBn) || '',
+        ...(n.messageBn !== undefined ? { messageBn: sanitizeBodyBn(n.messageBn) } : {})
+      }));
   };
 
   const cleanChannelLogos = (list: PaymentChannel[]): PaymentChannel[] => {
@@ -278,7 +300,7 @@ export default function App() {
       setReadNotifIds([]);
     }
 
-    if (user?.id && !isFirestoreQuotaExceeded()) {
+    if (user?.id) {
       const unsub = onSnapshot(doc(db, 'users', user.id), (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
@@ -299,19 +321,26 @@ export default function App() {
     }
   }, [user?.id, userKey]);
 
-  // Real-time synchronization with Google Cloud Firestore for Staff Accounts with Quota Guard
+  // Real-time synchronization with Cloud Firestore for Staff Accounts
   useEffect(() => {
-    if (isFirestoreQuotaExceeded()) return;
-
+    let unsubscribe: (() => void) | null = null;
     try {
-      const q = collection(staffDb, 'staff');
-      let unsubscribe: (() => void) | null = null;
-      unsubscribe = onSnapshot(q, (snapshot) => {
+      unsubscribe = onSnapshot(collection(staffDb, 'staff'), async (snapshot) => {
+        if (snapshot.empty) {
+          try {
+            const metaSnap = await getDoc(doc(db, 'settings', 'staff_meta'));
+            if (metaSnap.exists() && metaSnap.data()?.initialized) {
+              setStaffAccounts([]);
+              safeStorage.setItem('protyasha_staff', JSON.stringify([]));
+            }
+          } catch {}
+          return;
+        }
         const cloudStaff: StaffAccount[] = [];
         snapshot.forEach(docSnap => {
           const data = docSnap.data() as StaffAccount;
-          if (data && data.id && data.name) {
-            cloudStaff.push(data);
+          if (data && (data.id || docSnap.id) && data.name) {
+            cloudStaff.push({ ...data, id: data.id || docSnap.id });
           }
         });
         setStaffAccounts(cloudStaff);
@@ -319,83 +348,117 @@ export default function App() {
           safeStorage.setItem('protyasha_staff', JSON.stringify(cloudStaff));
         } catch {}
       }, (err) => {
-        // If quota exceeded, detach listener to stop background retry lag
-        const wasQuota = handleFirestoreError(err, OperationType.LIST, 'staff');
-        if (wasQuota && unsubscribe) {
-          try { unsubscribe(); } catch {}
-        }
+        handleFirestoreError(err, OperationType.LIST, 'staff');
       });
-      return () => {
-        if (unsubscribe) unsubscribe();
-      };
     } catch (e) {
       console.warn('Staff Firestore listener setup notice:', e);
     }
-  }, []);
-
-  // Real-time synchronization for Banners (Ads) from dedicated collection & settings doc
-  useEffect(() => {
-    if (isFirestoreQuotaExceeded()) return;
-
-    let unsubDoc: (() => void) | null = null;
-    let unsubColl: (() => void) | null = null;
-
-    try {
-      unsubDoc = onSnapshot(doc(db, 'settings', 'app_banners'), (snap) => {
-        console.log('Firestore app_banners snap exists:', snap.exists());
-        if (snap.exists()) {
-          const data = snap.data();
-          console.log('Firestore app_banners data:', data);
-          if (data && Array.isArray(data.banners)) {
-            const clean = data.banners.filter((b: any) => b && b.id);
-            console.log('Setting banners from Firestore:', clean);
-            setBanners(clean);
-          }
-        }
-      }, (err) => {
-        console.error('Firestore app_banners error:', err);
-        handleFirestoreError(err, OperationType.GET, 'settings/app_banners');
-      });
-
-      // Dedicated document listener is the single source of truth
-      unsubColl = null;
-    } catch (e) {
-      console.warn('Banners Firestore listener setup notice:', e);
-    }
-
     return () => {
-      if (unsubDoc) unsubDoc();
+      if (unsubscribe) unsubscribe();
     };
   }, []);
 
-  // Real-time synchronization for Quick Hisab Owners from dedicated collection & doc
+  // Real-time synchronization for Banners (Ads) from dedicated 'banners' collection
   useEffect(() => {
-    if (isFirestoreQuotaExceeded()) return;
-
-    let unsubDoc: (() => void) | null = null;
     let unsubColl: (() => void) | null = null;
-
     try {
-      unsubDoc = onSnapshot(doc(db, 'settings', 'quick_hisab_owners_data'), (snap) => {
-        if (snap.exists()) {
-          const data = snap.data();
-          if (data && Array.isArray(data.owners)) {
-            setQuickHisabOwners(data.owners);
-            try {
-              safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(data.owners));
-            } catch {}
-          }
+      unsubColl = onSnapshot(collection(db, 'banners'), async (snapshot) => {
+        if (snapshot.empty) {
+          try {
+            const metaSnap = await getDoc(doc(db, 'settings', 'banners_meta'));
+            if (metaSnap.exists() && metaSnap.data()?.initialized) {
+              setBanners([]);
+              safeStorage.setItem('protyasha_banners', JSON.stringify([]));
+            }
+          } catch {}
+          return;
         }
+        const cloudBanners: BannerAd[] = [];
+        snapshot.forEach(docSnap => {
+          const b = docSnap.data() as BannerAd;
+          if (b && (b.id || docSnap.id) && b.imageUrl) {
+            cloudBanners.push({
+              ...b,
+              id: String(b.id || docSnap.id),
+              isActive: b.isActive !== false
+            });
+          }
+        });
+        cloudBanners.sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
+        setBanners(cloudBanners);
+        try {
+          safeStorage.setItem('protyasha_banners', JSON.stringify(cloudBanners));
+        } catch {}
       }, (err) => {
-        handleFirestoreError(err, OperationType.GET, 'settings/quick_hisab_owners_data');
+        handleFirestoreError(err, OperationType.LIST, 'banners');
       });
+    } catch (e) {
+      console.warn('Banners Firestore listener setup notice:', e);
+    }
+    return () => {
+      if (unsubColl) unsubColl();
+    };
+  }, []);
 
-      unsubColl = onSnapshot(collection(db, 'quick_hisab_owners'), (snapshot) => {
+  // Real-time synchronization for Payment Channels from dedicated 'channels' collection
+  useEffect(() => {
+    let unsubColl: (() => void) | null = null;
+    try {
+      unsubColl = onSnapshot(collection(db, 'channels'), async (snapshot) => {
+        if (snapshot.empty) {
+          try {
+            const metaSnap = await getDoc(doc(db, 'settings', 'channels_meta'));
+            if (metaSnap.exists() && metaSnap.data()?.initialized) {
+              setChannels([]);
+              safeStorage.setItem('protyasha_channels', JSON.stringify([]));
+            }
+          } catch {}
+          return;
+        }
+        const cloudChannels: (PaymentChannel & { order?: number })[] = [];
+        snapshot.forEach(docSnap => {
+          const ch = docSnap.data() as PaymentChannel & { order?: number };
+          if (ch && (ch.id || docSnap.id) && ch.name) {
+            cloudChannels.push({ ...ch, id: String(ch.id || docSnap.id) });
+          }
+        });
+        cloudChannels.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+        const cleaned = cleanChannelLogos(cloudChannels);
+        setChannels(cleaned);
+        try {
+          safeStorage.setItem('protyasha_channels', JSON.stringify(cleaned));
+        } catch {}
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'channels');
+      });
+    } catch (e) {
+      console.warn('Channels Firestore listener setup notice:', e);
+    }
+    return () => {
+      if (unsubColl) unsubColl();
+    };
+  }, []);
+
+  // Real-time synchronization for Quick Hisab Owners from dedicated 'quick_hisab_owners' collection
+  useEffect(() => {
+    let unsubColl: (() => void) | null = null;
+    try {
+      unsubColl = onSnapshot(collection(db, 'quick_hisab_owners'), async (snapshot) => {
+        if (snapshot.empty) {
+          try {
+            const metaSnap = await getDoc(doc(db, 'settings', 'owners_meta'));
+            if (metaSnap.exists() && metaSnap.data()?.initialized) {
+              setQuickHisabOwners([]);
+              safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify([]));
+            }
+          } catch {}
+          return;
+        }
         const cloudOwners: QuickHisabOwner[] = [];
         snapshot.forEach(dSnap => {
           const o = dSnap.data() as QuickHisabOwner;
           if (o && o.name) {
-            cloudOwners.push({ ...o, id: o.id || dSnap.id });
+            cloudOwners.push({ ...o, id: String(o.id || dSnap.id) });
           }
         });
         setQuickHisabOwners(cloudOwners);
@@ -408,9 +471,7 @@ export default function App() {
     } catch (e) {
       console.warn('Quick Hisab Owners listener setup notice:', e);
     }
-
     return () => {
-      if (unsubDoc) unsubDoc();
       if (unsubColl) unsubColl();
     };
   }, []);
@@ -512,109 +573,206 @@ export default function App() {
       }
     }
   }, [adminAvatar]);
+
+  // Automated Daily Google Drive Backup Background Checker
   useEffect(() => {
-    // Safety Timeout: Force hide splash screen after 5s regardless of Firestore status
+    const checkScheduledBackup = async () => {
+      try {
+        const isEnabled = safeStorage.getItem('protyasha_scheduled_backup_enabled') === 'true';
+        if (!isEnabled) return;
+
+        const scheduledTime = safeStorage.getItem('protyasha_scheduled_backup_time') || '23:00';
+        const now = new Date();
+        const currentHours = String(now.getHours()).padStart(2, '0');
+        const currentMinutes = String(now.getMinutes()).padStart(2, '0');
+        const currentTimeStr = `${currentHours}:${currentMinutes}`;
+
+        const todayStr = now.toISOString().split('T')[0];
+        const lastBackupDate = safeStorage.getItem('protyasha_last_auto_backup_date');
+
+        if (currentTimeStr >= scheduledTime && lastBackupDate !== todayStr) {
+          const token = getDriveAccessToken();
+          if (token) {
+            const masterData = await collectMasterBackupData(user);
+            await uploadBackupToGoogleDrive(masterData);
+            safeStorage.setItem('protyasha_last_auto_backup_date', todayStr);
+            console.log('[AutoBackup] Daily scheduled Google Drive backup completed successfully at', currentTimeStr);
+          }
+        }
+      } catch (e) {
+        console.warn('[AutoBackup] Scheduled backup check notice:', e);
+      }
+    };
+
+    const interval = setInterval(checkScheduledBackup, 60000);
+    return () => clearInterval(interval);
+  }, [user]);
+  useEffect(() => {
+    // Safety Timeout: Force hide splash screen after 4s regardless of Firestore status
     const safetyTimer = setTimeout(() => {
       document.body.classList.add('app-ready');
-    }, 5000);
+    }, 4000);
 
-    // 2. Load from Cloud Firestore directly instead of /api/data
-    if (!isFirestoreQuotaExceeded()) {
-      getDoc(doc(db, 'settings', 'server_data')).then((snapshot) => {
-        if (!snapshot.exists()) return;
-        const cloudDoc = snapshot.data();
-        if (!cloudDoc || !cloudDoc.data) return;
-        const data = cloudDoc.data;
+    const bootstrapNewDatabase = async () => {
+      const nowIso = new Date().toISOString();
+      try {
+        const ensureCollectionSeeded = async <T extends { id: string | number }>(
+          metaDocId: string,
+          colName: string,
+          targetDb: typeof db,
+          items: T[],
+          normalize: (item: T, idx: number) => Record<string, any>
+        ) => {
+          try {
+            const metaRef = doc(db, 'settings', metaDocId);
+            const metaSnap = await getDoc(metaRef);
+            if (metaSnap.exists() && metaSnap.data()?.initialized) return;
 
-        if (data.transactions && Array.isArray(data.transactions)) {
-          const allTxs = data.transactions.filter((t: any) => t && t.id && !t.isDeleted && !String(t.id).startsWith('txn-init-') && t.source !== 'ay-byay');
-          const income = allTxs.filter((t: any) => t.type === 'income').reduce((sum: number, t: any) => sum + (Number(t.amount) || 0), 0);
-          const expense = allTxs.filter((t: any) => t.type === 'expense').reduce((sum: number, t: any) => sum + (Number(t.amount) || 0), 0);
-          
-          setServerTotals({
-            income,
-            expense,
-            balance: income - expense,
-            totalCount: allTxs.length
-          });
-          setHasMoreTransactions(allTxs.length > 50);
-          setTransactions(allTxs);
-        }
-
-        if (data.banners && Array.isArray(data.banners)) {
-          const cleanBanners = data.banners.filter((b: any) => b && b.id);
-          setBanners(cleanBanners);
-        }
-        if (data.channels) setChannels(cleanChannelLogos(data.channels));
-        if (data.staffAccounts) setStaffAccounts(data.staffAccounts);
-        if (data.quickHisabOwners) setQuickHisabOwners(data.quickHisabOwners);
-        if (data.footerConfig) setFooterConfig(data.footerConfig);
-        if (data.auditLogs) setAuditLogs(data.auditLogs);
-        if (data.serviceStatuses) setServiceStatuses(prev => ({ ...prev, ...data.serviceStatuses }));
-
-        if (data.adminProfile) {
-          const srvAvatar = data.adminProfile.avatarUrl;
-          if (srvAvatar && srvAvatar.startsWith('data:image/')) {
-            setAdminAvatar(srvAvatar);
+            const existingSnap = await getDocs(collection(targetDb, colName));
+            if (existingSnap.empty && items.length > 0) {
+              await Promise.all(
+                items.map((item, idx) =>
+                  safeSetDoc(doc(targetDb, colName, String(item.id)), normalize(item, idx)).catch(() => {})
+                )
+              );
+            }
+            await safeSetDoc(metaRef, { initialized: true, updatedAt: nowIso }).catch(() => {});
+          } catch (e) {
+            console.warn(`Seed check notice for ${colName}:`, e);
           }
-          if (user?.role === 'admin') {
-            setUser(prev => prev ? { 
-              ...prev, 
-              name: data.adminProfile.name, 
-              avatarUrl: srvAvatar || adminAvatar || prev.avatarUrl 
-            } : prev);
-          }
-        }
-      }).catch(err => {
-        console.warn('Initial data load failed:', err);
-      }).finally(() => {
-        clearTimeout(safetyTimer);
-        document.body.classList.add('app-ready');
-      });
-    } else {
+        };
+
+        await Promise.all([
+          ensureCollectionSeeded('banners_meta', 'banners', db, initialBanners, (b, idx) => ({
+            ...b,
+            id: String(b.id),
+            isActive: b.isActive !== false,
+            priority: b.priority ?? idx + 1,
+            updatedAt: nowIso
+          })),
+          ensureCollectionSeeded('channels_meta', 'channels', db, initialPaymentChannels, (ch, idx) => ({
+            ...ch,
+            id: String(ch.id),
+            order: idx + 1,
+            updatedAt: nowIso
+          })),
+          ensureCollectionSeeded('staff_meta', 'staff', staffDb, initialStaffAccounts, (stf) => ({
+            ...stf,
+            id: String(stf.id),
+            phone: stf.phone || ''
+          })),
+          ensureCollectionSeeded('owners_meta', 'quick_hisab_owners', db, initialQuickHisabOwners, (owner) => ({
+            ...owner,
+            id: String(owner.id)
+          })),
+          ensureCollectionSeeded('users_meta', 'users', db, initialAppUsers, (u) => ({
+            ...u,
+            id: String(u.id),
+            role: u.role || 'user',
+            status: u.status || 'active'
+          }))
+        ]);
+      } catch (err) {
+        console.warn('Initial database bootstrap error:', err);
+      }
+    };
+
+    bootstrapNewDatabase().finally(() => {
       clearTimeout(safetyTimer);
       document.body.classList.add('app-ready');
-    }
+    });
   }, []);
 
-  const syncToServer = useCallback(async (updates: any) => {
-    if (isFirestoreQuotaExceeded()) return;
-    try {
-      const docRef = doc(db, 'settings', 'server_data');
-      const snap = await getDoc(docRef);
-      const currentData = snap.exists() ? snap.data().data : {};
-      const merged = { ...currentData, ...updates };
-      
-      // Special merging for nested objects like profile and statuses
-      if (updates.adminProfile && currentData.adminProfile) {
-        merged.adminProfile = { ...currentData.adminProfile, ...updates.adminProfile };
-      }
-      if (updates.serviceStatuses && currentData.serviceStatuses) {
-        merged.serviceStatuses = { ...currentData.serviceStatuses, ...updates.serviceStatuses };
-      }
-
-      await safeSetDoc(docRef, {
-        id: 'server_data',
-        data: merged,
-        updatedAt: new Date().toISOString()
-      });
-    } catch (err) {
-      console.warn('Sync to server failed:', err);
-    }
-  }, [user]);
-
   const refreshAllData = useCallback(async () => {
-    if (isFirestoreQuotaExceeded()) return;
     try {
-      const snap = await getDoc(doc(db, 'settings', 'server_data'));
-      if (snap.exists() && snap.data().data) {
-        const data = snap.data().data;
-        if (data.transactions) setTransactions(data.transactions.filter((t: any) => t.source !== 'ay-byay'));
-        if (data.staffAccounts) setStaffAccounts(data.staffAccounts);
-        if (data.channels) setChannels(cleanChannelLogos(data.channels));
-        if (data.banners) setBanners(data.banners);
-        if (data.notifications) setNotifications(cleanDemoNotifications(data.notifications));
-        if (data.quickHisabOwners) setQuickHisabOwners(data.quickHisabOwners);
+      const [
+        txSnap,
+        staffSnap,
+        channelSnap,
+        bannerSnap,
+        ownerSnap,
+        notifSnap,
+        serviceSnap,
+        footerSnap,
+        adminSnap,
+        auditSnap
+      ] = await Promise.all([
+        getDocs(collection(db, 'transactions')),
+        getDocs(collection(staffDb, 'staff')),
+        getDocs(collection(db, 'channels')),
+        getDocs(collection(db, 'banners')),
+        getDocs(collection(db, 'quick_hisab_owners')),
+        getDoc(doc(db, 'settings', 'broadcast_notifications')),
+        getDoc(doc(db, 'settings', 'service_control')),
+        getDoc(doc(db, 'settings', 'footer_config')),
+        getDoc(doc(db, 'settings', 'admin_profile')),
+        getDoc(doc(db, 'settings', 'audit_logs'))
+      ]);
+
+      const mainTxs: Transaction[] = [];
+      txSnap.forEach(d => {
+        const data = d.data() as Transaction;
+        if (data && (data.id || d.id) && !String(data.id || d.id).startsWith('txn-init-') && data.source !== 'ay-byay') {
+          mainTxs.push({ ...data, id: data.id || d.id });
+        }
+      });
+      setTransactions(mainTxs);
+
+      if (!staffSnap.empty) {
+        const rows: StaffAccount[] = [];
+        staffSnap.forEach(d => {
+          const item = d.data() as StaffAccount;
+          if (item && item.name) rows.push({ ...item, id: item.id || d.id });
+        });
+        setStaffAccounts(rows);
+      }
+
+      if (!channelSnap.empty) {
+        const rows: (PaymentChannel & { order?: number })[] = [];
+        channelSnap.forEach(d => {
+          const item = d.data() as PaymentChannel & { order?: number };
+          if (item && item.name) rows.push({ ...item, id: String(item.id || d.id) });
+        });
+        rows.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+        setChannels(cleanChannelLogos(rows));
+      }
+
+      if (!bannerSnap.empty) {
+        const rows: BannerAd[] = [];
+        bannerSnap.forEach(d => {
+          const item = d.data() as BannerAd;
+          if (item && item.imageUrl) rows.push({ ...item, id: String(item.id || d.id), isActive: item.isActive !== false });
+        });
+        rows.sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
+        setBanners(rows);
+      }
+
+      if (!ownerSnap.empty) {
+        const rows: QuickHisabOwner[] = [];
+        ownerSnap.forEach(d => {
+          const item = d.data() as QuickHisabOwner;
+          if (item && item.name) rows.push({ ...item, id: String(item.id || d.id) });
+        });
+        setQuickHisabOwners(rows);
+      }
+
+      if (notifSnap.exists() && Array.isArray(notifSnap.data()?.list)) {
+        setNotifications(cleanDemoNotifications(notifSnap.data().list));
+      }
+      if (serviceSnap.exists() && serviceSnap.data()?.statuses) {
+        setServiceStatuses(prev => ({ ...prev, ...serviceSnap.data().statuses }));
+      }
+      if (footerSnap.exists() && footerSnap.data()?.config) {
+        setFooterConfig(footerSnap.data().config);
+      }
+      if (adminSnap.exists()) {
+        const ap = adminSnap.data();
+        if (ap.avatarUrl && ap.avatarUrl.startsWith('data:image/')) {
+          setAdminAvatar(ap.avatarUrl);
+        }
+      }
+      if (auditSnap.exists() && Array.isArray(auditSnap.data()?.logs)) {
+        setAuditLogs(auditSnap.data().logs);
       }
     } catch {}
   }, []);
@@ -630,7 +788,12 @@ export default function App() {
       setUser(updatedUser);
       safeStorage.setItem('protyasha_user', JSON.stringify(updatedUser));
     }
-    syncToServer({ adminProfile: { name, phone: '01777877207', avatarUrl } });
+    safeSetDoc(doc(db, 'settings', 'admin_profile'), {
+      name,
+      phone: user?.phone || '01777877207',
+      avatarUrl: avatarUrl || '',
+      updatedAt: new Date().toISOString()
+    }).catch(() => {});
   };
 
   const handleUpdateUserProfile = async (updatedData: {
@@ -693,6 +856,10 @@ export default function App() {
       const boundMethods = Array.from(new Set([...(user.boundMethods || []), ...(data.phone ? ['phone' as const] : []), ...(data.gmail ? ['gmail' as const] : [])]));
       
       const updates: any = {
+        id: targetId,
+        name: user.name || '',
+        role: user.role || 'user',
+        status: 'active',
         ...data,
         boundMethods,
         updatedAt: new Date().toISOString()
@@ -786,7 +953,10 @@ export default function App() {
               } catch (e) {
                 console.warn('LocalStorage limit reached for notifications:', e);
               }
-              syncToServer({ notifications: prayerNotifs });
+              safeSetDoc(doc(db, 'settings', 'broadcast_notifications'), {
+                list: prayerNotifs.slice(0, 50),
+                updatedAt: new Date().toISOString()
+              }).catch(() => {});
 
               if (newlyAdded.type === 'alert') {
                 sounds.playSuccess();
@@ -1085,10 +1255,7 @@ export default function App() {
 
   // Real-time Cloud Synchronization with Google Cloud Firestore
   useEffect(() => {
-    if (isFirestoreQuotaExceeded()) return;
-
-    let unsubscribe: (() => void) | null = null;
-    // 1. Listen to Transaction Collection directly for instant updates from all portals (AyByay, etc.)
+    // 1. Listen to Transaction Collection directly for instant updates from all portals
     let unsubscribeTransactions: (() => void) | null = null;
     try {
       const q = collection(db, 'transactions');
@@ -1096,31 +1263,32 @@ export default function App() {
         const cloudTxs: Transaction[] = [];
         snapshot.forEach(docSnap => {
           const data = docSnap.data() as Transaction;
-          if (data && data.id && !data.isDeleted && !String(data.id).startsWith('txn-init-')) {
-            cloudTxs.push(data);
+          const docId = data?.id || docSnap.id;
+          if (data && docId && !String(docId).startsWith('txn-init-')) {
+            cloudTxs.push({ ...data, id: String(docId) });
           }
         });
-        
-        // Update local state with latest collection data (Separate main dashboard from professional ledger)
+
+        // Separate main dashboard transactions (preserve isDeleted: true for RecycleBin sync)
         const mainTxs = cloudTxs.filter(t => t.source !== 'ay-byay');
+        const activeMainTxs = mainTxs.filter(t => !t.isDeleted && (t as any).isDeleted !== 'true');
         setTransactions(mainTxs);
-        
-        // Compute totals from live collection for Dashboard Balance Card
-        const income = mainTxs.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-        const expense = mainTxs.filter(t => t.type === 'expense').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-        
+
+        // Compute totals from active non-deleted collection for Dashboard Balance Card
+        const income = activeMainTxs.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+        const expense = activeMainTxs.filter(t => t.type === 'expense').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+
         setServerTotals({
           income,
           expense,
           balance: income - expense,
-          totalCount: mainTxs.length
+          totalCount: activeMainTxs.length
         });
-        setHasMoreTransactions(mainTxs.length > 50);
-        
+        setHasMoreTransactions(activeMainTxs.length > 50);
+
         // Sync to safeStorage
         try {
-          safeStorage.setItem('protyasha_transactions', JSON.stringify(cloudTxs));
-          safeStorage.setItem('isp_cache_txns', JSON.stringify(cloudTxs));
+          safeStorage.setItem('protyasha_transactions', JSON.stringify(mainTxs));
         } catch {}
       }, (err) => {
         handleFirestoreError(err, OperationType.LIST, 'transactions');
@@ -1129,86 +1297,13 @@ export default function App() {
       console.warn('Transaction collection listener error:', e);
     }
 
-    // 2. Listen to Server Data for app settings and other configurations
-    let unsubscribeServerData: (() => void) | null = null;
-    try {
-      unsubscribeServerData = onSnapshot(
-        doc(db, 'settings', 'server_data'),
-        (snapshot) => {
-          if (!snapshot.exists()) return;
-          const cloudDoc = snapshot.data();
-          if (!cloudDoc || !cloudDoc.data) return;
-          const d = cloudDoc.data;
-
-          // Note: Transactions are handled by direct collection listener above
-          
-          if (Array.isArray(d.banners)) {
-            const clean = d.banners.filter((b: any) => b && b.id);
-            setBanners(clean);
-          }
-          if (Array.isArray(d.channels) && d.channels.length > 0) {
-            setChannels(cleanChannelLogos(d.channels));
-          }
-          if (Array.isArray(d.notifications)) {
-            setNotifications(cleanDemoNotifications(d.notifications));
-          }
-          if (d.footerConfig && Object.keys(d.footerConfig).length > 0) {
-            setFooterConfig(d.footerConfig);
-          }
-          if (Array.isArray(d.auditLogs) && d.auditLogs.length > 0) {
-            setAuditLogs(d.auditLogs);
-          }
-          if (Array.isArray(d.quickHisabOwners) && d.quickHisabOwners.length > 0) {
-            setQuickHisabOwners(d.quickHisabOwners);
-            try {
-              safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(d.quickHisabOwners));
-            } catch {}
-          }
-          if (d.serviceStatuses && typeof d.serviceStatuses === 'object') {
-            setServiceStatuses(prev => {
-              const merged: Record<string, ServiceStatusConfig> = { ...prev };
-              Object.keys(d.serviceStatuses).forEach(key => {
-                const incoming = d.serviceStatuses[key];
-                const fallbackLogo = key === 'ayByay' ? 'https://i.ibb.co/0jZfwH1s/file-0000000079b4821185e81949d65e68d5.png' : key === 'billManager' ? 'https://bill-manager-180526203883.asia-southeast1.run.app/logo.jpg' : '';
-                merged[key] = {
-                  ...merged[key],
-                  ...incoming,
-                  logoUrl: incoming?.logoUrl || merged[key]?.logoUrl || fallbackLogo
-                };
-              });
-              try {
-                safeStorage.setItem('protyasha_service_statuses', JSON.stringify(merged));
-              } catch {}
-              return merged;
-            });
-          }
-          if (d.adminProfile) {
-            if (d.adminProfile.avatarUrl && d.adminProfile.avatarUrl.startsWith('data:image/')) {
-              setAdminAvatar(d.adminProfile.avatarUrl);
-            }
-          }
-        },
-        (error) => {
-          const wasQuota = handleFirestoreError(error, OperationType.GET, 'settings/server_data');
-          if (wasQuota && unsubscribeServerData) {
-            try { unsubscribeServerData(); } catch {}
-          }
-        }
-      );
-    } catch (e) {
-      console.warn('Server data listener error:', e);
-    }
-
     return () => {
       if (unsubscribeTransactions) unsubscribeTransactions();
-      if (unsubscribeServerData) unsubscribeServerData();
     };
   }, [userKey]);
 
-  // Separate listener for service statuses to prevent sync conflicts
+  // Real-time listeners for settings documents (service control, notifications, footer, admin profile, audit logs)
   useEffect(() => {
-    if (isFirestoreQuotaExceeded()) return;
-    
     let unsubServices: (() => void) | null = null;
     try {
       unsubServices = onSnapshot(
@@ -1216,7 +1311,6 @@ export default function App() {
         (snapshot) => {
           if (!snapshot.exists()) return;
           const data = snapshot.data();
-          // Ensure we have a valid statuses object before updating
           if (data && typeof data.statuses === 'object' && Object.keys(data.statuses).length > 0) {
             setServiceStatuses(prev => {
               const merged: Record<string, ServiceStatusConfig> = { ...prev };
@@ -1237,15 +1331,11 @@ export default function App() {
           }
         },
         (err) => {
-          const wasQuota = handleFirestoreError(err, OperationType.GET, 'settings/service_control');
-          if (wasQuota && unsubServices) {
-            try { unsubServices(); } catch {}
-          }
+          handleFirestoreError(err, OperationType.GET, 'settings/service_control');
         }
       );
     } catch {}
 
-    // 3. Dedicated Notification Listener for instant reliable delivery
     let unsubNotifs: (() => void) | null = null;
     try {
       unsubNotifs = onSnapshot(
@@ -1253,19 +1343,17 @@ export default function App() {
         (snapshot) => {
           if (!snapshot.exists()) return;
           const data = snapshot.data();
-          if (Array.isArray(data.list) && data.list.length > 0) {
-            setNotifications(prev => {
-              // Merge: keep local ones that might not have synced yet, and adopt cloud ones
-              const cloudNotifs = data.list as NotificationItem[];
-              const existingIds = new Set(cloudNotifs.map(n => n.id));
-              const localOnly = prev.filter(n => !existingIds.has(n.id) && n.id.startsWith('notif-'));
-              const combined = [...localOnly, ...cloudNotifs].sort((a, b) => {
-                const timeA = typeof a.id === 'string' && a.id.includes('-') ? parseInt(a.id.split('-').pop() || '0') : 0;
-                const timeB = typeof b.id === 'string' && b.id.includes('-') ? parseInt(b.id.split('-').pop() || '0') : 0;
-                return timeB - timeA;
-              });
-              return cleanDemoNotifications(combined);
+          if (Array.isArray(data.list)) {
+            const sorted = [...(data.list as NotificationItem[])].sort((a, b) => {
+              const timeA = typeof a.id === 'string' && a.id.includes('-') ? parseInt(a.id.split('-').pop() || '0', 10) : 0;
+              const timeB = typeof b.id === 'string' && b.id.includes('-') ? parseInt(b.id.split('-').pop() || '0', 10) : 0;
+              return timeB - timeA;
             });
+            const cleaned = cleanDemoNotifications(sorted);
+            setNotifications(cleaned);
+            try {
+              safeStorage.setItem('protyasha_notifications', JSON.stringify(cleaned));
+            } catch {}
           }
         },
         (err) => {
@@ -1276,9 +1364,77 @@ export default function App() {
       console.warn('Broadcast notification listener error:', e);
     }
 
+    let unsubFooter: (() => void) | null = null;
+    try {
+      unsubFooter = onSnapshot(
+        doc(db, 'settings', 'footer_config'),
+        (snapshot) => {
+          if (!snapshot.exists()) return;
+          const data = snapshot.data();
+          if (data && data.config && Object.keys(data.config).length > 0) {
+            setFooterConfig(data.config);
+            try {
+              safeStorage.setItem('protyasha_footer', JSON.stringify(data.config));
+            } catch {}
+          }
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.GET, 'settings/footer_config');
+        }
+      );
+    } catch {}
+
+    let unsubAdminProfile: (() => void) | null = null;
+    try {
+      unsubAdminProfile = onSnapshot(
+        doc(db, 'settings', 'admin_profile'),
+        (snapshot) => {
+          if (!snapshot.exists()) return;
+          const ap = snapshot.data();
+          if (ap.avatarUrl && ap.avatarUrl.startsWith('data:image/')) {
+            setAdminAvatar(ap.avatarUrl);
+          }
+          setUser(prev => {
+            if (!prev || prev.role !== 'admin') return prev;
+            return {
+              ...prev,
+              name: ap.name || prev.name,
+              avatarUrl: ap.avatarUrl || prev.avatarUrl
+            };
+          });
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.GET, 'settings/admin_profile');
+        }
+      );
+    } catch {}
+
+    let unsubAudit: (() => void) | null = null;
+    try {
+      unsubAudit = onSnapshot(
+        doc(db, 'settings', 'audit_logs'),
+        (snapshot) => {
+          if (!snapshot.exists()) return;
+          const data = snapshot.data();
+          if (data && Array.isArray(data.logs)) {
+            setAuditLogs(data.logs);
+            try {
+              safeStorage.setItem('protyasha_audit', JSON.stringify(data.logs));
+            } catch {}
+          }
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.GET, 'settings/audit_logs');
+        }
+      );
+    } catch {}
+
     return () => {
       if (unsubServices) unsubServices();
       if (unsubNotifs) unsubNotifs();
+      if (unsubFooter) unsubFooter();
+      if (unsubAdminProfile) unsubAdminProfile();
+      if (unsubAudit) unsubAudit();
     };
   }, []);
 
@@ -1393,10 +1549,10 @@ export default function App() {
   const unreadNotificationsCount = userNotifications.filter(n => !n.isRead).length;
 
   const existingCustomers = Array.from(
-    new Set(transactions.map(t => t.person).filter(Boolean))
+    new Set(transactions.filter(t => !t.isDeleted).map(t => t.person).filter(Boolean))
   );
 
-  // Helper to add audit log and persist
+  // Helper to add audit log and persist to dedicated Firestore doc
   const logAction = (action: string, actionBn: string, details: string) => {
     const newLog: AuditLog = {
       id: `log-${Date.now()}`,
@@ -1406,9 +1562,12 @@ export default function App() {
       details,
       time: Date.now()
     };
-    const updatedLogs = [newLog, ...auditLogs];
+    const updatedLogs = [newLog, ...auditLogs].slice(0, 100);
     setAuditLogs(updatedLogs);
-    syncServerData({ auditLogs: updatedLogs });
+    safeSetDoc(doc(db, 'settings', 'audit_logs'), {
+      logs: updatedLogs,
+      updatedAt: new Date().toISOString()
+    }).catch(() => {});
   };
 
   const checkServiceAccess = (serviceId: string, displayName: string): boolean => {
@@ -1450,6 +1609,13 @@ export default function App() {
     }, 950);
   };
 
+  const saveNotificationsToCloud = (list: NotificationItem[]) => {
+    safeSetDoc(doc(db, 'settings', 'broadcast_notifications'), {
+      list: list.slice(0, 50),
+      updatedAt: new Date().toISOString()
+    }).catch(() => {});
+  };
+
   // Notification Broadcast by Admin
   const handleSendNotification = (data: Omit<NotificationItem, 'id' | 'isRead'>) => {
     const newNotif: NotificationItem = {
@@ -1462,11 +1628,7 @@ export default function App() {
     setNotifications(updatedNotifications);
     logAction('Sent Notification', 'নোটিফিকেশন পাঠানো হয়েছে', `${newNotif.titleBn}`);
     sounds.playSuccess();
-    
-    syncServerData({ notifications: updatedNotifications });
-
-    // Sync to Cloud Firestore for other users
-    syncServerData({ notifications: updatedNotifications });
+    saveNotificationsToCloud(updatedNotifications);
 
     try {
       confetti({
@@ -1488,7 +1650,16 @@ export default function App() {
     } catch {}
 
     if (user?.id) {
-      safeSetDoc(doc(db, 'users', user.id), { readNotifications: newRead }, { merge: true }).catch(() => {});
+      safeSetDoc(
+        doc(db, 'users', user.id),
+        {
+          id: user.id,
+          role: user.role || 'user',
+          status: 'active',
+          readNotifications: newRead.slice(-450)
+        },
+        { merge: true }
+      ).catch(() => {});
     }
 
     const updatedNotifications = notifications.map(n => {
@@ -1501,9 +1672,7 @@ export default function App() {
       return n;
     });
     setNotifications(updatedNotifications);
-    syncServerData({ notifications: updatedNotifications });
-
-    syncServerData({ notifications: updatedNotifications });
+    saveNotificationsToCloud(updatedNotifications);
   };
 
   const handleMarkAllAsRead = () => {
@@ -1516,7 +1685,16 @@ export default function App() {
     } catch {}
 
     if (user?.id) {
-      safeSetDoc(doc(db, 'users', user.id), { readNotifications: newRead }, { merge: true }).catch(() => {});
+      safeSetDoc(
+        doc(db, 'users', user.id),
+        {
+          id: user.id,
+          role: user.role || 'user',
+          status: 'active',
+          readNotifications: newRead.slice(-450)
+        },
+        { merge: true }
+      ).catch(() => {});
     }
 
     const updatedNotifications = notifications.map(n => {
@@ -1527,9 +1705,7 @@ export default function App() {
       return n;
     });
     setNotifications(updatedNotifications);
-    syncServerData({ notifications: updatedNotifications });
-
-    syncServerData({ notifications: updatedNotifications });
+    saveNotificationsToCloud(updatedNotifications);
   };
 
   const handleDeleteNotification = (id: string) => {
@@ -1537,63 +1713,7 @@ export default function App() {
     const updatedNotifications = notifications.filter(n => n.id !== id);
     setNotifications(updatedNotifications);
     logAction('Deleted Notification', 'নোটিফিকেশন মুছে ফেলা হয়েছে', `ID: ${id}`);
-    
-    syncServerData({ notifications: updatedNotifications });
-
-    syncServerData({ notifications: updatedNotifications });
-  };
-
-
-  const syncTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  const syncServerData = (overrides: {
-    staffAccounts?: StaffAccount[];
-    transactions?: Transaction[];
-    channels?: PaymentChannel[];
-    banners?: BannerAd[];
-    notifications?: NotificationItem[];
-    footerConfig?: FooterConfig;
-    serviceStatuses?: Record<string, any>;
-    auditLogs?: AuditLog[];
-    quickHisabOwners?: QuickHisabOwner[];
-  }) => {
-    // Debounce cloud sync to once every 4 seconds to conserve Firestore write quota
-    if (syncTimeoutRef.current) {
-      clearTimeout(syncTimeoutRef.current);
-    }
-
-    syncTimeoutRef.current = setTimeout(() => {
-      const payload = {
-        transactions: overrides.transactions !== undefined ? overrides.transactions : transactions,
-        channels: overrides.channels !== undefined ? overrides.channels : channels,
-        staffAccounts: overrides.staffAccounts !== undefined ? overrides.staffAccounts : staffAccounts,
-        serviceStatuses: overrides.serviceStatuses !== undefined ? overrides.serviceStatuses : serviceStatuses,
-        adminProfile: { name: user?.name || 'প্রত্যাশা অ্যাডমিন', phone: user?.phone || '01777877207', avatarUrl: adminAvatar },
-        notifications: overrides.notifications !== undefined ? overrides.notifications : notifications,
-        users: [],
-        footerConfig: overrides.footerConfig !== undefined ? overrides.footerConfig : footerConfig,
-        banners: overrides.banners !== undefined ? overrides.banners : banners,
-        auditLogs: overrides.auditLogs !== undefined ? overrides.auditLogs : auditLogs,
-        quickHisabOwners: overrides.quickHisabOwners !== undefined ? overrides.quickHisabOwners : quickHisabOwners
-      };
-
-      // 1. Full Snapshot Sync (Legacy/Fallback)
-      safeSetDoc(doc(db, 'settings', 'server_data'), {
-        id: 'server_data',
-        data: payload,
-        updatedAt: new Date().toISOString()
-      }).catch(() => {});
-
-      // 2. Dedicated Notifications Sync (Improved reliability for "Messages not reaching others")
-      if (overrides.notifications !== undefined || notifications.length > 0) {
-        const notifsToSync = overrides.notifications !== undefined ? overrides.notifications : notifications;
-        safeSetDoc(doc(db, 'settings', 'broadcast_notifications'), {
-          list: notifsToSync.slice(0, 50), // Keep last 50 for quick sync
-          updatedAt: new Date().toISOString()
-        }).catch(() => {});
-      }
-
-    }, 4000);
+    saveNotificationsToCloud(updatedNotifications);
   };
 
   const handleSaveEntry = (entryData: Omit<Transaction, 'id' | 'trxId' | 'created'> & { id?: string }) => {
@@ -1608,65 +1728,57 @@ export default function App() {
       // ignore
     }
 
-    let updatedTransactions;
+    let updatedTransactions: Transaction[];
+    let savedTrx: Transaction;
     if (entryData.id) {
-      // Update Existing Entry
-      updatedTransactions = transactions.map(t => {
-        if (t.id === entryData.id) {
-          const updated = { ...t, ...entryData };
-          if (selectedTransaction?.id === t.id) {
-            setSelectedTransaction(updated);
-          }
-          return updated;
-        }
-        return t;
-      });
-      logAction('Updated Transaction', 'এন্ট্রি হালনাগাদ', `${entryData.person} (${entryData.method}) - ${entryData.amount} টাকা`);
-    } else {
-      // Create New Entry
+      const existing = transactions.find(t => t.id === entryData.id);
       const randomHex = Math.random().toString(36).substring(2, 7).toUpperCase();
       const prefix = entryData.method === 'ব্যাংক' ? '765B' : '765M';
-      const newTrx: Transaction = {
+      savedTrx = {
+        ...(existing || {}),
+        ...entryData,
+        id: entryData.id,
+        trxId: existing?.trxId || `${prefix}${randomHex}`,
+        source: 'main',
+        isDeleted: existing?.isDeleted ?? false,
+        created: existing?.created || Date.now()
+      };
+      updatedTransactions = existing
+        ? transactions.map(t => (t.id === entryData.id ? savedTrx : t))
+        : [...transactions, savedTrx];
+      if (selectedTransaction?.id === entryData.id) {
+        setSelectedTransaction(savedTrx);
+      }
+      logAction('Updated Transaction', 'এন্ট্রি হালনাগাদ', `${entryData.person} (${entryData.method}) - ${entryData.amount} টাকা`);
+    } else {
+      const randomHex = Math.random().toString(36).substring(2, 7).toUpperCase();
+      const prefix = entryData.method === 'ব্যাংক' ? '765B' : '765M';
+      savedTrx = {
         ...entryData,
         id: `trx-${Date.now()}`,
         trxId: `${prefix}${randomHex}`,
         recordedBy: user?.id || 'admin-master',
         recordedByGmail: user?.gmail || undefined,
         source: 'main',
+        isDeleted: false,
         created: Date.now()
       };
-      updatedTransactions = [...transactions, newTrx];
-      logAction('Created Transaction', 'নতুন লেনদেন এন্ট্রি', `${newTrx.type === 'income' ? 'জমা' : 'খরচ'} [${newTrx.method}]: ${newTrx.person} - ${newTrx.amount} টাকা`);
+      updatedTransactions = [...transactions, savedTrx];
+      logAction('Created Transaction', 'নতুন লেনদেন এন্ট্রি', `${savedTrx.type === 'income' ? 'জমা' : 'খরচ'} [${savedTrx.method}]: ${savedTrx.person} - ${savedTrx.amount} টাকা`);
     }
-    
-    setTransactions(updatedTransactions);
-    syncServerData({ transactions: updatedTransactions });
 
-    // Direct Cloud Firestore Sync - safely strip any undefined fields to prevent Firestore setDoc error
-    try {
-      const lastItem = updatedTransactions[updatedTransactions.length - 1];
-      const docId = entryData.id || lastItem?.id;
-      if (docId) {
-        const rawObject = entryData.id ? { id: entryData.id, ...entryData } : lastItem;
-        const cleanDoc: any = {};
-        if (rawObject) {
-          Object.keys(rawObject).forEach(key => {
-            if ((rawObject as any)[key] !== undefined) {
-              cleanDoc[key] = (rawObject as any)[key];
-            }
-          });
-          safeSetDoc(doc(db, 'transactions', docId), cleanDoc, { merge: true }).catch(() => {});
-        }
-      }
-    } catch (e) {
-      console.warn('Firestore sync error safely caught:', e);
-    }
+    setTransactions(updatedTransactions);
+
+    // Direct Cloud Firestore Sync (safeSetDoc strips undefined fields cleanly)
+    safeSetDoc(doc(db, 'transactions', savedTrx.id), savedTrx).catch((e) => {
+      console.warn('Firestore transaction save error:', e);
+    });
 
     // Close form modal immediately
     setIsEntryModalOpen(false);
     setEditingTransaction(null);
 
-    // Automatically navigate to 'transactions' statement view and filter by the selected method!
+    // Automatically navigate to 'transactions' statement view and filter by the selected method
     if (entryData.method) {
       setSelectedMethodFilter(entryData.method);
       setActiveTab('transactions');
@@ -1680,26 +1792,19 @@ export default function App() {
 
   const confirmDelete = () => {
     if (!deleteTrx) return;
-    const updatedTransactions = transactions.filter(t => t.id !== deleteTrx.id);
+    const softDeletedTrx: Transaction = { ...deleteTrx, isDeleted: true };
+    const updatedTransactions = transactions.map(t => (t.id === deleteTrx.id ? softDeletedTrx : t));
     setTransactions(updatedTransactions);
     try {
       safeStorage.setItem('protyasha_transactions', JSON.stringify(updatedTransactions));
-      safeStorage.setItem('isp_cache_txns', JSON.stringify(updatedTransactions));
     } catch {}
     if (selectedTransaction?.id === deleteTrx.id) {
       setSelectedTransaction(null);
     }
-    logAction('Deleted Transaction', 'লেনদেন মুছে ফেলা হয়েছে', `${deleteTrx.person} - #${deleteTrx.trxId}`);
-    
-    // Actually delete the document from Cloud Firestore!
-    safeDeleteDoc(doc(db, 'transactions', deleteTrx.id)).catch(() => {});
+    logAction('Deleted Transaction', 'লেনদেন রিসাইকেল বিনে পাঠানো হয়েছে', `${deleteTrx.person} - #${deleteTrx.trxId}`);
 
-    // Also update server_data immediate snapshot
-    safeSetDoc(doc(db, 'settings', 'server_data'), {
-      data: { transactions: updatedTransactions }
-    }, { merge: true }).catch(() => {});
-
-    syncServerData({ transactions: updatedTransactions });
+    // Write complete validated document with isDeleted: true to Cloud Firestore
+    safeSetDoc(doc(db, 'transactions', deleteTrx.id), softDeletedTrx).catch(() => {});
     setDeleteTrx(null);
   };
 
@@ -1713,10 +1818,12 @@ export default function App() {
 
   const handleRestore = (id: string) => {
     sounds.playSuccess();
+    const targetTrx = transactions.find(t => t.id === id);
     const updatedTransactions = transactions.map(t => (t.id === id ? { ...t, isDeleted: false } : t));
     setTransactions(updatedTransactions);
-    syncServerData({ transactions: updatedTransactions });
-    safeSetDoc(doc(db, 'transactions', id), { isDeleted: false }, { merge: true }).catch(() => {});
+    if (targetTrx) {
+      safeSetDoc(doc(db, 'transactions', id), { ...targetTrx, isDeleted: false }).catch(() => {});
+    }
     logAction('Restored Transaction', 'লেনদেন পুনরুদ্ধার', `ID: ${id}`);
   };
 
@@ -1727,13 +1834,8 @@ export default function App() {
       setTransactions(updatedTransactions);
       try {
         safeStorage.setItem('protyasha_transactions', JSON.stringify(updatedTransactions));
-        safeStorage.setItem('isp_cache_txns', JSON.stringify(updatedTransactions));
       } catch {}
       safeDeleteDoc(doc(db, 'transactions', id)).catch(() => {});
-      safeSetDoc(doc(db, 'settings', 'server_data'), {
-        data: { transactions: updatedTransactions }
-      }, { merge: true }).catch(() => {});
-      syncServerData({ transactions: updatedTransactions });
       if (selectedTransaction?.id === id) {
         setSelectedTransaction(null);
       }
@@ -1743,9 +1845,15 @@ export default function App() {
 
   const handleEmptyTrash = () => {
     sounds.playTap();
+    const deletedItems = transactions.filter(t => t.isDeleted);
     const updatedTransactions = transactions.filter(t => !t.isDeleted);
     setTransactions(updatedTransactions);
-    syncServerData({ transactions: updatedTransactions });
+    try {
+      safeStorage.setItem('protyasha_transactions', JSON.stringify(updatedTransactions));
+    } catch {}
+    deletedItems.forEach(t => {
+      safeDeleteDoc(doc(db, 'transactions', t.id)).catch(() => {});
+    });
     logAction('Emptied Trash', 'রিসাইকেল বিন সম্পূর্ণ খালি', 'All trash cleared');
   };
 
@@ -1824,30 +1932,45 @@ export default function App() {
   };
 
   const handleSaveQuickHisabOwners = (updatedOwners: QuickHisabOwner[]) => {
-    setQuickHisabOwners(updatedOwners);
+    const normalizedOwners = updatedOwners.map(o => ({ ...o, id: String(o.id) }));
+    const nextIds = new Set(normalizedOwners.map(o => String(o.id)));
+    const removedIds = quickHisabOwners
+      .map(o => String(o.id))
+      .filter(id => !nextIds.has(id));
+    const nowIso = new Date().toISOString();
+
+    setQuickHisabOwners(normalizedOwners);
     try {
-      safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(updatedOwners));
+      safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(normalizedOwners));
     } catch {}
 
-    // Dedicated Firestore snapshot storage
-    safeSetDoc(doc(db, 'settings', 'quick_hisab_owners_data'), {
-      owners: updatedOwners,
-      updatedAt: new Date().toISOString()
-    }).catch(() => {});
-
-    // Save individual owner documents in dedicated 'quick_hisab_owners' collection
-    updatedOwners.forEach(o => {
+    normalizedOwners.forEach(o => {
       safeSetDoc(doc(db, 'quick_hisab_owners', String(o.id)), o).catch(() => {});
     });
+    removedIds.forEach(id => {
+      safeDeleteDoc(doc(db, 'quick_hisab_owners', id)).catch(() => {});
+    });
+    safeSetDoc(doc(db, 'settings', 'owners_meta'), { initialized: true, updatedAt: nowIso }).catch(() => {});
 
-    syncServerData({ quickHisabOwners: updatedOwners });
-    logAction('Updated Owners', 'মালিকানা তালিকা হালনাগাদ', `মোট অংশীদার: ${updatedOwners.length}`);
+    logAction('Updated Owners', 'মালিকানা তালিকা হালনাগাদ', `মোট অংশীদার: ${normalizedOwners.length}`);
   };
 
   const handleSaveBanners = (updated: BannerAd[]) => {
-    console.log('DEBUG: handleSaveBanners received:', updated);
-    const cleanBanners = updated.filter(b => b && b.id);
-    console.log('DEBUG: cleanBanners to be saved:', cleanBanners);
+    const nowIso = new Date().toISOString();
+    const cleanBanners = updated
+      .filter(b => b && b.id && b.imageUrl)
+      .map((b, idx) => ({
+        ...b,
+        id: String(b.id),
+        isActive: b.isActive !== false,
+        priority: b.priority ?? idx + 1,
+        updatedAt: nowIso
+      }));
+    const nextIds = new Set(cleanBanners.map(b => b.id));
+    const removedIds = banners
+      .map(b => String(b.id))
+      .filter(id => !nextIds.has(id));
+
     setBanners(cleanBanners);
     try {
       safeStorage.setItem('protyasha_banners', JSON.stringify(cleanBanners));
@@ -1855,60 +1978,44 @@ export default function App() {
       console.error('safeStorage.setItem error:', e);
     }
 
-    // Dedicated Firestore snapshot document
-    safeSetDoc(doc(db, 'settings', 'app_banners'), {
-      banners: cleanBanners,
-      updatedAt: new Date().toISOString()
-    }).then(() => console.log('Firestore app_banners updated successfully'))
-      .catch((e) => console.error('Firestore app_banners error:', e));
-
-    // Save each individual banner to collection 'banners'
     cleanBanners.forEach(b => {
-      safeSetDoc(doc(db, 'banners', String(b.id)), b)
-        .then(() => console.log('Firestore banner updated:', b.id))
-        .catch((e) => console.error('Firestore banner update error:', b.id, e));
+      safeSetDoc(doc(db, 'banners', b.id), b).catch((e) => console.error('Firestore banner update error:', b.id, e));
     });
+    removedIds.forEach(id => {
+      safeDeleteDoc(doc(db, 'banners', id)).catch(() => {});
+    });
+    safeSetDoc(doc(db, 'settings', 'banners_meta'), { initialized: true, updatedAt: nowIso }).catch(() => {});
 
-    safeSetDoc(doc(db, 'settings', 'server_data'), {
-      data: { banners: cleanBanners }
-    }, { merge: true }).then(() => console.log('Firestore server_data updated successfully'))
-      .catch((e) => console.error('Firestore server_data error:', e));
-
-    syncServerData({ banners: cleanBanners });
-    logAction('Updated Banners', 'বিজ্ঞাপন ব্যানার পরিবর্তন', `সক্রিয় বিজ্ঞাপন সংখ্যা: ${cleanBanners.length}`);
+    logAction('Updated Banners', 'বিজ্ঞাপন ব্যানার পরিবর্তন', `মোট বিজ্ঞাপন: ${cleanBanners.length}`);
   };
 
   const handleDeleteBanner = (bannerId: string) => {
-    const updated = banners.filter(b => String(b.id) !== String(bannerId));
+    const targetId = String(bannerId);
+    const updated = banners.filter(b => String(b.id) !== targetId);
+    const nowIso = new Date().toISOString();
     setBanners(updated);
     try {
       safeStorage.setItem('protyasha_banners', JSON.stringify(updated));
     } catch {}
 
-    // Dedicated deletion from 'banners' collection
-    safeDeleteDoc(doc(db, 'banners', String(bannerId))).catch(() => {});
+    safeDeleteDoc(doc(db, 'banners', targetId)).catch(() => {});
+    safeSetDoc(doc(db, 'settings', 'banners_meta'), { initialized: true, updatedAt: nowIso }).catch(() => {});
 
-    // Save each remaining banner to ensure clean persistence
-    updated.forEach(b => {
-      safeSetDoc(doc(db, 'banners', String(b.id)), b).catch(() => {});
-    });
-
-    // Update dedicated snapshot document
-    safeSetDoc(doc(db, 'settings', 'app_banners'), {
-      banners: updated,
-      updatedAt: new Date().toISOString()
-    }).catch(() => {});
-
-    safeSetDoc(doc(db, 'settings', 'server_data'), {
-      data: { banners: updated }
-    }, { merge: true }).catch(() => {});
-
-    syncServerData({ banners: updated });
     logAction('Deleted Banner', 'বিজ্ঞাপন ব্যানার মুছে ফেলা হয়েছে', `ব্যানার আইডি: ${bannerId}`);
   };
 
   const handleSaveStaffAccounts = (updated: StaffAccount[]) => {
-    const cleanUpdated: StaffAccount[] = JSON.parse(JSON.stringify(updated));
+    const cleanUpdated: StaffAccount[] = JSON.parse(JSON.stringify(updated)).map((s: StaffAccount) => ({
+      ...s,
+      id: String(s.id),
+      phone: s.phone || ''
+    }));
+    const nextIds = new Set(cleanUpdated.map(s => String(s.id)));
+    const removedIds = staffAccounts
+      .map(s => String(s.id))
+      .filter(id => !nextIds.has(id));
+    const nowIso = new Date().toISOString();
+
     setStaffAccounts(cleanUpdated);
     try {
       safeStorage.setItem('protyasha_staff', JSON.stringify(cleanUpdated));
@@ -1916,40 +2023,30 @@ export default function App() {
       console.warn('LocalStorage limit reached for staffAccounts:', e);
     }
 
-    // Save each staff in dedicated 'staff' collection in staffDb
     cleanUpdated.forEach(staff => {
       safeSetDoc(doc(staffDb, 'staff', String(staff.id)), staff).catch(() => {});
     });
+    removedIds.forEach(id => {
+      safeDeleteDoc(doc(staffDb, 'staff', id)).catch(() => {});
+    });
+    safeSetDoc(doc(db, 'settings', 'staff_meta'), { initialized: true, updatedAt: nowIso }).catch(() => {});
 
-    // Dedicated snapshot storage in staffDb
-    safeSetDoc(doc(staffDb, 'settings', 'staff_accounts_data'), {
-      staff: cleanUpdated,
-      updatedAt: new Date().toISOString()
-    }).catch(() => {});
-
-    syncServerData({ staffAccounts: cleanUpdated });
     logAction('Updated Staff Accounts', 'স্টাফ হিসাব হালনাগাদ', `মোট স্টাফ: ${cleanUpdated.length}`);
   };
 
   const handleDeleteStaffAccount = (staffId: string) => {
     const remaining = staffAccounts.filter(s => String(s.id) !== String(staffId));
+    const nowIso = new Date().toISOString();
     setStaffAccounts(remaining);
     try {
       safeStorage.setItem('protyasha_staff', JSON.stringify(remaining));
     } catch {}
 
-    // Delete document from dedicated 'staff' collection in staffDb
     safeDeleteDoc(doc(staffDb, 'staff', String(staffId))).catch((err) => {
       handleFirestoreError(err, OperationType.DELETE, `staff/${staffId}`);
     });
+    safeSetDoc(doc(db, 'settings', 'staff_meta'), { initialized: true, updatedAt: nowIso }).catch(() => {});
 
-    // Update dedicated snapshot storage
-    safeSetDoc(doc(staffDb, 'settings', 'staff_accounts_data'), {
-      staff: remaining,
-      updatedAt: new Date().toISOString()
-    }).catch(() => {});
-
-    syncServerData({ staffAccounts: remaining });
     logAction('Deleted Staff Account', 'স্টাফ অ্যাকাউন্ট মোছা হয়েছে', `স্টাফ আইডি: ${staffId}`);
   };
 
@@ -1970,12 +2067,13 @@ export default function App() {
           const newRemaining = newTotalDue - newTotalCollected;
           const updatedStaff = {
             ...staff,
+            phone: staff.phone || '',
             totalDue: newTotalDue,
             totalCollected: newTotalCollected,
             remainingDue: newRemaining,
             transactions: updatedTxs
           };
-          safeSetDoc(doc(staffDb, 'staff', staffId), updatedStaff).catch(() => {});
+          safeSetDoc(doc(staffDb, 'staff', String(staffId)), updatedStaff).catch(() => {});
           return updatedStaff;
         }
         return staff;
@@ -1983,11 +2081,6 @@ export default function App() {
       try {
         safeStorage.setItem('protyasha_staff', JSON.stringify(updated));
       } catch {}
-      safeSetDoc(doc(staffDb, 'settings', 'staff_accounts_data'), {
-        staff: updated,
-        updatedAt: new Date().toISOString()
-      }).catch(() => {});
-      syncServerData({ staffAccounts: updated });
       return updated;
     });
   };
@@ -2443,23 +2536,36 @@ export default function App() {
             lang={lang}
             onClose={() => setIsChannelManagerOpen(false)}
             onSaveChannels={(updated) => {
-              setChannels(updated);
+              const nowIso = new Date().toISOString();
+              const normalized = updated.map((ch, idx) => ({
+                ...ch,
+                id: String(ch.id),
+                order: idx + 1,
+                updatedAt: nowIso
+              }));
+              const nextIds = new Set(normalized.map(ch => ch.id));
+              const removedIds = channels
+                .map(ch => String(ch.id))
+                .filter(id => !nextIds.has(id));
+
+              setChannels(normalized);
               try {
-                safeStorage.setItem('protyasha_channels', JSON.stringify(updated));
+                safeStorage.setItem('protyasha_channels', JSON.stringify(normalized));
               } catch (e) {
                 console.warn('LocalStorage limit reached for channels:', e);
               }
 
-              // Direct Cloud Firestore write
-              safeSetDoc(doc(db, 'settings', 'server_data'), {
-                data: { channels: updated },
-                updatedAt: new Date().toISOString()
-              }, { merge: true }).catch((err) => {
-                handleFirestoreError(err, OperationType.WRITE, 'settings/server_data');
+              normalized.forEach(ch => {
+                safeSetDoc(doc(db, 'channels', ch.id), ch).catch((err) => {
+                  handleFirestoreError(err, OperationType.WRITE, `channels/${ch.id}`);
+                });
               });
+              removedIds.forEach(id => {
+                safeDeleteDoc(doc(db, 'channels', id)).catch(() => {});
+              });
+              safeSetDoc(doc(db, 'settings', 'channels_meta'), { initialized: true, updatedAt: nowIso }).catch(() => {});
 
-              syncServerData({ channels: updated });
-              logAction('Updated Channels', 'পেমেন্ট চ্যানেল হালনাগাদ', `মোট চ্যানেল সংখ্যা: ${updated.length}`);
+              logAction('Updated Channels', 'পেমেন্ট চ্যানেল হালনাগাদ', `মোট চ্যানেল সংখ্যা: ${normalized.length}`);
             }}
           />
         )}
@@ -2496,16 +2602,12 @@ export default function App() {
                   savePersistentImage(`service_logo_${svcId}`, updated[svcId].logoUrl!);
                 }
               });
-              
-              // 1. High-priority dedicated Firestore update
+
               safeSetDoc(doc(db, 'settings', 'service_control'), {
                 id: 'service_control',
                 statuses: updated,
                 updatedAt: new Date().toISOString()
               }).catch(err => console.error('Service control sync error:', err));
-
-              // 2. Global server data sync (fallback and multi-device persistence)
-              syncServerData({ serviceStatuses: updated });
 
               logAction('Updated Services', 'সেবা স্ট্যাটাস পরিবর্তন', 'সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট');
             }}
@@ -2568,7 +2670,7 @@ export default function App() {
           onEditNotification={(notif) => {
             const updatedNotifications = notifications.map(n => n.id === notif.id ? notif : n);
             setNotifications(updatedNotifications);
-            syncToServer({ notifications: updatedNotifications });
+            saveNotificationsToCloud(updatedNotifications);
             setEditingNotification(null);
           }}
           initialEditingNotif={editingNotification}
@@ -2693,14 +2795,14 @@ export default function App() {
           onClose={() => setIsFooterSettingsOpen(false)}
           onSave={(newCfg) => {
             setFooterConfig(newCfg);
-            safeStorage.setItem('protyasha_footer_config', JSON.stringify(newCfg));
-            syncToServer({ footerConfig: newCfg });
+            safeStorage.setItem('protyasha_footer', JSON.stringify(newCfg));
+            safeSetDoc(doc(db, 'settings', 'footer_config'), {
+              config: newCfg,
+              updatedAt: new Date().toISOString()
+            }).catch(() => {});
           }}
           onSaveBanners={(newBanners) => {
-            setBanners(newBanners);
-            safeStorage.setItem('protyasha_banners', JSON.stringify(newBanners));
-            syncToServer({ banners: newBanners });
-            logAction('Updated Offers', 'অফার ও বিজ্ঞাপন পরিবর্তন', `মোট অফার: ${newBanners.length}`);
+            handleSaveBanners(newBanners);
           }}
         />
 
@@ -2709,7 +2811,12 @@ export default function App() {
           isOpen={isChangePinOpen}
           lang={lang}
           onClose={() => setIsChangePinOpen(false)}
-          onPinChanged={() => {
+          onPinChanged={(newPin) => {
+            safeStorage.setItem('protyasha_admin_pin', newPin);
+            safeSetDoc(doc(db, 'settings', 'admin_security'), {
+              pin: newPin,
+              updatedAt: new Date().toISOString()
+            }).catch(() => {});
             logAction('Changed PIN', 'পিন পরিবর্তন', 'Security PIN successfully updated');
           }}
         />
@@ -2810,7 +2917,7 @@ export default function App() {
                 <div className="absolute w-28 h-28 rounded-3xl border-2 border-orange-400/50 animate-ping opacity-60" />
                 <div className="relative w-24 h-24 rounded-3xl bg-white shadow-2xl p-2.5 border-2 border-orange-400 flex items-center justify-center overflow-hidden transform animate-bounce">
                   <img 
-                    src="https://bill-manager-180526203883.asia-southeast1.run.app/logo.jpg" 
+                    src={serviceStatuses.billManager?.logoUrl || "https://bill-manager.ai.studio/logo.jpg"} 
                     alt="বিল ম্যানেজার প্রো লগো" 
                     className="w-full h-full object-contain rounded-2xl"
                   />

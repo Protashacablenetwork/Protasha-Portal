@@ -164,7 +164,9 @@ export const NotificationDetailModal: React.FC<NotificationDetailModalProps> = (
                 />
               )}
               <p className="text-[15px] text-slate-700 dark:text-slate-200 leading-relaxed whitespace-pre-line font-medium">
-                {isBn ? notification.bodyBn : notification.bodyEn}
+                {isBn
+                  ? (notification.bodyBn || notification.messageBn || '').replace(/পরামর্শ:\s*(পরামর্শ:|সতর্কবার্তা:|সতর্কতা:|সুসংবাদ:|বার্তা:)/g, '$1')
+                  : (notification.bodyEn || notification.messageEn || '')}
               </p>
 
               {/* Weather forecast CTA button if weather/alert */}

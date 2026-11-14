@@ -27,8 +27,8 @@ interface BannerManagerModalProps {
   onDeleteBanner?: (id: string) => void;
 }
 
-const MAX_BANNERS = 7;
-const MIN_RECOMMENDED_BANNERS = 5;
+const MAX_BANNERS = 10;
+const MIN_RECOMMENDED_BANNERS = 1;
 
 export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
   isOpen,
@@ -56,6 +56,7 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
   const [imageUrl, setImageUrl] = useState('');
   const [linkUrl, setLinkUrl] = useState('');
   const [selectedLinkType, setSelectedLinkType] = useState<string>('none');
+  const [isFormActive, setIsFormActive] = useState<boolean>(true);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
 
@@ -105,13 +106,6 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
       setImageUrl(compressedDataUrl);
       setInputImageUrl('');
       sounds.playSuccess();
-
-      // Also send to server in background
-      fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: compressedDataUrl, filename: file.name })
-      }).catch(() => {});
     } catch (err) {
       console.error('Error uploading banner image:', err);
     }
@@ -145,6 +139,7 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
 
     const currentLink = (b.linkUrl || '').trim();
     setLinkUrl(currentLink);
+    setIsFormActive(b.isActive !== false);
     if (!currentLink || currentLink === '#' || currentLink === 'none') {
       setSelectedLinkType('none');
     } else if (internalLinks.some(l => l.id === currentLink)) {
@@ -157,7 +152,7 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
   const handleStartCreate = () => {
     if (bannerList.length >= MAX_BANNERS) {
       setValidationError(lang === 'bn' 
-        ? `বিজ্ঞাপন ৫ থেকে ৭টি পর্যন্ত রাখা যাবে। বর্তমানে সর্বোচ্চ ${MAX_BANNERS}টি বিজ্ঞাপন রয়েছে!` 
+        ? `বর্তমানে সর্বোচ্চ ${MAX_BANNERS}টি বিজ্ঞাপন রাখা যাবে!` 
         : `Maximum limit of ${MAX_BANNERS} ads reached!`);
       return;
     }
@@ -176,6 +171,7 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
     setLinkUrl('');
     setSelectedLinkType('none');
     setUploadedFileName('');
+    setIsFormActive(true);
   };
 
   const handleToggleActive = (id: string) => {
@@ -238,7 +234,8 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
             subtitleBn: finalSubtitleBn,
             subtitleEn: finalSubtitleEn,
             imageUrl: finalImageUrl,
-            linkUrl: finalLinkUrl
+            linkUrl: finalLinkUrl,
+            isActive: isFormActive
           };
         }
         return b;
@@ -257,7 +254,7 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
         subtitleEn: finalSubtitleEn,
         imageUrl: finalImageUrl,
         linkUrl: finalLinkUrl,
-        isActive: true,
+        isActive: isFormActive,
         priority: bannerList.length + 1
       };
       const updated = [newBanner, ...bannerList];
@@ -319,8 +316,8 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
             <span className="w-2 h-2 rounded-full bg-[#E52E2E] animate-ping" />
             <span className="font-semibold text-[11px]">
               {lang === 'bn' 
-                ? 'মেইন পেইজে ৫ থেকে ৭ টি বিজ্ঞাপন স্লাইডার হিসেবে প্রদর্শন হবে।' 
-                : '5 to 7 ads can be displayed in homepage showcase.'}
+                ? 'মেইন পেইজে বিজ্ঞাপন স্লাইডার স্বয়ংক্রিয়ভাবে প্রদর্শন হবে। এডমিন যেকোনো সময় এডিট বা ডিলিট করতে পারবেন।' 
+                : 'Homepage ads slider displays automatically. Admin can edit or delete anytime.'}
             </span>
           </div>
           <span className="px-2 py-0.5 rounded-full bg-white dark:bg-slate-900 font-extrabold text-[#E52E2E] text-xs shadow-2xs">
@@ -760,12 +757,52 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
               )}
             </div>
 
+            {/* Ad Visibility Status Toggle (Active / Hidden) */}
+            <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  {isFormActive ? (
+                    <Eye className="w-4 h-4 text-emerald-600" />
+                  ) : (
+                    <EyeOff className="w-4 h-4 text-slate-400" />
+                  )}
+                  <span>{lang === 'bn' ? 'বিজ্ঞাপনের স্ট্যাটাস' : 'Ad Visibility Status'}</span>
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  {isFormActive
+                    ? (lang === 'bn' ? 'হোমপেজে সক্রিয় ও স্লাইডারে দৃশ্যমান থাকবে' : 'Active and visible in homepage slider')
+                    : (lang === 'bn' ? 'লুকানো (Inactive) থাকবে, হোমপেজে স্বয়ংক্রিয়ভাবে চালু হবে না' : 'Hidden/Inactive, will not display on homepage')}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playTap();
+                  setIsFormActive(prev => !prev);
+                }}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  isFormActive ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+              >
+                <span
+                  className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    isFormActive ? 'translate-x-5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+
             <button
               type="submit"
-              className="w-full h-12 rounded-2xl bg-gradient-to-r from-[#D32F2F] to-[#E52E2E] text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-rose-600/30 active:scale-98 transition-all"
+              className="w-full h-12 rounded-2xl bg-gradient-to-r from-[#D32F2F] to-[#E52E2E] text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-rose-600/30 active:scale-98 transition-all cursor-pointer"
             >
               <Check className="w-4 h-4 stroke-[2.5]" />
-              <span>{lang === 'bn' ? 'সংরক্ষণ করুন ও হোমপেজে প্রকাশ করুন' : 'Save & Publish to Homepage'}</span>
+              <span>
+                {isFormActive 
+                  ? (lang === 'bn' ? 'সংরক্ষণ করুন ও হোমপেজে সক্রিয় রাখুন' : 'Save & Set Active')
+                  : (lang === 'bn' ? 'সংরক্ষণ করুন (লুকানো/নিষ্ক্রিয় রাখুন)' : 'Save as Hidden/Inactive')}
+              </span>
             </button>
           </form>
         ) : (

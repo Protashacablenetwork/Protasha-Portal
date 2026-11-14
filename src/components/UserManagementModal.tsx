@@ -18,8 +18,8 @@ import {
   ShieldAlert,
   Loader2
 } from 'lucide-react';
-import { db, safeSetDoc, safeDeleteDoc, isFirestoreQuotaExceeded } from '../utils/firebase';
-import { collection, getDocs, doc, query, where } from 'firebase/firestore';
+import { db, safeSetDoc, safeDeleteDoc, handleFirestoreError, OperationType } from '../utils/firebase';
+import { collection, getDocs, onSnapshot, doc, query, where } from 'firebase/firestore';
 import { Language, AppUser, UserRole } from '../types';
 import { sounds } from '../utils/audio';
 import { safeStorage } from '../utils/safeStorage';
@@ -70,25 +70,23 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       const stored = getStoredUsers();
       let fetchedUsers: AppUser[] = [...stored];
 
-      if (!isFirestoreQuotaExceeded()) {
-        try {
-          const querySnapshot = await getDocs(collection(db, 'users'));
-          if (!querySnapshot.empty) {
-            const cloudUsers: AppUser[] = [];
-            querySnapshot.forEach((docSnap) => {
-              const u = docSnap.data() as AppUser;
-              if (u && u.id && u.name) cloudUsers.push(u);
-            });
-            if (cloudUsers.length > 0) {
-              const mergedMap = new Map<string, AppUser>();
-              stored.forEach(u => mergedMap.set(u.id, u));
-              cloudUsers.forEach(u => mergedMap.set(u.id, u));
-              fetchedUsers = Array.from(mergedMap.values());
-            }
+      try {
+        const querySnapshot = await getDocs(collection(db, 'users'));
+        if (!querySnapshot.empty) {
+          const cloudUsers: AppUser[] = [];
+          querySnapshot.forEach((docSnap) => {
+            const u = docSnap.data() as AppUser;
+            if (u && u.id && u.name) cloudUsers.push(u);
+          });
+          if (cloudUsers.length > 0) {
+            const mergedMap = new Map<string, AppUser>();
+            stored.forEach(u => mergedMap.set(u.id, u));
+            cloudUsers.forEach(u => mergedMap.set(u.id, u));
+            fetchedUsers = Array.from(mergedMap.values());
           }
-        } catch (e) {
-          console.warn('Cloud user fetch skipped, using local store:', e);
         }
+      } catch (e) {
+        console.warn('Cloud user fetch skipped, using local store:', e);
       }
 
       // Check for cached avatars
@@ -115,11 +113,33 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   };
 
   useEffect(() => {
-    if (isOpen) {
-      loadUsers();
-      setErrorMsg('');
-      setSuccessMsg('');
-    }
+    if (!isOpen) return;
+    loadUsers();
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    let unsub: (() => void) | null = null;
+    try {
+      unsub = onSnapshot(collection(db, 'users'), (snap) => {
+        const cloudUsers: AppUser[] = [];
+        snap.forEach((docSnap) => {
+          const u = docSnap.data() as AppUser;
+          if (u && (u.id || docSnap.id) && u.name) {
+            cloudUsers.push({ ...u, id: u.id || docSnap.id });
+          }
+        });
+        if (cloudUsers.length > 0) {
+          cloudUsers.forEach(u => saveStoredUser(u));
+          setUsers(cloudUsers);
+        }
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'users');
+      });
+    } catch {}
+
+    return () => {
+      if (unsub) unsub();
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -204,7 +224,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       };
 
       saveStoredUser(updatedUser);
-      safeSetDoc(doc(db, 'users', editingUser.id), updatedUser, { merge: true }).catch(() => {});
+      await safeSetDoc(doc(db, 'users', editingUser.id), updatedUser, { merge: true });
 
       sounds.playSuccess();
       setSuccessMsg(isBn ? 'ব্যবহারকারীর তথ্য সফলভাবে সংরক্ষিত হয়েছে!' : 'User updated successfully!');
@@ -294,19 +314,17 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
         return;
       }
 
-      // Check duplicate in Firestore if online
-      if (!isFirestoreQuotaExceeded()) {
-        try {
-          const q = query(collection(db, 'users'), where('phone', '==', cleanPhone));
-          const qSnap = await getDocs(q);
-          if (!qSnap.empty) {
-            setErrorMsg(isBn ? 'এই মোবাইল নাম্বার দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট রয়েছে' : 'Phone already exists');
-            setIsSaving(false);
-            return;
-          }
-        } catch (e) {
-          console.warn('Firestore phone duplicate check skipped:', e);
+      // Check duplicate in Firestore
+      try {
+        const q = query(collection(db, 'users'), where('phone', '==', cleanPhone));
+        const qSnap = await getDocs(q);
+        if (!qSnap.empty) {
+          setErrorMsg(isBn ? 'এই মোবাইল নাম্বার দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট রয়েছে' : 'Phone already exists');
+          setIsSaving(false);
+          return;
         }
+      } catch (e) {
+        console.warn('Firestore phone duplicate check skipped:', e);
       }
 
       const newId = 'usr_' + Date.now();
@@ -324,8 +342,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       // 1. Save locally
       saveStoredUser(newUser);
 
-      // 2. Save in Firestore background
-      safeSetDoc(doc(db, 'users', newId), newUser).catch(() => {});
+      // 2. Save in Firestore
+      await safeSetDoc(doc(db, 'users', newId), newUser);
 
       sounds.playSuccess();
       setSuccessMsg(isBn ? 'নতুন ব্যবহারকারী সফলভাবে তৈরি হয়েছে!' : 'User created successfully!');
@@ -355,7 +373,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
     sounds.playTap();
     try {
       deleteStoredUser(id);
-      safeDeleteDoc(doc(db, 'users', id)).catch(() => {});
+      await safeDeleteDoc(doc(db, 'users', id));
       sounds.playSuccess();
       setSuccessMsg(isBn ? 'ব্যবহারকারী মুছে ফেলা হয়েছে!' : 'User deleted successfully!');
       setUsers(prev => prev.filter(u => u.id !== id));
@@ -379,13 +397,6 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       // Keep the self-contained dataUrl permanently
       setEditAvatar(compressedDataUrl);
       sounds.playSuccess();
-
-      // Notify server in background
-      fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: compressedDataUrl, filename: file.name })
-      }).catch(() => {});
     } catch (err) {
       console.error('Error compressing user avatar:', err);
       setErrorMsg(isBn ? 'ছবি প্রসেস করা সম্ভব হয়নি' : 'Failed to process image');

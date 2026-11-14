@@ -250,12 +250,6 @@ export const FooterSettingsModal: React.FC<FooterSettingsModalProps> = ({
       const compressedDataUrl = await compressImage(file, 800, 400, 0.82);
       setNewImageUrl(compressedDataUrl);
       sounds.playSuccess();
-
-      fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: compressedDataUrl, filename: file.name })
-      }).catch(() => {});
     } catch (err) {
       console.error('Image upload failed:', err);
       setOfferFormError(isBn ? 'ছবি প্রসেস করা সম্ভব হয়নি' : 'Failed to process image');

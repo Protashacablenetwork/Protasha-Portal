@@ -132,70 +132,37 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   const fetchSummaryData = async () => {
     setIsFetchingSummary(true);
     setFetchError(null);
-    
+
     try {
-      // Direct client-side fetch is prioritized since the user confirmed API works in browsers
-      const targetUrl = 'https://ais-pre-a37qv6u7wprcx3y5kyqn6h-220756794257.asia-east1.run.app/api/ay-byay/external/summary';
-      const response = await fetch(targetUrl, {
-        headers: { 'Accept': 'application/json' },
-        mode: 'cors'
+      const proxyResponse = await fetch('/api/ay-byay/external/summary', {
+        headers: { 'Accept': 'application/json' }
       });
 
-      if (response.ok) {
-        const result = await response.json();
-        // Support both structured data and flat objects
-        const source = result.data || result;
-        const gTotal = source.grandTotal ?? source.totalBill ?? source.total ?? source.totalPay ?? 0;
-        const tDue = source.totalDue ?? source.due ?? source.dueBill ?? source.dueAmount ?? 0;
-        
-        if (gTotal !== undefined || tDue !== undefined) {
+      const contentType = proxyResponse.headers.get('content-type') || '';
+      if (proxyResponse.ok && contentType.includes('application/json')) {
+        const proxyResult = await proxyResponse.json();
+        const source = proxyResult.data || proxyResult;
+        if (proxyResult.success !== false && (source.grandTotal !== undefined || source.totalBill !== undefined || source.totalDue !== undefined)) {
+          const gTotal = source.grandTotal ?? source.totalBill ?? source.total ?? source.totalPay ?? 0;
+          const tDue = source.totalDue ?? source.due ?? source.dueBill ?? source.dueAmount ?? 0;
           setBillGrandTotal(String(gTotal));
           setBillDue(String(tDue));
           setFetchError(null);
-          setIsFetchingSummary(false);
           return;
         }
       }
 
-      // If direct fetch fails, fallback to our proxy which forwards auth
-      const proxyResponse = await fetch('/api/ay-byay/external/summary');
-      const proxyResult = await proxyResponse.json();
-      
-      if (proxyResult.success && proxyResult.data) {
-        const source = proxyResult.data;
-        const gTotal = source.grandTotal ?? source.totalBill ?? source.total ?? source.totalPay ?? 0;
-        const tDue = source.totalDue ?? source.due ?? source.dueBill ?? source.dueAmount ?? 0;
-        
-        setBillGrandTotal(String(gTotal));
-        setBillDue(String(tDue));
-        setFetchError(null);
-      } else if (proxyResult.needsAuth) {
-        setFetchError({ 
-          message: 'বিলিং সার্ভারে অথেকটিকেশন প্রয়োজন',
-          needsAuth: true,
-          target: proxyResult.target
-        });
-      } else {
-        setFetchError({ message: proxyResult.message || 'ডেটা লোড করতে ব্যর্থ হয়েছে' });
-      }
-    } catch (err) {
-      console.error('Fetch error:', err);
-      setFetchError({ message: 'ডেটা লোড করতে সমস্যা হয়েছে' });
+      setFetchError({
+        message: 'বিলিং ডেটা স্বয়ংক্রিয়ভাবে পাওয়া যায়নি। অনুগ্রহ করে নিচে মোট বিল, কর্তন ও বকেয়া লিখুন অথবা JSON পেস্ট করুন।'
+      });
+    } catch {
+      setFetchError({
+        message: 'অটো-লোড সার্ভার সংযোগ পাওয়া যায়নি। অনুগ্রহ করে ম্যানুয়ালি বিলের তথ্য দিন।'
+      });
     } finally {
       setIsFetchingSummary(false);
     }
   };
-
-  // Auto-retry when user returns to the tab after "unlocking"
-  useEffect(() => {
-    const handleFocus = () => {
-      if (category === 'মাসিক ইন্টারনেট বিল' && (fetchError?.needsAuth || !billGrandTotal)) {
-        fetchSummaryData();
-      }
-    };
-    window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
-  }, [category, fetchError, billGrandTotal]);
 
   const handleJsonPaste = (jsonStr: string) => {
     try {

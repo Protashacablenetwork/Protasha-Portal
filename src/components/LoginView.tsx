@@ -19,7 +19,7 @@ import {
   Clock,
   Phone
 } from 'lucide-react';
-import { db, safeSetDoc, isFirestoreQuotaExceeded } from '../utils/firebase';
+import { db, safeSetDoc } from '../utils/firebase';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { Language, FooterConfig, UserSession, BannerAd } from '../types';
 import { translations } from '../utils/formatters';
@@ -90,12 +90,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
       const compressedDataUrl = await compressImage(file, 400, 400, 0.85);
       setRegAvatar(compressedDataUrl);
       sounds.playSuccess();
-
-      fetch('/api/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: compressedDataUrl, filename: file.name })
-      }).catch(() => {});
     } catch (err) {
       console.error('Error compressing avatar in registration:', err);
     }
@@ -114,10 +108,22 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
     sounds.playTap();
 
-    // Fast-path 1: Master Admin Instant Login (0ms instant entry)
-    if ((cleanPin === '12588' && (cleanId.includes('admin') || cleanId.includes('01777877207') || cleanId === '')) ||
-        (cleanId === '01777877207' && cleanPin === '12588') ||
-        (cleanPin === '12588' && cleanId.length > 0)) {
+    // Fast-path 1: Master Admin Instant Login (check saved custom admin PIN or default 12588)
+    let effectiveAdminPin = safeStorage.getItem('protyasha_admin_pin') || '12588';
+    const looksLikeAdminPhone = cleanId.includes('admin') || cleanId.includes('01777877207');
+    if (looksLikeAdminPhone && cleanPin !== effectiveAdminPin) {
+      try {
+        const secSnap = await getDoc(doc(db, 'settings', 'admin_security'));
+        if (secSnap.exists() && secSnap.data()?.pin) {
+          effectiveAdminPin = String(secSnap.data().pin);
+          safeStorage.setItem('protyasha_admin_pin', effectiveAdminPin);
+        }
+      } catch {}
+    }
+
+    if ((cleanPin === effectiveAdminPin && (looksLikeAdminPhone || cleanId === '')) ||
+        (cleanId === '01777877207' && cleanPin === effectiveAdminPin) ||
+        (cleanPin === effectiveAdminPin && cleanId.length > 0)) {
       sounds.playSuccess();
       onLoginSuccess({
         id: 'admin-master',
@@ -149,7 +155,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
       }
 
       // 2. Query Firestore if available
-      if (!userData && !isFirestoreQuotaExceeded()) {
+      if (!userData) {
         try {
           const usersRef = collection(db, 'users');
           const q = query(usersRef, where('phone', '==', accountNumber.trim()));
@@ -241,20 +247,18 @@ export const LoginView: React.FC<LoginViewProps> = ({
         return;
       }
 
-      // Check duplicate in Firestore if online
-      if (!isFirestoreQuotaExceeded()) {
-        try {
-          const usersRef = collection(db, 'users');
-          const q = query(usersRef, where('phone', '==', cleanPhone));
-          const querySnapshot = await getDocs(q);
-          if (!querySnapshot.empty) {
-            setIsLoading(false);
-            setErrorMsg(isBn ? 'এই মোবাইল নাম্বার দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট রয়েছে' : 'An account already exists with this phone number');
-            return;
-          }
-        } catch (e) {
-          console.warn('Firestore phone duplicate check skipped:', e);
+      // Check duplicate in Firestore
+      try {
+        const usersRef = collection(db, 'users');
+        const q = query(usersRef, where('phone', '==', cleanPhone));
+        const querySnapshot = await getDocs(q);
+        if (!querySnapshot.empty) {
+          setIsLoading(false);
+          setErrorMsg(isBn ? 'এই মোবাইল নাম্বার দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট রয়েছে' : 'An account already exists with this phone number');
+          return;
         }
+      } catch (e) {
+        console.warn('Firestore phone duplicate check skipped:', e);
       }
 
       const newId = 'usr_' + Date.now();
@@ -269,11 +273,11 @@ export const LoginView: React.FC<LoginViewProps> = ({
         status: 'active' as const
       };
 
-      // 1. Save to local persistent store immediately (100% reliable)
+      // 1. Save to local persistent store immediately
       saveStoredUser(newUser);
 
-      // 2. Sync to Cloud Firestore in background
-      safeSetDoc(doc(db, 'users', newId), newUser).catch(() => {});
+      // 2. Save directly to Cloud Firestore so user works across all devices in real time
+      await safeSetDoc(doc(db, 'users', newId), newUser).catch(() => {});
       
       setIsLoading(false);
       sounds.playSuccess();

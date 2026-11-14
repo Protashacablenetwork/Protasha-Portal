@@ -46,26 +46,23 @@ app.post('/api/upload', (req: express.Request, res: express.Response) => {
     }
 });
 
-// API: Proxy for External Billing Summary
+// API: Proxy for External Billing Summary (only when configured)
 app.get('/api/ay-byay/external/summary', async (req: express.Request, res: express.Response) => {
     try {
-        const targetUrl = 'https://ais-pre-a37qv6u7wprcx3y5kyqn6h-220756794257.asia-east1.run.app/api/ay-byay/external/summary';
+        const targetUrl = process.env.EXTERNAL_BILLING_API_URL;
+        if (!targetUrl) {
+            return res.json({ success: false, message: 'External billing URL not configured' });
+        }
         const response = await fetch(targetUrl, {
             headers: { 'Accept': 'application/json' },
         });
 
         if (!response.ok) {
-            const text = await response.text();
-            try {
-                const json = JSON.parse(text);
-                return res.status(response.status).json(json);
-            } catch (e) {
-                return res.status(response.status).send(text);
-            }
+            return res.status(response.status).json({ success: false, message: 'External service unavailable' });
         }
 
         const data = await response.json();
-        res.json(data);
+        res.json({ success: true, data });
     } catch (err) {
         console.error('Proxy error:', err);
         res.status(500).json({ success: false, message: 'External service unreachable' });

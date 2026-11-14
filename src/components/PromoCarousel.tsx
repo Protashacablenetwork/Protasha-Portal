@@ -298,11 +298,11 @@ export const PromoCarousel: React.FC<PromoCarouselProps> = ({
                   className="w-full h-full object-cover object-center pointer-events-none select-none"
                 />
 
-                {/* Offer Badge (Top Left) */}
-                {(banner.badgeBn || banner.badgeEn || hasText) && (
+                {/* Offer Badge (Top Left - only shown if explicit badge exists) */}
+                {(Boolean(banner.badgeBn && banner.badgeBn.trim()) || Boolean(banner.badgeEn && banner.badgeEn.trim())) && (
                   <div className="absolute top-2.5 left-2.5 z-10 pointer-events-none">
                     <span className="bg-[#ff5722] text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase shadow-xs">
-                      {banner.badgeBn || (lang === 'bn' ? 'অফার' : 'Offer')}
+                      {banner.badgeBn || banner.badgeEn}
                     </span>
                   </div>
                 )}

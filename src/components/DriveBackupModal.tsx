@@ -37,12 +37,11 @@ import {
 import { 
   staffDb, 
   db, 
-  safeSetDoc, 
-  handleFirestoreError, 
-  OperationType 
+  safeSetDoc
 } from '../utils/firebase';
 import { collection, doc, getDocs, getDoc } from 'firebase/firestore';
-import { StaffAccount, AppUser, UserSession } from '../types';
+import { AppUser, UserSession } from '../types';
+import { collectMasterBackupData } from '../utils/backupCollector';
 
 interface DriveBackupModalProps {
   isOpen: boolean;
@@ -100,6 +99,42 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
       return true;
     }
   });
+
+  const [scheduledBackupEnabled, setScheduledBackupEnabled] = useState<boolean>(() => {
+    try {
+      return safeStorage.getItem('protyasha_scheduled_backup_enabled') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const [scheduledBackupTime, setScheduledBackupTime] = useState<string>(() => {
+    try {
+      return safeStorage.getItem('protyasha_scheduled_backup_time') || '23:00';
+    } catch {
+      return '23:00';
+    }
+  });
+
+  const handleToggleScheduledBackup = (enabled: boolean) => {
+    setScheduledBackupEnabled(enabled);
+    try {
+      safeStorage.setItem('protyasha_scheduled_backup_enabled', enabled ? 'true' : 'false');
+    } catch {}
+    setStatusMessage({
+      type: 'info',
+      text: enabled 
+        ? (isBn ? `✓ প্রতিদিন ${scheduledBackupTime} টায় স্বয়ংক্রিয় ব্যাকআপ শিডিউল সক্রিয় করা হয়েছে` : `Auto backup scheduled for ${scheduledBackupTime} daily`)
+        : (isBn ? 'স্বয়ংক্রিয় ব্যাকআপ শিডিউল নিষ্ক্রিয় করা হয়েছে' : 'Automated backup schedule disabled')
+    });
+  };
+
+  const handleTimeChange = (timeStr: string) => {
+    setScheduledBackupTime(timeStr);
+    try {
+      safeStorage.setItem('protyasha_scheduled_backup_time', timeStr);
+    } catch {}
+  };
 
   // Check initial connection
   useEffect(() => {
@@ -183,99 +218,7 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
     }
   };
 
-  // Collect All Master Data from Firestore
-  const collectMasterBackupData = async () => {
-    // 1. Fetch server_data snapshot from Firestore
-    let serverSnapshot: any = {};
-    try {
-      const snap = await getDoc(doc(db, 'settings', 'server_data'));
-      if (snap.exists()) {
-        serverSnapshot = snap.data().data || {};
-      }
-    } catch (e) {
-      console.warn('Firestore server_data read notice:', e);
-    }
 
-    // 2. Fetch live Firestore staff collection
-    const cloudStaff: StaffAccount[] = [];
-    try {
-      const staffSnap = await getDocs(collection(staffDb, 'staff'));
-      staffSnap.forEach(d => {
-        const item = d.data() as StaffAccount;
-        if (item && item.id) cloudStaff.push(item);
-      });
-    } catch (e) {
-      console.warn('Firestore staff read notice:', e);
-    }
-
-    // 3. Fetch live Firestore staff_salaries collection
-    const cloudSalaries: any[] = [];
-    try {
-      const salSnap = await getDocs(collection(staffDb, 'staff_salaries'));
-      salSnap.forEach(d => {
-        const item = d.data();
-        if (item && item.id) cloudSalaries.push(item);
-      });
-    } catch (e) {
-      console.warn('Firestore salaries read notice:', e);
-    }
-
-    // 4. Fetch AyByay transactions
-    const ayTransactions: any[] = [];
-    try {
-      const txSnap = await getDocs(collection(staffDb, 'transactions'));
-      txSnap.forEach(d => {
-        const item = d.data();
-        if (item && item.id) ayTransactions.push(item);
-      });
-    } catch (e) {
-      console.warn('Firestore ay_transactions read notice:', e);
-    }
-
-    // Construct Master Backup Package
-    const isSubAdmin = currentUser?.role === 'sub-admin';
-    const currentUserId = currentUser?.id || '';
-
-    // Filter logic...
-    const filteredStaff = isSubAdmin 
-      ? cloudStaff.filter((s: any) => s.recordedBy === currentUserId)
-      : cloudStaff;
-
-    const filteredSalaries = isSubAdmin
-      ? cloudSalaries.filter((s: any) => s.recordedBy === currentUserId)
-      : cloudSalaries;
-
-    const filteredTransactions = isSubAdmin
-      ? ayTransactions.filter((t: any) => t.recordedBy === currentUserId)
-      : ayTransactions;
-
-    const masterPackage = {
-      appName: 'প্রত্যাশা ক্যাবল নেটওয়ার্ক - ক্লাউড মাস্টার ব্যাকআপ',
-      backupVersion: '2.0',
-      exportedAt: new Date().toISOString(),
-      exportedBy: googleUser?.email || currentUser?.phone || 'admin',
-      isPartial: isSubAdmin,
-      stats: {
-        staffCount: filteredStaff.length,
-        salariesCount: filteredSalaries.length,
-        transactionsCount: filteredTransactions.length,
-        usersCount: isSubAdmin ? 0 : (serverSnapshot.users || []).length
-      },
-      firestore: {
-        staff: filteredStaff,
-        staff_salaries: filteredSalaries,
-        transactions: filteredTransactions
-      },
-      serverData: serverSnapshot,
-      ayByayData: {
-        transactions: filteredTransactions,
-        salaries: filteredSalaries,
-        staff: filteredStaff
-      }
-    };
-
-    return masterPackage;
-  };
 
   // Perform Backup to Google Drive
   const handleBackupToDrive = async () => {
@@ -290,7 +233,7 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
     setIsBackingUp(true);
     setStatusMessage(null);
     try {
-      const masterData = await collectMasterBackupData();
+      const masterData = await collectMasterBackupData(currentUser);
       const uploadedFile = await uploadBackupToGoogleDrive(masterData);
 
       setStatusMessage({
@@ -352,50 +295,219 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
     setIsRestoring(true);
     setStatusMessage(null);
     try {
-      // 1. Restore Firestore staffDb collections
-      const staffList = backupJson?.firestore?.staff || backupJson?.ayByayData?.staff || [];
-      if (Array.isArray(staffList)) {
+      const fs = backupJson?.firestore || {};
+      const legacyServer = backupJson?.serverData || {};
+      const legacyAy = backupJson?.ayByayData || {};
+      const nowIso = new Date().toISOString();
+
+      // 1. Staff accounts
+      const staffList = fs.staff || legacyAy.staff || legacyServer.staffAccounts || [];
+      if (Array.isArray(staffList) && staffList.length > 0) {
         for (const stf of staffList) {
           if (stf && stf.id) {
-            await safeSetDoc(doc(staffDb, 'staff', stf.id), stf);
+            await safeSetDoc(doc(staffDb, 'staff', String(stf.id)), {
+              ...stf,
+              id: String(stf.id),
+              phone: stf.phone || ''
+            });
           }
         }
+        await safeSetDoc(doc(db, 'settings', 'staff_meta'), { initialized: true, updatedAt: nowIso });
       }
 
-      const salariesList = backupJson?.firestore?.staff_salaries || backupJson?.ayByayData?.salaries || [];
+      // 2. Ay-Byay Salaries
+      const salariesList = fs.ay_byay_salaries || fs.staff_salaries || legacyAy.salaries || [];
       if (Array.isArray(salariesList)) {
         for (const sal of salariesList) {
           if (sal && sal.id) {
-            await safeSetDoc(doc(staffDb, 'staff_salaries', sal.id), sal);
+            await safeSetDoc(doc(staffDb, 'ay_byay_salaries', String(sal.id)), sal);
           }
         }
       }
 
-      const ayTransactions = backupJson?.firestore?.transactions || backupJson?.firestore?.ay_byay_transactions || backupJson?.ayByayData?.transactions || [];
+      // 3. Ay-Byay Transactions (handle v2 backups where AyByay txns were under firestore.transactions)
+      const isV3 = Number(backupJson?.backupVersion || 0) >= 3;
+      const ayTransactions = isV3
+        ? (fs.ay_byay_transactions || legacyAy.transactions || [])
+        : (fs.ay_byay_transactions || fs.transactions || legacyAy.transactions || []);
       if (Array.isArray(ayTransactions)) {
         for (const tx of ayTransactions) {
           if (tx && tx.id) {
-            await safeSetDoc(doc(staffDb, 'transactions', tx.id), tx);
+            await safeSetDoc(doc(staffDb, 'ay_byay_transactions', String(tx.id)), {
+              ...tx,
+              id: String(tx.id),
+              source: tx.source || 'ay-byay'
+            });
           }
         }
       }
 
-      // 2. Restore Server Data (Firestore snapshots)
-      if (backupJson.serverData) {
-        await safeSetDoc(doc(db, 'settings', 'server_data'), {
-          id: 'server_data',
-          data: backupJson.serverData,
-          updatedAt: new Date().toISOString()
+      // 4. Main Portal Transactions
+      const mainTransactions = isV3
+        ? (fs.transactions || [])
+        : (legacyServer.transactions || []);
+      if (Array.isArray(mainTransactions)) {
+        for (const tx of mainTransactions) {
+          if (tx && tx.id) {
+            await safeSetDoc(doc(db, 'transactions', String(tx.id)), {
+              ...tx,
+              id: String(tx.id)
+            });
+          }
+        }
+      }
+
+      // 5. Banners
+      const bannersList = fs.banners || legacyServer.banners || [];
+      if (Array.isArray(bannersList) && bannersList.length > 0) {
+        for (const b of bannersList) {
+          if (b && b.id) {
+            await safeSetDoc(doc(db, 'banners', String(b.id)), {
+              ...b,
+              id: String(b.id),
+              isActive: b.isActive !== false
+            });
+          }
+        }
+        await safeSetDoc(doc(db, 'settings', 'banners_meta'), { initialized: true, updatedAt: nowIso });
+      }
+
+      // 6. Channels
+      const channelsList = fs.channels || legacyServer.channels || [];
+      if (Array.isArray(channelsList) && channelsList.length > 0) {
+        for (const ch of channelsList) {
+          if (ch && ch.id) {
+            await safeSetDoc(doc(db, 'channels', String(ch.id)), {
+              ...ch,
+              id: String(ch.id)
+            });
+          }
+        }
+        await safeSetDoc(doc(db, 'settings', 'channels_meta'), { initialized: true, updatedAt: nowIso });
+      }
+
+      // 7. Quick Hisab Owners
+      const ownersList = fs.quick_hisab_owners || legacyServer.quickHisabOwners || [];
+      if (Array.isArray(ownersList) && ownersList.length > 0) {
+        for (const owner of ownersList) {
+          if (owner && owner.id) {
+            await safeSetDoc(doc(db, 'quick_hisab_owners', String(owner.id)), {
+              ...owner,
+              id: String(owner.id)
+            });
+          }
+        }
+        await safeSetDoc(doc(db, 'settings', 'owners_meta'), { initialized: true, updatedAt: nowIso });
+      }
+
+      // 8. Users
+      const usersList = fs.users || legacyServer.users || [];
+      if (Array.isArray(usersList) && usersList.length > 0) {
+        for (const u of usersList) {
+          if (u && u.id) {
+            await safeSetDoc(doc(db, 'users', String(u.id)), {
+              ...u,
+              id: String(u.id),
+              role: u.role || 'user',
+              status: u.status || 'active'
+            });
+          }
+        }
+        await safeSetDoc(doc(db, 'settings', 'users_meta'), { initialized: true, updatedAt: nowIso });
+      }
+
+      // 9. Inventory & Logs & Config
+      const invItems = fs.ay_byay_inventory || legacyAy.inventory || [];
+      if (Array.isArray(invItems)) {
+        for (const item of invItems) {
+          if (item && item.id) {
+            await safeSetDoc(doc(staffDb, 'ay_byay_inventory', String(item.id)), item);
+          }
+        }
+      }
+
+      const invLogs = fs.ay_byay_inventory_logs || legacyAy.inventoryLogs || [];
+      if (Array.isArray(invLogs)) {
+        for (const logItem of invLogs) {
+          if (logItem && logItem.id) {
+            await safeSetDoc(doc(staffDb, 'ay_byay_inventory_logs', String(logItem.id)), logItem);
+          }
+        }
+      }
+
+      const ayConfig = fs.ay_byay_config || legacyAy.config;
+      if (ayConfig && ayConfig.companyName && ayConfig.currencySymbol) {
+        await safeSetDoc(doc(staffDb, 'ay_byay_config', 'main'), ayConfig);
+      }
+
+      // 10. Settings documents (v3 & legacy fallback)
+      const settingsObj = backupJson?.settings || {};
+      if (settingsObj.service_control) {
+        await safeSetDoc(doc(db, 'settings', 'service_control'), settingsObj.service_control);
+      } else if (legacyServer.serviceStatuses) {
+        await safeSetDoc(doc(db, 'settings', 'service_control'), {
+          id: 'service_control',
+          statuses: legacyServer.serviceStatuses,
+          updatedAt: nowIso
         });
       }
 
-      // 3. Update safeStorage caches
-      if (Array.isArray(staffList)) {
+      if (settingsObj.broadcast_notifications) {
+        await safeSetDoc(doc(db, 'settings', 'broadcast_notifications'), settingsObj.broadcast_notifications);
+      } else if (Array.isArray(legacyServer.notifications)) {
+        await safeSetDoc(doc(db, 'settings', 'broadcast_notifications'), {
+          list: legacyServer.notifications.slice(0, 50),
+          updatedAt: nowIso
+        });
+      }
+
+      if (settingsObj.footer_config) {
+        await safeSetDoc(doc(db, 'settings', 'footer_config'), settingsObj.footer_config);
+      } else if (legacyServer.footerConfig) {
+        await safeSetDoc(doc(db, 'settings', 'footer_config'), {
+          config: legacyServer.footerConfig,
+          updatedAt: nowIso
+        });
+      }
+
+      if (settingsObj.admin_profile) {
+        await safeSetDoc(doc(db, 'settings', 'admin_profile'), settingsObj.admin_profile);
+      } else if (legacyServer.adminProfile) {
+        await safeSetDoc(doc(db, 'settings', 'admin_profile'), {
+          ...legacyServer.adminProfile,
+          updatedAt: nowIso
+        });
+      }
+
+      if (settingsObj.audit_logs) {
+        await safeSetDoc(doc(db, 'settings', 'audit_logs'), settingsObj.audit_logs);
+      } else if (Array.isArray(legacyServer.auditLogs)) {
+        await safeSetDoc(doc(db, 'settings', 'audit_logs'), {
+          logs: legacyServer.auditLogs.slice(0, 100),
+          updatedAt: nowIso
+        });
+      }
+
+      if (settingsObj.quick_hisab_summary) {
+        await safeSetDoc(doc(db, 'settings', 'quick_hisab_summary'), settingsObj.quick_hisab_summary);
+      } else if (legacyServer.quickHisabMonthlyRecords || legacyServer.quickHisabSummary) {
+        await safeSetDoc(doc(db, 'settings', 'quick_hisab_summary'), {
+          monthlyRecords: legacyServer.quickHisabMonthlyRecords || {},
+          quickHisabSummary: legacyServer.quickHisabSummary || null,
+          updatedAt: nowIso
+        });
+      }
+
+      // 11. Update safeStorage caches
+      if (Array.isArray(staffList) && staffList.length > 0) {
         try { safeStorage.setItem('protyasha_staff', JSON.stringify(staffList)); } catch {}
         window.dispatchEvent(new CustomEvent('staff-data-changed', { detail: staffList }));
       }
       if (Array.isArray(salariesList)) {
         try { safeStorage.setItem('isp_cache_salaries', JSON.stringify(salariesList)); } catch {}
+      }
+      if (Array.isArray(ayTransactions)) {
+        try { safeStorage.setItem('isp_cache_txns', JSON.stringify(ayTransactions)); } catch {}
       }
 
       setStatusMessage({
@@ -470,7 +582,7 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
   const handleDownloadLocalJson = async () => {
     setIsBackingUp(true);
     try {
-      const masterData = await collectMasterBackupData();
+      const masterData = await collectMasterBackupData(currentUser);
       const jsonStr = JSON.stringify(masterData, null, 2);
       const blob = new Blob([jsonStr], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -820,6 +932,49 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
                     </>
                   )}
                 </button>
+              </div>
+
+              {/* Automated Daily Schedule Settings Card */}
+              <div className="p-4 bg-gradient-to-r from-sky-50 to-indigo-50 dark:from-sky-950/30 dark:to-indigo-950/30 rounded-2xl border border-sky-200 dark:border-sky-900/50 space-y-3 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-sky-600 text-white flex items-center justify-center shadow-xs">
+                      <Clock className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white">
+                        {isBn ? 'প্রতিদিন নির্দিষ্ট সময়ে স্বয়ংক্রিয় ব্যাকআপ শিডিউল' : 'Automated Daily Backup Schedule'}
+                      </h4>
+                      <p className="text-[11px] text-slate-600 dark:text-slate-300">
+                        {isBn ? 'নির্দিষ্ট সময়ে অ্যাপ চালু থাকলেই গুগল ড্রাইভে ব্যাকআপ হবে' : 'Automatically backup at specified time daily'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={scheduledBackupEnabled}
+                      onChange={(e) => handleToggleScheduledBackup(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-[#E52E2E]"></div>
+                  </label>
+                </div>
+
+                {scheduledBackupEnabled && (
+                  <div className="pt-2 border-t border-sky-100 dark:border-slate-800 flex items-center justify-between gap-3 text-xs">
+                    <span className="font-bold text-slate-700 dark:text-slate-300">
+                      {isBn ? 'ব্যাকআপ নেওয়ার সময় নির্ধারণ করুন:' : 'Select Backup Time:'}
+                    </span>
+                    <input
+                      type="time"
+                      value={scheduledBackupTime}
+                      onChange={(e) => handleTimeChange(e.target.value)}
+                      className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-sky-300 dark:border-slate-700 font-bold text-slate-900 dark:text-white shadow-2xs"
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Google Drive Saved Backups List */}

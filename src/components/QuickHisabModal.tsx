@@ -33,8 +33,8 @@ import { sounds } from '../utils/audio';
 import { compressImageFile } from '../utils/imageStorage';
 import confetti from 'canvas-confetti';
 import { isIncomeTransaction, isExpenseTransaction, parseNumber, getTransactionMonth, getMonthBengaliName } from '../portals/ayByay/data/categories';
-import { db, staffDb, safeSetDoc, safeDeleteDoc, isFirestoreQuotaExceeded, handleFirestoreError, OperationType } from '../utils/firebase';
-import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
+import { db, staffDb, safeSetDoc, safeDeleteDoc, handleFirestoreError, OperationType } from '../utils/firebase';
+import { collection, doc, getDoc, getDocs, onSnapshot } from 'firebase/firestore';
 import { safeStorage } from '../utils/safeStorage';
 
 interface QuickHisabModalProps {
@@ -106,8 +106,10 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
     }
   });
 
+  const [manualMonthlyRecords, setManualMonthlyRecords] = useState<Record<string, SummaryData>>({});
+
   // Calculate live metrics for any month strictly from Ay-Byay transactions & salaries
-  const calculateMonthStats = useCallback((monthKey: string, txList: any[], salList: any[]): SummaryData => {
+  const calculateMonthStats = useCallback((monthKey: string, txList: any[], salList: any[], manualMap?: Record<string, SummaryData>): SummaryData => {
     let inc = 0;
     let nonSalExp = 0;
     let salExpInTx = 0;
@@ -115,9 +117,9 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
     let expCount = 0;
     let hasTxn = false;
 
-    const isSalaryTx = (t: any) => 
+    const isSalaryTx = (t: any) =>
       (t.id && String(t.id).startsWith('tx-sal-')) ||
-      t.category === 'বেতন (Salary)' || 
+      t.category === 'বেতন (Salary)' ||
       (typeof t.description === 'string' && (t.description.includes('স্টাফ বেতন') || t.description.includes('বেতন')));
 
     (txList || []).forEach((t: any) => {
@@ -164,7 +166,12 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
       };
     }
 
-    // Archived month fallback (if summary was previously saved)
+    // Cloud manual/archived month record fallback
+    if (manualMap && manualMap[monthKey]) {
+      return { ...manualMap[monthKey], source: 'manual' };
+    }
+
+    // Local cached summary fallback
     try {
       const saved = safeStorage.getItem('protyasha_cached_summary');
       if (saved) {
@@ -259,38 +266,33 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
     const oth = Math.max(0, exp - sal);
     const net = inc - exp;
 
-    const updatedSummary = {
+    const updatedSummary: SummaryData & { lastUpdated: string } = {
       totalIncome: inc,
       totalExpense: exp,
       staffSalary: sal,
       otherExpense: oth,
       netProfit: net,
+      source: 'manual',
       lastUpdated: new Date().toISOString()
     };
 
     setSummary(updatedSummary);
+    setManualMonthlyRecords(prev => ({ ...prev, [selectedMonth]: updatedSummary }));
     try {
       safeStorage.setItem('protyasha_cached_summary', JSON.stringify(updatedSummary));
     } catch {}
 
     try {
-      const docRef = doc(db, 'settings', 'server_data');
+      const docRef = doc(db, 'settings', 'quick_hisab_summary');
       const snap = await getDoc(docRef);
-      const currentData = snap.exists() ? snap.data().data : {};
-      
-      const monthlyRecords = currentData.quickHisabMonthlyRecords || {};
-      monthlyRecords[selectedMonth] = updatedSummary;
+      const existingData = snap.exists() ? snap.data() : {};
+      const monthlyRecords = { ...(existingData.monthlyRecords || {}), [selectedMonth]: updatedSummary };
 
       await safeSetDoc(docRef, {
-        id: 'server_data',
-        data: { 
-          ...currentData, 
-          quickHisabMonthlyRecords: monthlyRecords,
-          quickHisabSummary: selectedMonth === currentMonthKey ? updatedSummary : (currentData.quickHisabSummary || updatedSummary)
-        },
+        monthlyRecords,
+        quickHisabSummary: selectedMonth === currentMonthKey ? updatedSummary : (existingData.quickHisabSummary || updatedSummary),
         updatedAt: new Date().toISOString()
-      }, { merge: true });
-
+      });
     } catch (e) {
       console.warn('Could not save summary to Firestore:', e);
     } finally {
@@ -300,12 +302,13 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
     }
   };
 
-  // Real-Time onSnapshot subscriptions for Ay-Byay Firestore collections
+  // Real-Time onSnapshot subscriptions for Ay-Byay & Quick Hisab Firestore collections
   useEffect(() => {
-    if (!isOpen || isFirestoreQuotaExceeded()) return;
+    if (!isOpen) return;
 
     let unsubTxns: (() => void) | null = null;
     let unsubSals: (() => void) | null = null;
+    let unsubSummary: (() => void) | null = null;
 
     try {
       const qTxns = collection(staffDb, 'ay_byay_transactions');
@@ -343,34 +346,48 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
       console.warn('Realtime ay_byay_salaries subscription error:', e);
     }
 
+    try {
+      unsubSummary = onSnapshot(doc(db, 'settings', 'quick_hisab_summary'), (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data?.monthlyRecords && typeof data.monthlyRecords === 'object') {
+            setManualMonthlyRecords(data.monthlyRecords);
+          }
+        }
+      }, (err) => {
+        handleFirestoreError(err, OperationType.GET, 'settings/quick_hisab_summary');
+      });
+    } catch (e) {
+      console.warn('Realtime quick_hisab_summary subscription error:', e);
+    }
+
     return () => {
       if (unsubTxns) unsubTxns();
       if (unsubSals) unsubSals();
+      if (unsubSummary) unsubSummary();
     };
   }, [isOpen]);
 
   // Dedicated real-time listener for Quick Hisab Owners collection
   useEffect(() => {
-    if (!isOpen || isFirestoreQuotaExceeded()) return;
+    if (!isOpen) return;
 
     let unsub: (() => void) | null = null;
     try {
       const q = collection(db, 'quick_hisab_owners');
       unsub = onSnapshot(q, (snapshot) => {
-        if (!snapshot.empty) {
-          const cloudOwners: QuickHisabOwner[] = [];
-          snapshot.forEach(docSnap => {
-            const data = docSnap.data() as QuickHisabOwner;
-            if (data && data.name) {
-              cloudOwners.push({ ...data, id: data.id || docSnap.id });
-            }
-          });
-          if (cloudOwners.length > 0) {
-            setOwners(cloudOwners);
-            try {
-              safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(cloudOwners));
-            } catch {}
+        const cloudOwners: QuickHisabOwner[] = [];
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data() as QuickHisabOwner;
+          if (data && data.name) {
+            cloudOwners.push({ ...data, id: String(data.id || docSnap.id) });
           }
+        });
+        if (!snapshot.empty || owners.length === 0) {
+          setOwners(cloudOwners);
+          try {
+            safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(cloudOwners));
+          } catch {}
         }
       }, (err) => {
         handleFirestoreError(err, OperationType.LIST, 'quick_hisab_owners');
@@ -384,9 +401,9 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
     };
   }, [isOpen]);
 
-  // Recalculate summary in real-time whenever selectedMonth, ayByayTxns, or ayByaySalaries change
+  // Recalculate summary in real-time whenever selectedMonth, ayByayTxns, ayByaySalaries, or manualMonthlyRecords change
   useEffect(() => {
-    const updated = calculateMonthStats(selectedMonth, ayByayTxns, ayByaySalaries);
+    const updated = calculateMonthStats(selectedMonth, ayByayTxns, ayByaySalaries, manualMonthlyRecords);
     setSummary(updated);
     setIsLiveAyByaySynced(true);
     if (selectedMonth === currentMonthKey) {
@@ -394,7 +411,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
         safeStorage.setItem('protyasha_cached_summary', JSON.stringify(updated));
       } catch {}
     }
-  }, [selectedMonth, ayByayTxns, ayByaySalaries, calculateMonthStats, currentMonthKey]);
+  }, [selectedMonth, ayByayTxns, ayByaySalaries, manualMonthlyRecords, calculateMonthStats, currentMonthKey]);
 
   // Live in-app & cross-tab events listener (dispatched upon adding/editing/deleting transactions in Ay-Byay)
   useEffect(() => {
@@ -460,21 +477,33 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
 
   // Persist owners changes
   const saveUpdatedOwners = (newOwners: QuickHisabOwner[]) => {
+    const prevIds = new Set(owners.map(o => String(o.id)));
+    const nextIds = new Set(newOwners.map(o => String(o.id)));
+
     setOwners(newOwners);
     try {
       safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(newOwners));
     } catch {}
 
-    // Dedicated Firestore snapshot storage
-    safeSetDoc(doc(db, 'settings', 'quick_hisab_owners_data'), {
-      owners: newOwners,
-      updatedAt: new Date().toISOString()
-    }).catch(() => {});
-
     // Save individual owner documents in dedicated collection 'quick_hisab_owners'
     newOwners.forEach(o => {
-      safeSetDoc(doc(db, 'quick_hisab_owners', String(o.id)), o).catch(() => {});
+      safeSetDoc(doc(db, 'quick_hisab_owners', String(o.id)), {
+        ...o,
+        id: String(o.id)
+      }).catch(() => {});
     });
+
+    // Delete any removed owners from collection
+    prevIds.forEach(id => {
+      if (!nextIds.has(id)) {
+        safeDeleteDoc(doc(db, 'quick_hisab_owners', id)).catch(() => {});
+      }
+    });
+
+    safeSetDoc(doc(db, 'settings', 'owners_meta'), {
+      initialized: true,
+      updatedAt: new Date().toISOString()
+    }).catch(() => {});
 
     if (onSaveOwners) {
       onSaveOwners(newOwners);

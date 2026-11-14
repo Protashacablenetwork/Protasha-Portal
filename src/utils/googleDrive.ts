@@ -15,6 +15,9 @@ export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 
 const provider = new GoogleAuthProvider();
 provider.addScope(DRIVE_SCOPE);
+provider.setCustomParameters({
+  prompt: 'select_account'
+});
 
 let isSigningIn = false;
 let cachedAccessToken: string | null = null;
@@ -36,11 +39,17 @@ export const initDriveAuth = (
   });
 };
 
-// Sign in with Google Drive permissions
+// Sign in with Google Drive permissions with explicit account selection
 export const signInWithGoogleDrive = async (): Promise<{ user: User; accessToken: string }> => {
   try {
     isSigningIn = true;
-    const result = await signInWithPopup(auth, provider);
+    const authProvider = new GoogleAuthProvider();
+    authProvider.addScope(DRIVE_SCOPE);
+    // Explicitly prompt user to choose an account on every connect/sign-in
+    authProvider.setCustomParameters({
+      prompt: 'select_account'
+    });
+    const result = await signInWithPopup(auth, authProvider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
       throw new Error('গুগল ড্রাইভ অ্যাক্সেস টোকেন পাওয়া যায়নি');

@@ -2,108 +2,243 @@
   "entities": {
     "Transaction": {
       "title": "Transaction",
-      "description": "Financial income or expense transaction",
+      "description": "Financial income or expense transaction in main portal or Ay-Byay ledger",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "type": { "type": "string" },
-        "description": { "type": "string" },
-        "category": { "type": "string" },
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "trxId": { "type": "string", "maxLength": 64 },
+        "type": { "type": "string", "enum": ["income", "expense"] },
+        "method": { "type": "string", "maxLength": 100 },
+        "person": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 500 },
+        "category": { "type": "string", "maxLength": 150 },
         "amount": { "type": "number" },
-        "date": { "type": "string" },
-        "paymentMethod": { "type": "string" },
-        "note": { "type": "string" },
-        "createdAt": { "type": "string" }
+        "date": { "type": "string", "maxLength": 32 },
+        "time": { "type": "string", "maxLength": 32 },
+        "paymentMethod": { "type": "string", "maxLength": 100 },
+        "purpose": { "type": "string", "maxLength": 300 },
+        "note": { "type": "string", "maxLength": 5000 },
+        "recordedBy": { "type": "string", "maxLength": 128 },
+        "recordedByGmail": { "type": "string", "maxLength": 200 },
+        "source": { "type": "string", "maxLength": 32 },
+        "isDeleted": { "type": "boolean" },
+        "created": { "type": "number" },
+        "createdAt": { "type": "string", "maxLength": 64 }
       },
-      "required": ["id", "type", "description", "category", "amount", "date"]
+      "required": ["id", "type", "amount"]
     },
-    "Staff": {
-      "title": "Staff",
-      "description": "Staff member information",
+    "BannerAd": {
+      "title": "BannerAd",
+      "description": "Homepage promotional banner advertisement controlled by admin",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "designation": { "type": "string" },
-        "phone": { "type": "string" },
-        "joinDate": { "type": "string" },
-        "baseSalary": { "type": "number" },
-        "status": { "type": "string" },
-        "notes": { "type": "string" },
-        "createdAt": { "type": "string" }
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "badgeBn": { "type": "string", "maxLength": 100 },
+        "badgeEn": { "type": "string", "maxLength": 100 },
+        "titleBn": { "type": "string", "maxLength": 200 },
+        "titleEn": { "type": "string", "maxLength": 200 },
+        "subtitleBn": { "type": "string", "maxLength": 400 },
+        "subtitleEn": { "type": "string", "maxLength": 400 },
+        "imageUrl": { "type": "string", "maxLength": 900000 },
+        "linkUrl": { "type": "string", "maxLength": 500 },
+        "isActive": { "type": "boolean" },
+        "priority": { "type": "number" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
       },
-      "required": ["id", "name", "designation", "phone", "baseSalary", "status"]
+      "required": ["id", "imageUrl", "isActive"]
+    },
+    "PaymentChannel": {
+      "title": "PaymentChannel",
+      "description": "Payment channel configuration (bKash, Nagad, Rocket, Bank, Cash, etc.)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 100 },
+        "labelBn": { "type": "string", "maxLength": 150 },
+        "labelEn": { "type": "string", "maxLength": 150 },
+        "icon": { "type": "string", "maxLength": 64 },
+        "imageUrl": { "type": "string", "maxLength": 900000 },
+        "color": { "type": "string", "maxLength": 100 },
+        "bg": { "type": "string", "maxLength": 100 },
+        "border": { "type": "string", "maxLength": 100 },
+        "isDefault": { "type": "boolean" },
+        "order": { "type": "number" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name", "labelBn", "labelEn"]
+    },
+    "StaffAccount": {
+      "title": "StaffAccount",
+      "description": "Staff collection and company dues account",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 150 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "role": { "type": "string", "maxLength": 150 },
+        "designation": { "type": "string", "maxLength": 150 },
+        "baseSalary": { "type": "number" },
+        "avatarUrl": { "type": "string", "maxLength": 900000 },
+        "address": { "type": "string", "maxLength": 300 },
+        "reference": { "type": "string", "maxLength": 200 },
+        "totalDue": { "type": "number" },
+        "totalCollected": { "type": "number" },
+        "remainingDue": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 2000 },
+        "isActive": { "type": "boolean" },
+        "recordedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name", "phone"]
     },
     "SalaryPayment": {
       "title": "SalaryPayment",
-      "description": "Salary payment record",
+      "description": "Monthly staff salary payment record",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "staffId": { "type": "string" },
-        "staffName": { "type": "string" },
-        "staffDesignation": { "type": "string" },
-        "month": { "type": "string" },
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "staffId": { "type": "string", "maxLength": 128 },
+        "staffName": { "type": "string", "maxLength": 150 },
+        "staffDesignation": { "type": "string", "maxLength": 150 },
+        "month": { "type": "string", "maxLength": 16 },
         "baseSalary": { "type": "number" },
         "bonusOrAllowance": { "type": "number" },
         "deductionOrAdvance": { "type": "number" },
         "netSalary": { "type": "number" },
-        "paymentStatus": { "type": "string" },
-        "paymentDate": { "type": "string" },
-        "paymentMethod": { "type": "string" },
-        "voucherNumber": { "type": "string" },
-        "note": { "type": "string" },
-        "transactionId": { "type": "string" },
-        "createdAt": { "type": "string" }
+        "paymentStatus": { "type": "string", "enum": ["paid", "pending"] },
+        "paymentDate": { "type": "string", "maxLength": 32 },
+        "paymentMethod": { "type": "string", "maxLength": 100 },
+        "voucherNumber": { "type": "string", "maxLength": 64 },
+        "note": { "type": "string", "maxLength": 2000 },
+        "transactionId": { "type": "string", "maxLength": 128 },
+        "recordedBy": { "type": "string", "maxLength": 128 },
+        "recordedByGmail": { "type": "string", "maxLength": 200 },
+        "createdAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "staffId", "month", "baseSalary", "netSalary", "paymentStatus"]
     },
-    "InventoryItem": {
-      "title": "InventoryItem",
-      "description": "Inventory item definition",
+    "QuickHisabOwner": {
+      "title": "QuickHisabOwner",
+      "description": "Shareholder/partner in Quick Hisab profit distribution",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "category": { "type": "string" },
-        "unit": { "type": "string" },
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 150 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "address": { "type": "string", "maxLength": 300 },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "shareUnits": { "type": "number" },
+        "avatarUrl": { "type": "string", "maxLength": 900000 },
+        "isHalf": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name", "shareUnits"]
+    },
+    "AppUser": {
+      "title": "AppUser",
+      "description": "Application user account with phone, PIN, and role",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 150 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "pin": { "type": "string", "maxLength": 32 },
+        "avatarUrl": { "type": "string", "maxLength": 900000 },
+        "gmail": { "type": "string", "maxLength": 200 },
+        "role": { "type": "string", "enum": ["admin", "sub-admin", "user", "visitor"] },
+        "status": { "type": "string", "enum": ["active", "suspended"] },
+        "virtualCardNumber": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "name", "phone", "role", "status"]
+    },
+    "InventoryItem": {
+      "title": "InventoryItem",
+      "description": "Cable and networking hardware stock item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 200 },
+        "category": { "type": "string", "maxLength": 150 },
+        "unit": { "type": "string", "maxLength": 64 },
         "currentStock": { "type": "number" },
         "minStockAlert": { "type": "number" },
         "unitCost": { "type": "number" },
-        "supplier": { "type": "string" },
-        "location": { "type": "string" },
-        "notes": { "type": "string" },
-        "updatedAt": { "type": "string" }
+        "supplier": { "type": "string", "maxLength": 200 },
+        "location": { "type": "string", "maxLength": 200 },
+        "notes": { "type": "string", "maxLength": 2000 },
+        "recordedBy": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "name", "category", "unit", "currentStock", "unitCost"]
     },
     "InventoryLog": {
       "title": "InventoryLog",
-      "description": "Inventory movement log",
+      "description": "Inventory stock movement log",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "itemId": { "type": "string" },
-        "itemName": { "type": "string" },
-        "type": { "type": "string" },
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "itemId": { "type": "string", "maxLength": 128 },
+        "itemName": { "type": "string", "maxLength": 200 },
+        "type": { "type": "string", "enum": ["in", "out", "return", "damaged"] },
         "quantity": { "type": "number" },
-        "date": { "type": "string" },
-        "recipientOrSource": { "type": "string" },
+        "date": { "type": "string", "maxLength": 32 },
+        "recipientOrSource": { "type": "string", "maxLength": 200 },
         "costPerUnit": { "type": "number" },
         "totalCost": { "type": "number" },
+        "addToExpense": { "type": "boolean" },
         "addedToExpense": { "type": "boolean" },
-        "transactionId": { "type": "string" },
-        "note": { "type": "string" },
-        "createdAt": { "type": "string" }
+        "expenseCategory": { "type": "string", "maxLength": 150 },
+        "paymentMethod": { "type": "string", "maxLength": 100 },
+        "transactionId": { "type": "string", "maxLength": 128 },
+        "note": { "type": "string", "maxLength": 2000 },
+        "recordedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "itemId", "type", "quantity", "date"]
+    },
+    "AyByayConfig": {
+      "title": "AyByayConfig",
+      "description": "Configuration for Ay-Byay accounting portal",
+      "type": "object",
+      "properties": {
+        "autoSync": { "type": "boolean" },
+        "lastSyncTime": { "type": "string", "maxLength": 64 },
+        "syncStatus": { "type": "string", "maxLength": 64 },
+        "syncMessage": { "type": "string", "maxLength": 300 },
+        "companyName": { "type": "string", "maxLength": 200 },
+        "currencySymbol": { "type": "string", "maxLength": 16 },
+        "activeMonth": { "type": "string", "maxLength": 16 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["companyName", "currencySymbol"]
+    },
+    "SettingsDocument": {
+      "title": "SettingsDocument",
+      "description": "System settings, metadata, notifications, footer, service control, and audit logs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      }
     }
   },
   "firestore": {
-    "/ayByay/transactions": { "schema": "Transaction", "description": "All transactions" },
-    "/ayByay/staff": { "schema": "Staff", "description": "All staff" },
-    "/ayByay/salaries": { "schema": "SalaryPayment", "description": "Salary payments" },
-    "/ayByay/inventory": { "schema": "InventoryItem", "description": "Inventory items" },
-    "/ayByay/inventoryLogs": { "schema": "InventoryLog", "description": "Inventory logs" }
+    "/transactions/{txId}": { "schema": "Transaction", "description": "Main dashboard transactions" },
+    "/ay_byay_transactions/{txId}": { "schema": "Transaction", "description": "Ay-Byay ledger income and expense transactions" },
+    "/banners/{bannerId}": { "schema": "BannerAd", "description": "Homepage promotional banner ads" },
+    "/channels/{channelId}": { "schema": "PaymentChannel", "description": "Payment channel definitions" },
+    "/staff/{staffId}": { "schema": "StaffAccount", "description": "Staff collection and dues accounts" },
+    "/ay_byay_salaries/{salaryId}": { "schema": "SalaryPayment", "description": "Monthly staff salary payment records" },
+    "/staff_salaries/{salaryId}": { "schema": "SalaryPayment", "description": "Salary records mirror for backup compatibility" },
+    "/quick_hisab_owners/{ownerId}": { "schema": "QuickHisabOwner", "description": "Quick Hisab profit-sharing partners" },
+    "/users/{userId}": { "schema": "AppUser", "description": "Application user accounts and notification read state" },
+    "/ay_byay_inventory/{itemId}": { "schema": "InventoryItem", "description": "Cable and router hardware stock items" },
+    "/ay_byay_inventory_logs/{logId}": { "schema": "InventoryLog", "description": "Inventory stock movement history logs" },
+    "/ay_byay_config/{configId}": { "schema": "AyByayConfig", "description": "Ay-Byay portal active month and company config" },
+    "/settings/{settingId}": { "schema": "SettingsDocument", "description": "Application settings and domain metadata documents" }
   }
 }
