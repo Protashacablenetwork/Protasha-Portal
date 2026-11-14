@@ -30,7 +30,8 @@ import {
   Shield,
   Cloud,
   UploadCloud,
-  Layers
+  Layers,
+  Clock
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Language, UserSession } from '../types';
@@ -41,6 +42,7 @@ import { compressImage } from '../utils/imageCompressor';
 import { db } from '../utils/firebase';
 import { enableNetwork, disableNetwork } from 'firebase/firestore';
 import { signInWithGoogleDrive } from '../utils/googleDrive';
+import { isFastingReminderEnabled, setFastingReminderEnabled } from '../utils/prayerTimeService';
 
 interface ProfileViewProps {
   user: UserSession | null;
@@ -94,7 +96,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const t = translations[lang];
   const isBn = lang === 'bn';
   const isAdmin = user?.role === 'admin';
-  const isRegisteredUser = user?.role === 'user' || user?.role === 'sub-admin';
+  const isSubAdmin = user?.role === 'sub-admin';
+  const isRegisteredUser = user?.role === 'user' || isSubAdmin;
   const isLoggedIn = !!user && (isAdmin || isRegisteredUser);
 
   // Active display values
@@ -128,6 +131,29 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   // Persistent Toast State on Profile Page
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [successToastMessage, setSuccessToastMessage] = useState('');
+
+  // Sehri & Iftar 10-Min Auto-Reminder Toggle State
+  const [fastingReminderEnabled, setFastingReminderState] = useState(() => isFastingReminderEnabled());
+
+  const handleToggleFastingReminder = async (enabled: boolean) => {
+    sounds.playTap();
+    setFastingReminderState(enabled);
+    setFastingReminderEnabled(enabled);
+
+    if (enabled && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      try {
+        await Notification.requestPermission();
+      } catch {}
+    }
+
+    setSuccessToastMessage(
+      enabled
+        ? (isBn ? 'সেহরি ও ইফতারের ১০ মিনিট আগের অটো রিমাইন্ডার চালু হয়েছে।' : '10-minute Sehri & Iftar reminder enabled.')
+        : (isBn ? 'সেহরি ও ইফতারের অটো রিমাইন্ডার বন্ধ করা হয়েছে।' : 'Sehri & Iftar reminder turned off.')
+    );
+    setShowSuccessToast(true);
+    setTimeout(() => setShowSuccessToast(false), 3500);
+  };
 
   // Offline Mode & Auto-Sync State
   const [offlineMode, setOfflineMode] = useState(() => {
@@ -464,6 +490,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                       <ShieldCheck className="w-3 h-3" />
                       <span>{isBn ? 'ভেরিফায়েড অ্যাডমিন' : 'Verified Admin'}</span>
                     </span>
+                  ) : isSubAdmin ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-200/60">
+                      <ShieldCheck className="w-3 h-3" />
+                      <span>{isBn ? 'ভেরিফায়েড সাব-অ্যাডমিন' : 'Verified Sub-Admin'}</span>
+                    </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400 border border-blue-200/50">
                       <ShieldCheck className="w-3 h-3" />
@@ -598,6 +629,92 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Sehri & Iftar 10-Min Auto-Reminder Setting Row */}
+          <div className="p-4 flex items-center justify-between gap-3 bg-gradient-to-r from-emerald-50/40 to-teal-50/30 dark:from-emerald-950/15 dark:to-teal-950/10">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+                fastingReminderEnabled
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'bg-slate-200 dark:bg-slate-800 text-slate-500'
+              }`}>
+                <Bell className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 flex-wrap">
+                  <span>{isBn ? 'সেহরি ও ইফতার রিমাইন্ডার' : 'Sehri & Iftar Reminder'}</span>
+                  <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                    fastingReminderEnabled
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300'
+                      : 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                  }`}>
+                    {fastingReminderEnabled ? (isBn ? 'চালু' : 'ON') : (isBn ? 'বন্ধ' : 'OFF')}
+                  </span>
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {isBn
+                    ? 'সেহরি শেষ ও ইফতারের ১০ মিনিট আগে স্বয়ংক্রিয় নোটিফিকেশন পাঠাবে'
+                    : 'Auto-notify 10 minutes before Sehri ends and Iftar'}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleToggleFastingReminder(!fastingReminderEnabled)}
+              aria-label={isBn ? 'সেহরি ও ইফতার রিমাইন্ডার চালু বা বন্ধ করুন' : 'Toggle Sehri & Iftar reminder'}
+              className={`w-12 h-7 rounded-full transition-colors relative p-1 cursor-pointer shrink-0 ${
+                fastingReminderEnabled ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
+              }`}
+            >
+              <div className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${
+                fastingReminderEnabled ? 'translate-x-5' : 'translate-x-0'
+              }`} />
+            </button>
+          </div>
+
+          {/* Sub-Admin Control & Permissions Info Card */}
+          {isSubAdmin && (
+            <div className="p-4 bg-gradient-to-r from-amber-50/70 to-orange-50/40 dark:from-amber-950/20 dark:to-orange-950/10 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-xs shrink-0">
+                    <Shield className="w-4.5 h-4.5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                      {isBn ? 'সাব-অ্যাডমিন নিয়ন্ত্রণ ও ক্ষমতা' : 'Sub-Admin Access & Permissions'}
+                    </h4>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                      {isBn ? 'আপনার একাউন্টের জন্য অনুমোদিত কার্যক্রম' : 'Enabled permissions for your account'}
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-200/80 text-amber-900 dark:bg-amber-900/60 dark:text-amber-200">
+                  {isBn ? 'সক্রিয়' : 'Active'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px] text-slate-700 dark:text-slate-300 pt-1">
+                <div className="flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>{isBn ? 'নতুন আয় ও খরচ লেনদেন যোগ করা' : 'Add new income/expense entries'}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span>{isBn ? 'নিজের এন্ট্রি ৩০ মিনিট পর্যন্ত এডিট ও ডিলিট' : 'Edit/delete own entries up to 30 mins'}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>{isBn ? 'তালিকায় নিজের লেনদেন ও ড্যাশবোর্ডে সম্পূর্ণ হিসাব' : 'Own list & full dashboard balance'}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>{isBn ? 'নিজ বা সম্পূর্ণ হিসাবের PDF ডাউনলোড অপশন' : 'Download own or full PDF report'}</span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Admin Control Tools (Strictly for Admin) */}
           {isAdmin && (

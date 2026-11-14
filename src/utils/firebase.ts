@@ -141,6 +141,14 @@ export function handleFirestoreError(
   return false;
 }
 
+function notifyCloudMutation(path: string | null) {
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('protyasha-cloud-mutation', { detail: { path } }));
+    }
+  } catch {}
+}
+
 // Safe Firestore write helper that strips undefined and reports structured errors
 export async function safeSetDoc(
   docRef: DocumentReference<any>,
@@ -154,6 +162,7 @@ export async function safeSetDoc(
     } else {
       await setDoc(docRef, cleanData);
     }
+    notifyCloudMutation(docRef?.path || null);
   } catch (err: any) {
     const wasQuota = handleFirestoreError(err, OperationType.WRITE, docRef?.path || null);
     if (!wasQuota) {
@@ -166,6 +175,7 @@ export async function safeSetDoc(
 export async function safeDeleteDoc(docRef: DocumentReference<any>): Promise<void> {
   try {
     await deleteDoc(docRef);
+    notifyCloudMutation(docRef?.path || null);
   } catch (err: any) {
     const wasQuota = handleFirestoreError(err, OperationType.DELETE, docRef?.path || null);
     if (!wasQuota) {

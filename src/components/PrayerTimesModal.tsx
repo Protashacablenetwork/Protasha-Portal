@@ -51,6 +51,7 @@ import { PrayerRulesViewer } from './PrayerRulesViewer';
 
 import { PrayerCardDetail, getPrayerCardDetailByLabel } from '../data/prayerCardDetails';
 import { PrayerDetailPage } from './PrayerDetailPage';
+import { RamadanViewer, RamadanSubTab } from './RamadanViewer';
 
 interface PrayerTimesModalProps {
   isOpen: boolean;
@@ -62,7 +63,7 @@ interface PrayerTimesModalProps {
   onSubViewActiveChange?: (isSubView: boolean) => void;
 }
 
-type PrayerModalViewMode = 'daily' | 'monthly' | 'quran' | 'hadith' | 'niyat' | 'rules' | 'detail';
+type PrayerModalViewMode = 'daily' | 'monthly' | 'quran' | 'hadith' | 'niyat' | 'rules' | 'detail' | 'ramadan';
 
 const PRAYER_5_KEYS: { key: 'fajr' | 'dhuhr' | 'asr' | 'maghrib' | 'isha'; labelBn: string }[] = [
   { key: 'fajr', labelBn: 'ফজর' },
@@ -88,8 +89,9 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [isAutoLocating, setIsAutoLocating] = useState(false);
 
-  // View Mode: 'daily', 'monthly', 'quran', 'hadith', 'niyat', 'rules'
+  // View Mode: 'daily', 'monthly', 'quran', 'hadith', 'niyat', 'rules', 'ramadan'
   const [viewMode, setViewMode] = useState<PrayerModalViewMode>('daily');
+  const [ramadanTab, setRamadanTab] = useState<RamadanSubTab>('calendar');
   const [selectedNiyatSearch, setSelectedNiyatSearch] = useState('');
   const [selectedPrayerDetail, setSelectedPrayerDetail] = useState<PrayerCardDetail | null>(null);
 
@@ -138,6 +140,11 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       dailyScrollPosRef.current = 0;
+    } else {
+      setViewMode('daily');
+      setRamadanTab('calendar');
+      setSelectedPrayerDetail(null);
+      setIsPickerOpen(false);
     }
   }, [isOpen]);
 
@@ -185,11 +192,19 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
     return getMonthlyPrayerCalendar(district, calendarYear, calendarMonth);
   }, [district, calendarYear, calendarMonth]);
 
+  const handleClosePicker = () => {
+    if (window.history.state?.prayerDistrictPicker) {
+      window.history.back();
+    } else {
+      setIsPickerOpen(false);
+    }
+  };
+
   const handleSelectDistrict = async (d: DistrictInfo) => {
     sounds.playTap();
     setUserPreferredDistrict(d.nameBn);
     setDistrict(d);
-    setIsPickerOpen(false);
+    handleClosePicker();
     await refreshTimings(d);
     setToastMsg(isBn ? `${d.nameEn} (${d.nameBn}) জেলা নির্ধারিত হয়েছে` : `Selected: ${d.nameEn}`);
     setTimeout(() => setToastMsg(''), 3000);
@@ -200,7 +215,7 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
     sounds.playTap();
     setIsAutoLocating(true);
     setIsLoading(true);
-    setIsPickerOpen(false);
+    handleClosePicker();
     setToastMsg(isBn ? 'ডিভাইসের লাইভ GPS সনাক্ত করা হচ্ছে...' : 'Detecting live GPS...');
     try {
       const { district: detected, isGPS } = await detectPreciseLocation(true);
@@ -239,8 +254,28 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
     }
     if (search) setSelectedNiyatSearch(search);
     else setSelectedNiyatSearch('');
+    if (mode === 'ramadan') {
+      setRamadanTab('calendar');
+    }
     setViewMode(mode);
     window.history.pushState({ prayerView: mode, search }, '');
+  };
+
+  // Switch inner tabs inside RamadanViewer with synchronized history stack for hardware Back button
+  const handleRamadanTabChange = (nextTab: RamadanSubTab) => {
+    if (nextTab === ramadanTab) return;
+    if (nextTab === 'calendar') {
+      if (ramadanTab !== 'calendar') {
+        window.history.back();
+      }
+      return;
+    }
+    if (ramadanTab === 'calendar') {
+      window.history.pushState({ prayerView: 'ramadan', ramadanTab: nextTab }, '');
+    } else {
+      window.history.replaceState({ prayerView: 'ramadan', ramadanTab: nextTab }, '');
+    }
+    setRamadanTab(nextTab);
   };
 
   const handleScheduleCardClick = (label: string) => {
@@ -282,10 +317,12 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
   // Handle hardware device/browser back button & Escape key
   const isPickerOpenRef = useRef(isPickerOpen);
   const viewModeRef = useRef(viewMode);
+  const ramadanTabRef = useRef(ramadanTab);
   const selectedPrayerDetailRef = useRef(selectedPrayerDetail);
   const isQuranSurahOpenRef = useRef(false);
   isPickerOpenRef.current = isPickerOpen;
   viewModeRef.current = viewMode;
+  ramadanTabRef.current = ramadanTab;
   selectedPrayerDetailRef.current = selectedPrayerDetail;
 
   useEffect(() => {
@@ -301,10 +338,16 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
         // Let QuranViewer popstate listener handle returning from Surah reader to 114 Surahs list!
         return;
       }
+      if (viewModeRef.current === 'ramadan' && ramadanTabRef.current !== 'calendar') {
+        e.stopImmediatePropagation();
+        setRamadanTab('calendar');
+        return;
+      }
       if (selectedPrayerDetailRef.current || viewModeRef.current !== 'daily') {
         e.stopImmediatePropagation();
         setSelectedPrayerDetail(null);
         setViewMode('daily');
+        setRamadanTab('calendar');
         setSelectedNiyatSearch('');
         return;
       }
@@ -314,24 +357,24 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (isPickerOpen) {
-          setIsPickerOpen(false);
+          window.history.back();
+        } else if (viewMode === 'ramadan' && ramadanTab !== 'calendar') {
+          window.history.back();
         } else if (selectedPrayerDetail || viewMode !== 'daily') {
-          setSelectedPrayerDetail(null);
-          setViewMode('daily');
-          setSelectedNiyatSearch('');
+          window.history.back();
         } else {
           onClose();
         }
       }
     };
 
-    window.addEventListener('popstate', handleModalPopState, false);
+    window.addEventListener('popstate', handleModalPopState, true);
     window.addEventListener('keydown', handleKeyDown);
     return () => {
-      window.removeEventListener('popstate', handleModalPopState, false);
+      window.removeEventListener('popstate', handleModalPopState, true);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, isPickerOpen, viewMode, ramadanTab, selectedPrayerDetail]);
 
   // Filtered districts matching Screenshot 2 format: English (বাংলা)
   const filteredDistricts = useMemo(() => {
@@ -376,15 +419,11 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
     }
   };
 
-  // In-app Back Arrow click handler
+  // In-app Back Arrow click handler (synchronized with device back button)
   const handleAppBackClick = () => {
     sounds.playTap();
-    if (isPickerOpen) {
-      setIsPickerOpen(false);
-    } else if (viewMode !== 'daily' || selectedPrayerDetail) {
-      setSelectedPrayerDetail(null);
-      setViewMode('daily');
-      setSelectedNiyatSearch('');
+    if (isPickerOpen || viewMode !== 'daily' || selectedPrayerDetail) {
+      window.history.back();
     } else {
       onClose();
     }
@@ -393,6 +432,7 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
   const getPageTitle = () => {
     switch (viewMode) {
       case 'monthly': return 'নামাজ ক্যালেন্ডার';
+      case 'ramadan': return 'রমজানের সময়সূচী ও চিরস্থায়ী ক্যালেন্ডার';
       case 'quran': return 'কোরআনুল কারীম (১১৪ সূরা)';
       case 'hadith': return 'সহীহ হাদিস সম্ভার';
       case 'niyat': return 'সকল নামাজের নিয়ত';
@@ -417,6 +457,16 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           
           <div className="flex items-center gap-3 min-w-0 flex-1">
+            {viewMode !== 'daily' && (
+              <button
+                type="button"
+                onClick={handleAppBackClick}
+                aria-label="পেছনে যান"
+                className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/15 border border-white/10 flex items-center justify-center text-white shrink-0 transition-colors cursor-pointer"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
             <div className="min-w-0">
               <h2 className="text-[17px] font-black text-white truncate leading-tight tracking-tight">
                 {getPageTitle()}
@@ -553,6 +603,16 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
           <div className="px-2 sm:px-4 py-4"><PrayerNiyatViewer onBack={() => { setViewMode('daily'); setSelectedNiyatSearch(''); }} defaultSearch={selectedNiyatSearch} /></div>
         ) : viewMode === 'rules' ? (
           <div className="px-2 sm:px-4 py-4"><PrayerRulesViewer onBack={() => { setViewMode('daily'); setSelectedNiyatSearch(''); }} /></div>
+        ) : viewMode === 'ramadan' ? (
+          <div className="px-2 sm:px-4 py-3">
+            <RamadanViewer
+              district={district}
+              timings={timings}
+              currentTime={currentTime}
+              activeTab={ramadanTab}
+              onTabChange={handleRamadanTabChange}
+            />
+          </div>
         ) : viewMode === 'detail' ? (
           <div className="px-2 sm:px-4 py-4">
             <PrayerDetailPage 
@@ -726,8 +786,35 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
                   <h4 className="text-[14.5px] font-black text-amber-400 tracking-tight leading-none">নিয়ম কানুন</h4>
                   <p className="text-[11.5px] text-emerald-100/60 font-bold mt-2 leading-tight opacity-80">অযু, ফরজ ও ওয়াজিব</p>
                </button>
+              </div>
+
+              {/* RAMADAN & PERPETUAL FASTING SCHEDULE HUB (Placed in red-circled section) */}
+              <button
+                type="button"
+                onClick={() => handleSwitchView('ramadan')}
+                className="w-full bg-gradient-to-br from-[#0b382f] via-[#0b2b24] to-[#06241e] p-5 rounded-[32px] border border-emerald-500/35 text-left hover:from-[#0f453a] hover:to-[#0a332b] transition-all active:scale-[0.98] group shadow-xl ring-1 ring-white/5 flex items-center justify-between gap-4 cursor-pointer"
+              >
+                <div className="flex items-center gap-4 min-w-0">
+                  <div className="w-13 h-13 bg-[#003d32] rounded-2xl flex items-center justify-center text-2xl shrink-0 group-hover:scale-110 transition-transform shadow-lg border border-emerald-700/50">
+                    🌙
+                  </div>
+                  <div className="min-w-0">
+                    <h4 className="text-[15.5px] sm:text-[17px] font-black text-amber-300 tracking-tight leading-snug">
+                      রমজানের সময়সূচী
+                    </h4>
+                    <p className="text-[11.5px] sm:text-xs text-emerald-100/75 font-bold mt-1 leading-snug">
+                      চিরস্থায়ী ক্যালেন্ডার · রোজার নিয়ত, হাদিস ও বিস্তারিত বিবরণ
+                    </p>
+                    <p className="text-[11px] font-black text-emerald-300 tabular-nums mt-1.5">
+                      {district.nameBn}: সাহরী শেষ {timings.sehriEnd} · ইফতার {timings.maghrib}
+                    </p>
+                  </div>
+                </div>
+                <div className="w-10 h-10 rounded-full bg-[#002820] border border-emerald-600/40 flex items-center justify-center text-amber-300 shrink-0 group-hover:bg-amber-400 group-hover:text-slate-950 transition-colors">
+                  <ChevronRight className="w-5 h-5" />
+                </div>
+              </button>
             </div>
-          </div>
 
             {/* FEATURED CONTENT (Request 6 - Bottom of the page) */}
             <div className="space-y-6 pt-4">
@@ -802,7 +889,7 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
                     </div>
                  </div>
                  <button 
-                   onClick={() => setIsPickerOpen(false)} 
+                   onClick={handleClosePicker} 
                    className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white transition-all active:scale-90 border border-white/15 shadow-md cursor-pointer"
                  >
                     <X className="w-5 h-5 stroke-[2.5]" />

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ArrowRight, 
   ArrowLeft, 
@@ -7,7 +7,10 @@ import {
   Search,
   FilterX,
   Edit3,
-  Trash2
+  Trash2,
+  Clock,
+  ShieldCheck,
+  Lock
 } from 'lucide-react';
 import { Language, Transaction, PaymentMethod, UserSession } from '../types';
 import { 
@@ -17,6 +20,7 @@ import {
   translations 
 } from '../utils/formatters';
 import { sounds } from '../utils/audio';
+import { canModifyTransaction, isSubAdmin as checkIsSubAdmin } from '../utils/permissions';
 
 interface TransactionListProps {
   transactions: Transaction[];
@@ -50,7 +54,15 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   const t = translations[lang];
   const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const isAdmin = user?.role === 'admin';
+  const isSubAdmin = checkIsSubAdmin(user);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!isSubAdmin) return;
+    setNowMs(Date.now());
+    const timer = setInterval(() => setNowMs(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, [isSubAdmin]);
 
   const monthsBn = [
     'জানুয়ারি', 'ফেব্রুয়ারি', 'মার্চ', 'এপ্রিল', 'মে', 'জুন',
@@ -116,6 +128,22 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
   return (
     <div className="px-4 py-2 select-none">
+      {isSubAdmin && (
+        <div className="mb-2.5 p-2.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 flex items-center justify-between gap-2 text-[11px]">
+          <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200 font-bold">
+            <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              {lang === 'bn'
+                ? 'সাব-এডমিন: এখানে কেবল আপনার নিজ এন্ট্রিকৃত লেনদেন দেখানো হচ্ছে'
+                : 'Sub-Admin: Showing only transactions added by you'}
+            </span>
+          </div>
+          <span className="text-[10px] font-extrabold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5 rounded-full whitespace-nowrap shrink-0">
+            {lang === 'bn' ? '৩০ মিঃ এডিট/ডিলিট' : '30m Edit'}
+          </span>
+        </div>
+      )}
+
       {/* Month Selector matching Capture.JPG */}
       <div className="flex items-center justify-between py-2 mb-2">
         <button
@@ -244,6 +272,11 @@ export const TransactionList: React.FC<TransactionListProps> = ({
         ) : (
           displayList.map((trx) => {
             const isIncome = trx.type === 'income';
+            const modCheck = canModifyTransaction(trx, user, nowMs);
+            const minsLeft = modCheck.allowed && Number.isFinite(modCheck.remainingMs)
+              ? Math.max(1, Math.ceil(modCheck.remainingMs / 60000))
+              : 0;
+
             return (
               <div
                 key={trx.id}
@@ -280,13 +313,27 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                         {trx.method}
                       </span>
                     </div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                      {trx.person || `#${trx.trxId}`}
-                    </p>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                        {trx.person || `#${trx.trxId}`}
+                      </p>
+                      {isSubAdmin && modCheck.allowed && (
+                        <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/50 px-1.5 py-0.2 rounded-md border border-amber-200/70 dark:border-amber-900/50 shrink-0">
+                          <Clock className="w-2.5 h-2.5" />
+                          <span>{lang === 'bn' ? `${toBengaliNumber(minsLeft)} মিঃ` : `${minsLeft}m`}</span>
+                        </span>
+                      )}
+                      {isSubAdmin && modCheck.expired && (
+                        <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-slate-400 dark:text-slate-500 shrink-0">
+                          <Lock className="w-2.5 h-2.5" />
+                          <span>{lang === 'bn' ? 'লক' : 'Locked'}</span>
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                {/* Right Side: Amount, Date, and Admin Edit/Delete */}
+                {/* Right Side: Amount, Date, and Admin/Sub-Admin Edit/Delete */}
                 <div className="flex items-center gap-2 shrink-0">
                   <div className="text-right">
                     <div
@@ -303,8 +350,8 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                     </p>
                   </div>
 
-                  {/* Admin Quick Action Buttons on hover/tap */}
-                  {isAdmin && onEdit && onDelete && (
+                  {/* Admin or within-30m Sub-Admin Quick Action Buttons */}
+                  {modCheck.allowed && onEdit && onDelete && (
                     <div className="flex items-center gap-1 pl-1 border-l border-slate-100 dark:border-slate-800">
                       <button
                         onClick={(e) => {

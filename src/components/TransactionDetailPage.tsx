@@ -13,7 +13,8 @@ import {
   ArrowDownLeft, 
   ArrowUpRight, 
   ShieldCheck, 
-  Lock 
+  Lock,
+  Clock
 } from 'lucide-react';
 import { Language, Transaction, UserSession } from '../types';
 import { 
@@ -23,6 +24,7 @@ import {
   translations 
 } from '../utils/formatters';
 import { sounds } from '../utils/audio';
+import { canModifyTransaction, isSubAdmin as checkIsSubAdmin } from '../utils/permissions';
 
 interface TransactionDetailPageProps {
   transaction: Transaction;
@@ -47,6 +49,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({
 }) => {
   const [copiedId, setCopiedId] = React.useState(false);
   const [copiedPhone, setCopiedPhone] = React.useState(false);
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
 
   React.useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
@@ -57,6 +60,19 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({
   const t = translations[lang];
   const isIncome = transaction.type === 'income';
   const isAdmin = user?.role === 'admin';
+  const isSubAdmin = checkIsSubAdmin(user);
+
+  React.useEffect(() => {
+    if (!isSubAdmin) return;
+    setNowMs(Date.now());
+    const timer = setInterval(() => setNowMs(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, [isSubAdmin]);
+
+  const modCheck = canModifyTransaction(transaction, user, nowMs);
+  const minsRemaining = modCheck.allowed && Number.isFinite(modCheck.remainingMs)
+    ? Math.max(1, Math.ceil(modCheck.remainingMs / 60000))
+    : 0;
 
   const handleCopyTrxId = () => {
     sounds.playTap();
@@ -357,12 +373,28 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({
           <span>{lang === 'bn' ? '🧾 ডিজিটাল ক্যাশমেমো / থার্মাল রশিদ প্রিন্ট' : 'View POS Receipt Slip'}</span>
         </button>
 
-        {/* Admin Controls Section */}
-        {isAdmin ? (
+        {/* Admin & Sub-Admin Controls Section */}
+        {modCheck.allowed ? (
           <div className="p-4 rounded-3xl bg-white dark:bg-slate-900 border-2 border-rose-200 dark:border-rose-950 shadow-md space-y-3">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-[#E52E2E]">
-              <ShieldCheck className="w-4 h-4" />
-              <span>{lang === 'bn' ? 'অ্যাডমিন ক্ষমতা (এডিট ও ডিলিট)' : 'Admin Controls'}</span>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-[#E52E2E]">
+                <ShieldCheck className="w-4 h-4" />
+                <span>
+                  {isAdmin
+                    ? (lang === 'bn' ? 'অ্যাডমিন ক্ষমতা (এডিট ও ডিলিট)' : 'Admin Controls')
+                    : (lang === 'bn' ? 'সাব-অ্যাডমিন ক্ষমতা (এডিট ও ডিলিট)' : 'Sub-Admin Controls')}
+                </span>
+              </div>
+              {isSubAdmin && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-300 text-[10px] font-extrabold">
+                  <Clock className="w-3 h-3" />
+                  <span>
+                    {lang === 'bn'
+                      ? `${toBengaliNumber(minsRemaining)} মিনিট বাকি`
+                      : `${minsRemaining} min left`}
+                  </span>
+                </span>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-2.5">
@@ -388,6 +420,19 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({
                 <span>{lang === 'bn' ? '🗑️ ডিলিট করুন' : 'Delete Entry'}</span>
               </button>
             </div>
+          </div>
+        ) : isSubAdmin ? (
+          <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 flex items-center gap-2 text-xs text-amber-900 dark:text-amber-300">
+            <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              {modCheck.isOwner && modCheck.expired
+                ? (lang === 'bn'
+                  ? '৩০ মিনিট সময়সীমা শেষ — এখন শুধুমাত্র মেইন অ্যাডমিন এই লেনদেন এডিট বা ডিলিট করতে পারবেন।'
+                  : '30-minute window expired — only Main Admin can edit or delete this entry now.')
+                : (lang === 'bn'
+                  ? 'সাব-অ্যাডমিন কেবল নিজের এন্ট্রিকৃত লেনদেন (৩০ মিনিট পর্যন্ত) এডিট বা ডিলিট করতে পারবেন।'
+                  : 'Sub-Admin can only edit or delete their own entries within 30 minutes.')}
+            </span>
           </div>
         ) : (
           <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 flex items-center justify-between text-xs">

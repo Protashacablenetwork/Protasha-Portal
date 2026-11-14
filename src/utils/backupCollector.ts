@@ -33,6 +33,7 @@ export async function collectMasterBackupData(currentUser?: any) {
   const [
     cloudStaff,
     cloudSalaries,
+    cloudStaffSalaries,
     ayTransactions,
     mainTransactions,
     cloudBanners,
@@ -51,6 +52,7 @@ export async function collectMasterBackupData(currentUser?: any) {
   ] = await Promise.all([
     readCollection('staff'),
     readCollection('ay_byay_salaries'),
+    readCollection('staff_salaries'),
     readCollection('ay_byay_transactions'),
     readCollection('transactions'),
     readCollection('banners'),
@@ -72,9 +74,15 @@ export async function collectMasterBackupData(currentUser?: any) {
     ? cloudStaff.filter((s: any) => s.recordedBy === currentUserId)
     : cloudStaff;
 
-  const filteredSalaries = isSubAdmin
-    ? cloudSalaries.filter((s: any) => s.recordedBy === currentUserId)
-    : cloudSalaries;
+  const salaryMap = new Map<string, any>();
+  [...cloudSalaries, ...cloudStaffSalaries].forEach((sal: any) => {
+    if (sal && sal.id) {
+      if (!isSubAdmin || sal.recordedBy === currentUserId) {
+        salaryMap.set(String(sal.id), sal);
+      }
+    }
+  });
+  const filteredSalaries = Array.from(salaryMap.values());
 
   const filteredAyTxns = isSubAdmin
     ? ayTransactions.filter((t: any) => t.recordedBy === currentUserId)
@@ -107,6 +115,7 @@ export async function collectMasterBackupData(currentUser?: any) {
     firestore: {
       staff: filteredStaff,
       ay_byay_salaries: filteredSalaries,
+      staff_salaries: cloudStaffSalaries,
       ay_byay_transactions: filteredAyTxns,
       transactions: filteredMainTxns,
       banners: cloudBanners,

@@ -192,6 +192,8 @@ export const LoginView: React.FC<LoginViewProps> = ({
             role: userData.role || 'user',
             name: userData.name,
             phone: userData.phone,
+            gmail: userData.gmail || undefined,
+            boundMethods: userData.boundMethods || undefined,
             avatarUrl: userData.avatarUrl,
             virtualCardNumber: userData.virtualCardNumber || ('9856 ' + userData.phone.slice(-4).padStart(4, '0') + ' 2932 9162'),
             accountType: 'general',

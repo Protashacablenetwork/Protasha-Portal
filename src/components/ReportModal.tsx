@@ -9,18 +9,22 @@ import {
   TrendingUp, 
   TrendingDown, 
   Calculator,
-  Calendar
+  Calendar,
+  UserCheck,
+  Users
 } from 'lucide-react';
-import { Language, Transaction, PaymentChannel } from '../types';
+import { Language, Transaction, PaymentChannel, UserSession } from '../types';
 import { formatCurrency, toBengaliNumber, translations } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import { DailyIncomeExpenseChart } from './DailyIncomeExpenseChart';
+import { isTransactionOwner, isSubAdmin as checkIsSubAdmin } from '../utils/permissions';
 
 interface ReportModalProps {
   isOpen: boolean;
   transactions: Transaction[];
   channels?: PaymentChannel[];
   lang: Language;
+  user?: UserSession | null;
   onClose: () => void;
   isTabMode?: boolean;
   currentMonthIndex: number;
@@ -34,6 +38,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   transactions,
   channels = [],
   lang,
+  user,
   onClose,
   isTabMode = false,
   currentMonthIndex,
@@ -41,6 +46,9 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   onPrevMonth,
   onNextMonth
 }) => {
+  const isSubAdmin = checkIsSubAdmin(user);
+  const [reportScope, setReportScope] = useState<'own' | 'all'>('own');
+
   if (!isOpen) return null;
 
   const isBn = lang === 'bn';
@@ -55,8 +63,13 @@ export const ReportModal: React.FC<ReportModalProps> = ({
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
 
+  // Scope transactions when sub-admin chooses between their own vs full organization report
+  const scopedTransactions = (isSubAdmin && reportScope === 'own')
+    ? transactions.filter((trx) => isTransactionOwner(trx, user))
+    : transactions;
+
   // Filter active transactions for selected month/year
-  const activeTransactions = transactions.filter((trx) => {
+  const activeTransactions = scopedTransactions.filter((trx) => {
     if (trx.isDeleted) return false;
     const parts = (trx.date || '').split('-');
     if (parts.length >= 2) {
@@ -189,6 +202,17 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             color: #475569;
             margin-top: 4px;
             font-weight: 600;
+          }
+
+          .scope-pill {
+            display: inline-block;
+            margin-top: 6px;
+            padding: 3px 10px;
+            border-radius: 999px;
+            background: #fef3c7;
+            color: #92400e;
+            font-size: 12px;
+            font-weight: 700;
           }
 
           .divider-line {
@@ -329,6 +353,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
         <div class="header-container">
           <h1 class="header-title">প্রত্যাশা ক্যাবল নেটওয়ার্ক</h1>
           <div class="header-subtitle">ডিজিটাল ডিস ও ইন্টারনেট সার্ভিস প্রোভাইডার</div>
+          ${isSubAdmin ? `<div class="scope-pill">${reportScope === 'own' ? `সাব-এডমিন নিজস্ব রিপোর্ট (${user?.name || ''})` : 'সম্পূর্ণ প্রতিষ্ঠানের রিপোর্ট (সকল লেনদেন)'}</div>` : ''}
         </div>
         
         <div class="divider-line"></div>
@@ -499,9 +524,55 @@ export const ReportModal: React.FC<ReportModalProps> = ({
           </button>
         </div>
 
+        {/* Sub-Admin Report Scope Selector: My Transactions vs All Transactions */}
+        {isSubAdmin && (
+          <div className="p-3 rounded-2xl bg-amber-50/90 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 space-y-2">
+            <div className="flex items-center justify-between text-xs font-bold text-amber-900 dark:text-amber-200">
+              <span>{isBn ? 'পিডিএফ ও রিপোর্ট ফিল্টার (সাব-এডমিন)' : 'Report & PDF Scope (Sub-Admin)'}</span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-200/70 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200">
+                {reportScope === 'own'
+                  ? (isBn ? 'আমার লেনদেন' : 'My Entries')
+                  : (isBn ? 'সম্পূর্ণ হিসাব' : 'Full Report')}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-white dark:bg-slate-900 border border-amber-200/80 dark:border-amber-800/50">
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playTap();
+                  setReportScope('own');
+                }}
+                className={`py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  reportScope === 'own'
+                    ? 'bg-[#E52E2E] text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                }`}
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>{isBn ? 'শুধু আমার লেনদেন' : 'My Transactions'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playTap();
+                  setReportScope('all');
+                }}
+                className={`py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  reportScope === 'all'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>{isBn ? 'পুরো হিসাব (সকল)' : 'All Transactions'}</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Daily Income & Expense Recharts Visualizer */}
         <DailyIncomeExpenseChart
-          transactions={transactions}
+          transactions={scopedTransactions}
           lang={lang}
           currentMonthIndex={currentMonthIndex}
           currentYear={currentYear}

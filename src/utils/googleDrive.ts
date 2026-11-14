@@ -12,9 +12,11 @@ import {
 import { auth } from './firebase';
 
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+export const SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
 
 const provider = new GoogleAuthProvider();
 provider.addScope(DRIVE_SCOPE);
+provider.addScope(SHEETS_SCOPE);
 provider.setCustomParameters({
   prompt: 'select_account'
 });
@@ -39,12 +41,13 @@ export const initDriveAuth = (
   });
 };
 
-// Sign in with Google Drive permissions with explicit account selection
+// Sign in with Google Drive & background archive permissions with explicit account selection
 export const signInWithGoogleDrive = async (): Promise<{ user: User; accessToken: string }> => {
   try {
     isSigningIn = true;
     const authProvider = new GoogleAuthProvider();
     authProvider.addScope(DRIVE_SCOPE);
+    authProvider.addScope(SHEETS_SCOPE);
     // Explicitly prompt user to choose an account on every connect/sign-in
     authProvider.setCustomParameters({
       prompt: 'select_account'
@@ -57,6 +60,11 @@ export const signInWithGoogleDrive = async (): Promise<{ user: User; accessToken
 
     cachedAccessToken = credential.accessToken;
     currentGoogleUser = result.user;
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('protyasha-google-connected'));
+      }
+    } catch {}
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
     console.error('Google Drive sign in error:', error);

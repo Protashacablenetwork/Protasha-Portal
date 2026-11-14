@@ -37,7 +37,8 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const greeting = getGreeting(lang);
   const isAdmin = user?.role === 'admin';
-  const isLoggedIn = !!user && (user.role === 'admin' || user.role === 'user');
+  const isSubAdmin = user?.role === 'sub-admin';
+  const isLoggedIn = !!user && (user.role === 'admin' || user.role === 'sub-admin' || user.role === 'user');
   const rawAvatar = user?.avatarUrl || adminAvatar || (typeof window !== 'undefined' ? (safeStorage.getItem('protyasha_admin_avatar') || safeStorage.getItem('protyasha_last_avatar') || '') : '');
   const displayAvatar = rawAvatar && !rawAvatar.startsWith('/uploads/') ? rawAvatar : (rawAvatar.startsWith('data:image/') ? rawAvatar : '');
 
@@ -131,6 +132,11 @@ export const Header: React.FC<HeaderProps> = ({
                   <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-600 text-white flex items-center gap-0.5 shadow-sm">
                     <ShieldCheck className="w-2.5 h-2.5" />
                     <span>এডমিন</span>
+                  </span>
+                ) : isSubAdmin ? (
+                  <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-amber-600 text-white flex items-center gap-0.5 shadow-sm">
+                    <ShieldCheck className="w-2.5 h-2.5" />
+                    <span>সাব-এডমিন</span>
                   </span>
                 ) : user?.role === 'user' ? (
                   <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-blue-600 text-white flex items-center gap-0.5 shadow-sm">

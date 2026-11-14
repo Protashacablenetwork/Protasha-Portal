@@ -44,6 +44,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
   const [users, setUsers] = useState<AppUser[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'sub-admin' | 'user' | 'admin'>('all');
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
@@ -145,10 +146,12 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   if (!isOpen) return null;
 
   // Filtered users
-  const filteredUsers = users.filter(u => 
-    u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    u.phone.includes(searchQuery)
-  );
+  const filteredUsers = users.filter(u => {
+    const matchesSearch = u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      u.phone.includes(searchQuery);
+    const matchesRole = roleFilter === 'all' || u.role === roleFilter;
+    return matchesSearch && matchesRole;
+  });
 
   // Open Edit Form
   const handleStartEdit = async (user: AppUser) => {
@@ -609,6 +612,19 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                 </div>
               </div>
 
+              {editRole === 'sub-admin' && (
+                <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 text-[11px] text-amber-900 dark:text-amber-200 space-y-1">
+                  <p className="font-bold">
+                    {isBn ? 'সাব-অ্যাডমিন নিয়ন্ত্রণ ক্ষমতা:' : 'Sub-Admin Permissions:'}
+                  </p>
+                  <p>
+                    {isBn
+                      ? '• নিজের লেনদেন যোগ, ৩০ মিনিট পর্যন্ত এডিট ও ডিলিট করতে পারবেন। • লেনদেন তালিকায় শুধু নিজের এন্ট্রি দেখবেন এবং ড্যাশবোর্ডে পুরো হিসাব দেখাবে। • PDF রিপোর্টে নিজের বা পুরো হিসাব সিলেক্ট করে ডাউনলোড করতে পারবেন।'
+                      : '• Can add transactions, edit/delete own entries up to 30 mins. • Sees own entries in transaction list while full balance remains on dashboard. • Can select Own or Full PDF report.'}
+                  </p>
+                </div>
+              )}
+
               {/* Action Buttons */}
               <div className="flex items-center gap-2 pt-2">
                 <button
@@ -652,6 +668,32 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                   placeholder={isBn ? 'নাম বা মোবাইল নাম্বার দিয়ে খুঁজুন...' : 'Search by name or mobile...'}
                   className="w-full h-10 pl-9 pr-3 text-xs bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl border-none focus:outline-none focus:ring-2 focus:ring-[#E52E2E]"
                 />
+              </div>
+
+              {/* Role Filter Tabs */}
+              <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+                {[
+                  { id: 'all', bn: 'সব', en: 'All' },
+                  { id: 'sub-admin', bn: 'সাব-অ্যাডমিন', en: 'Sub-Admin' },
+                  { id: 'user', bn: 'ইউজার', en: 'User' },
+                  { id: 'admin', bn: 'অ্যাডমিন', en: 'Admin' }
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => {
+                      sounds.playTap();
+                      setRoleFilter(tab.id as any);
+                    }}
+                    className={`py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                      roleFilter === tab.id
+                        ? 'bg-[#E52E2E] text-white shadow-xs'
+                        : 'text-slate-600 dark:text-slate-300 hover:bg-white/60 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    {isBn ? tab.bn : tab.en}
+                  </button>
+                ))}
               </div>
 
               {/* Users Cards */}

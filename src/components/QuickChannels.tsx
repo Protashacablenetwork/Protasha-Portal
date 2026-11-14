@@ -125,9 +125,9 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
           <span>{isBn ? 'পেমেন্ট চ্যানেল ও ব্যালেন্স হিসাব' : 'Payment Channels & Balance'}</span>
         </h3>
         
-        {user?.role === 'admin' && (
+        {(user?.role === 'admin' || user?.role === 'sub-admin') && (
           <div className="flex items-center gap-1.5 flex-wrap">
-            {/* Direct Income / Money Addition Button - PROMINENT FOR ADMIN */}
+            {/* Direct Income / Money Addition Button - ADMIN & SUB-ADMIN */}
             <button
               onClick={() => {
                 sounds.playTap();
@@ -151,16 +151,18 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
               <span>{isBn ? 'টাকা খরচ' : '- Expense'}</span>
             </button>
 
-            <button
-              onClick={() => {
-                sounds.playTap();
-                onOpenChannelManager();
-              }}
-              className="flex items-center gap-1 text-[11px] font-bold text-[#E52E2E] dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 border border-rose-200/80 dark:border-rose-900/60 px-3 py-1.5 rounded-full transition-all active:scale-95 shadow-sm"
-            >
-              <Sliders className="w-3.5 h-3.5 stroke-[2.5]" />
-              <span>{isBn ? 'ম্যানেজ' : 'Manage'}</span>
-            </button>
+            {user?.role === 'admin' && (
+              <button
+                onClick={() => {
+                  sounds.playTap();
+                  onOpenChannelManager();
+                }}
+                className="flex items-center gap-1 text-[11px] font-bold text-[#E52E2E] dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 border border-rose-200/80 dark:border-rose-900/60 px-3 py-1.5 rounded-full transition-all active:scale-95 shadow-sm"
+              >
+                <Sliders className="w-3.5 h-3.5 stroke-[2.5]" />
+                <span>{isBn ? 'ম্যানেজ' : 'Manage'}</span>
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -248,7 +250,7 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
                       {formatCurrency(bal, lang)}
                     </h4>
                     <div className="flex items-center gap-1">
-                      {user?.role === 'admin' && (
+                      {(user?.role === 'admin' || user?.role === 'sub-admin') && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();

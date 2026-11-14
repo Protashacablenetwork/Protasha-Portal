@@ -42,6 +42,7 @@ import {
 import { collection, doc, getDocs, getDoc } from 'firebase/firestore';
 import { AppUser, UserSession } from '../types';
 import { collectMasterBackupData } from '../utils/backupCollector';
+import { syncMasterDataToCloudArchive } from '../utils/cloudArchiveSync';
 
 interface DriveBackupModalProps {
   isOpen: boolean;
@@ -235,6 +236,7 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
     try {
       const masterData = await collectMasterBackupData(currentUser);
       const uploadedFile = await uploadBackupToGoogleDrive(masterData);
+      syncMasterDataToCloudArchive(masterData).catch(() => {});
 
       setStatusMessage({
         type: 'success',

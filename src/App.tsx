@@ -62,10 +62,17 @@ import { AyByayPortal } from './portals/ayByay/App';
 import { BillManagerPortal } from './portals/billManager/BillManagerPortal';
 import { fetchLiveWeather, WeatherData, detectPreciseLocation, DistrictInfo, getUserPreferredDistrict, ALL_BANGLADESH_DISTRICTS, DEFAULT_HEADQUARTERS_DISTRICT } from './utils/weatherService';
 import { checkAndGenerateWeatherNotifications } from './utils/weatherNotificationService';
-import { checkAndGeneratePrayerNotifications } from './utils/prayerTimeService';
+import { checkAndGeneratePrayerNotifications, checkAndGenerateFastingReminders, isFastingReminderEnabled } from './utils/prayerTimeService';
 import { safeStorage } from './utils/safeStorage';
-import { getDriveAccessToken, uploadBackupToGoogleDrive } from './utils/googleDrive';
+import { canAddTransactions, canModifyTransaction, isTransactionOwner, isLoggedInSession } from './utils/permissions';
+import { saveStoredUser } from './utils/userStorage';
+import { getDriveAccessToken, initDriveAuth, uploadBackupToGoogleDrive } from './utils/googleDrive';
 import { collectMasterBackupData } from './utils/backupCollector';
+import {
+  initSilentCloudArchiveListener,
+  scheduleSilentCloudArchiveSync,
+  syncMasterDataToCloudArchive
+} from './utils/cloudArchiveSync';
 
 export default function App() {
   // Language
@@ -92,7 +99,7 @@ export default function App() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        if (parsed && (parsed.role === 'admin' || parsed.role === 'user')) {
+        if (isLoggedInSession(parsed)) {
           return parsed;
         }
       } catch {
@@ -102,13 +109,29 @@ export default function App() {
     return null;
   });
 
+  const userRef = useRef<UserSession | null>(user);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  useEffect(() => {
+    const unsubDriveAuth = initDriveAuth(() => {
+      scheduleSilentCloudArchiveSync(500);
+    });
+    const unsubArchive = initSilentCloudArchiveListener(() => userRef.current);
+    return () => {
+      unsubDriveAuth();
+      unsubArchive();
+    };
+  }, []);
+
   // Show Login/Register page: If user is not logged in, show Login page by default!
   const [isLoginOpen, setIsLoginOpen] = useState(() => {
     const savedUser = safeStorage.getItem('protyasha_user');
     if (savedUser) {
       try {
         const u = JSON.parse(savedUser);
-        if (u && (u.role === 'admin' || u.role === 'user')) return false;
+        if (isLoggedInSession(u)) return false;
       } catch {}
     }
     return true; // Keep user on login page by default when not logged in
@@ -595,6 +618,7 @@ export default function App() {
           if (token) {
             const masterData = await collectMasterBackupData(user);
             await uploadBackupToGoogleDrive(masterData);
+            syncMasterDataToCloudArchive(masterData).catch(() => {});
             safeStorage.setItem('protyasha_last_auto_backup_date', todayStr);
             console.log('[AutoBackup] Daily scheduled Google Drive backup completed successfully at', currentTimeStr);
           }
@@ -818,6 +842,7 @@ export default function App() {
       };
 
       await safeSetDoc(doc(db, 'users', targetId), userData, { merge: true });
+      saveStoredUser(userData as any);
 
       // Update Active Session User State
       const updatedSession: UserSession = {
@@ -981,6 +1006,54 @@ export default function App() {
       clearInterval(interval);
     };
   }, [currentDistrict.nameEn]);
+
+  // In-app toast for Sehri/Iftar reminder or permission notices
+  const [appToast, setAppToast] = useState<{ title: string; body?: string; tone?: 'emerald' | 'amber' } | null>(null);
+
+  const showAppToast = useCallback((title: string, body?: string, tone: 'emerald' | 'amber' = 'emerald', durationMs: number = 6000) => {
+    setAppToast({ title, body, tone });
+    setTimeout(() => {
+      setAppToast(prev => (prev?.title === title ? null : prev));
+    }, durationMs);
+  }, []);
+
+  // Dedicated 30-second Sehri & Iftar 10-Min Auto-Reminder Scheduler
+  useEffect(() => {
+    const checkFastingReminder = () => {
+      const enabled = isFastingReminderEnabled();
+      if (!enabled) return;
+
+      const activeDistrict = getUserPreferredDistrict() || currentDistrict;
+      setNotifications(prev => {
+        const { updatedNotifications, newlyAdded } = checkAndGenerateFastingReminders(activeDistrict, prev, enabled);
+        if (newlyAdded) {
+          try {
+            safeStorage.setItem('protyasha_notifications', JSON.stringify(updatedNotifications));
+          } catch {}
+          sounds.playSuccess();
+          showAppToast(newlyAdded.titleBn, newlyAdded.bodyBn.split('\n')[0], 'emerald', 10000);
+          return updatedNotifications;
+        }
+        return prev;
+      });
+    };
+
+    const initialCheck = setTimeout(checkFastingReminder, 3000);
+    const interval = setInterval(checkFastingReminder, 30 * 1000);
+    const handleSettingChange = (e: Event) => {
+      const custom = e as CustomEvent<{ enabled: boolean }>;
+      if (custom.detail?.enabled) {
+        checkFastingReminder();
+      }
+    };
+    window.addEventListener('fasting-reminder-setting-changed', handleSettingChange);
+
+    return () => {
+      clearTimeout(initialCheck);
+      clearInterval(interval);
+      window.removeEventListener('fasting-reminder-setting-changed', handleSettingChange);
+    };
+  }, [currentDistrict, showAppToast]);
 
   // Listen for iframe portal messages (e.g., in-app back button inside portal)
   useEffect(() => {
@@ -1212,7 +1285,7 @@ export default function App() {
         setSelectedTransaction(null);
       } else if (s.isLoginOpen) {
         // If user is logged out (!user), DO NOT close login view into visitor mode!
-        if (s.user && (s.user.role === 'admin' || s.user.role === 'user')) {
+        if (isLoggedInSession(s.user)) {
           setIsLoginOpen(false);
         } else {
           // Keep user locked on the login page
@@ -1519,6 +1592,14 @@ export default function App() {
       }, 0);
   }, [transactions]);
 
+  // Sub-admin transaction list sees only their own entries; Admin/others keep full list view
+  const transactionsForList = useMemo(() => {
+    if (user?.role === 'sub-admin') {
+      return transactions.filter(t => isTransactionOwner(t, user));
+    }
+    return transactions;
+  }, [transactions, user]);
+
   const userDistrictSlug = (currentDistrict?.nameEn || 'dhaka').toLowerCase().replace(/[^a-z0-9]/g, '');
 
   // Map notifications with active user's read status & strictly isolate automated prayer & weather alerts by user's real location
@@ -1717,6 +1798,28 @@ export default function App() {
   };
 
   const handleSaveEntry = (entryData: Omit<Transaction, 'id' | 'trxId' | 'created'> & { id?: string }) => {
+    if (entryData.id) {
+      const existing = transactions.find(t => t.id === entryData.id);
+      if (existing) {
+        const perm = canModifyTransaction(existing, user);
+        if (!perm.allowed) {
+          sounds.playTap();
+          showAppToast(
+            lang === 'bn' ? 'এডিট করার সময়সীমা বা অনুমতি নেই' : 'Edit Permission Denied',
+            perm.expired
+              ? (lang === 'bn' ? 'সাব-এডমিন কেবল এন্ট্রির ৩০ মিনিট পর্যন্ত এডিট করতে পারবেন।' : 'Sub-admin can only edit within 30 minutes.')
+              : (lang === 'bn' ? 'আপনি অন্য কারো এন্ট্রি এডিট করতে পারবেন না।' : 'You can only edit your own entries.'),
+            'amber'
+          );
+          return;
+        }
+      }
+    } else if (!canAddTransactions(user)) {
+      sounds.playTap();
+      openLoginView();
+      return;
+    }
+
     sounds.playSuccess();
     try {
       confetti({
@@ -1739,6 +1842,8 @@ export default function App() {
         ...entryData,
         id: entryData.id,
         trxId: existing?.trxId || `${prefix}${randomHex}`,
+        recordedBy: existing?.recordedBy || user?.id || user?.phone || 'admin-master',
+        recordedByGmail: existing?.recordedByGmail || user?.gmail || undefined,
         source: 'main',
         isDeleted: existing?.isDeleted ?? false,
         created: existing?.created || Date.now()
@@ -1757,7 +1862,7 @@ export default function App() {
         ...entryData,
         id: `trx-${Date.now()}`,
         trxId: `${prefix}${randomHex}`,
-        recordedBy: user?.id || 'admin-master',
+        recordedBy: user?.id || user?.phone || 'admin-master',
         recordedByGmail: user?.gmail || undefined,
         source: 'main',
         isDeleted: false,
@@ -1786,12 +1891,28 @@ export default function App() {
   };
 
   const handleDeleteTransaction = (trx: Transaction) => {
+    const perm = canModifyTransaction(trx, user);
+    if (!perm.allowed) {
+      sounds.playTap();
+      showAppToast(
+        lang === 'bn' ? 'ডিলিট করার সময়সীমা বা অনুমতি নেই' : 'Delete Permission Denied',
+        perm.expired
+          ? (lang === 'bn' ? 'সাব-এডমিন কেবল এন্ট্রির ৩০ মিনিট পর্যন্ত ডিলিট করতে পারবেন।' : 'Sub-admin can only delete within 30 minutes.')
+          : (lang === 'bn' ? 'আপনি কেবল আপনার নিজের এন্ট্রি ডিলিট করতে পারবেন।' : 'You can only delete your own entries.'),
+        'amber'
+      );
+      return;
+    }
     sounds.playTap();
     setDeleteTrx(trx);
   };
 
   const confirmDelete = () => {
     if (!deleteTrx) return;
+    if (!canModifyTransaction(deleteTrx, user).allowed) {
+      setDeleteTrx(null);
+      return;
+    }
     const softDeletedTrx: Transaction = { ...deleteTrx, isDeleted: true };
     const updatedTransactions = transactions.map(t => (t.id === deleteTrx.id ? softDeletedTrx : t));
     setTransactions(updatedTransactions);
@@ -1809,6 +1930,18 @@ export default function App() {
   };
 
   const handleStartEdit = (trx: Transaction) => {
+    const perm = canModifyTransaction(trx, user);
+    if (!perm.allowed) {
+      sounds.playTap();
+      showAppToast(
+        lang === 'bn' ? 'এডিট করার সময়সীমা বা অনুমতি নেই' : 'Edit Permission Denied',
+        perm.expired
+          ? (lang === 'bn' ? 'সাব-এডমিন কেবল এন্ট্রির ৩০ মিনিট পর্যন্ত এডিট করতে পারবেন।' : 'Sub-admin can only edit within 30 minutes.')
+          : (lang === 'bn' ? 'আপনি কেবল আপনার নিজের এন্ট্রি এডিট করতে পারবেন।' : 'You can only edit your own entries.'),
+        'amber'
+      );
+      return;
+    }
     sounds.playTap();
     setEditingTransaction(trx);
     setEntryType(trx.type);
@@ -1875,7 +2008,13 @@ export default function App() {
     setActiveTab('home');
     logAction(
       'User Login',
-      loggedInUser.role === 'admin' ? 'এডমিন লগইন' : loggedInUser.role === 'user' ? 'ইউজার লগইন' : 'ভিজিটর মোড',
+      loggedInUser.role === 'admin'
+        ? 'এডমিন লগইন'
+        : loggedInUser.role === 'sub-admin'
+        ? 'সাব-এডমিন লগইন'
+        : loggedInUser.role === 'user'
+        ? 'ইউজার লগইন'
+        : 'ভিজিটর মোড',
       `${loggedInUser.name} (${loggedInUser.phone || 'N/A'})`
     );
   };
@@ -2101,7 +2240,7 @@ export default function App() {
             onLoginSuccess={handleLoginSuccess}
             onClose={() => {
               // Only allow closing login modal if user already has an active session
-              if (user && (user.role === 'admin' || user.role === 'user')) {
+              if (isLoggedInSession(user)) {
                 setIsLoginOpen(false);
                 sessionStorage.setItem('protyasha_session_active', 'true');
               }
@@ -2270,7 +2409,7 @@ export default function App() {
                     }
                   }}
                   onOpenIncome={(selectedMethod) => {
-                    if (user?.role === 'admin') {
+                    if (canAddTransactions(user)) {
                       if (!checkServiceAccess('ayByay', 'আয়-ব্যয় হিসাব')) return;
                       setEntryType('income');
                       setEditingTransaction(null);
@@ -2282,7 +2421,7 @@ export default function App() {
                     }
                   }}
                   onOpenExpense={(selectedMethod) => {
-                    if (user?.role === 'admin') {
+                    if (canAddTransactions(user)) {
                       if (!checkServiceAccess('ayByay', 'আয়-ব্যয় হিসাব')) return;
                       setEntryType('expense');
                       setEditingTransaction(null);
@@ -2312,12 +2451,14 @@ export default function App() {
                 {/* Header for Transactions Screen */}
                 <div className="sticky top-0 z-30 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 px-4 h-14 flex items-center justify-between shadow-2xs">
                   <h1 className="text-base font-bold text-slate-900 dark:text-white mx-auto">
-                    {lang === 'bn' ? 'সকল লেনদেন ও চ্যানেল স্টেটমেন্ট' : 'All Transactions & Statements'}
+                    {user?.role === 'sub-admin'
+                      ? (lang === 'bn' ? 'আমার লেনদেন তালিকা ও স্টেটমেন্ট' : 'My Transactions & Statements')
+                      : (lang === 'bn' ? 'সকল লেনদেন ও চ্যানেল স্টেটমেন্ট' : 'All Transactions & Statements')}
                   </h1>
                 </div>
 
                 <TransactionList
-                  transactions={transactions}
+                  transactions={transactionsForList}
                   lang={lang}
                   user={user}
                   onSelectTransaction={(trx) => {
@@ -2357,6 +2498,7 @@ export default function App() {
                   transactions={transactions}
                   channels={channels}
                   lang={lang}
+                  user={user}
                   isTabMode={true}
                   currentMonthIndex={currentMonthIndex}
                   currentYear={currentYear}
@@ -2991,6 +3133,29 @@ export default function App() {
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Non-blocking Floating Alert Toast (Fasting 10-Min Reminders / Permission Feedback) */}
+        {appToast && (
+          <div className={`fixed top-16 left-1/2 -translate-x-1/2 z-[160] w-[92%] max-w-md rounded-2xl p-3.5 shadow-2xl border flex items-start justify-between gap-3 animate-in fade-in slide-in-from-top-3 duration-200 ${
+            appToast.tone === 'amber'
+              ? 'bg-amber-950/95 border-amber-500/60 text-amber-50'
+              : 'bg-emerald-950/95 border-emerald-500/60 text-emerald-50'
+          }`}>
+            <div className="min-w-0 space-y-0.5">
+              <p className="text-xs font-black leading-snug">{appToast.title}</p>
+              {appToast.body && (
+                <p className="text-[11px] opacity-90 leading-snug line-clamp-2">{appToast.body}</p>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setAppToast(null)}
+              className="text-xs font-bold px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 shrink-0 cursor-pointer"
+            >
+              ✕
+            </button>
           </div>
         )}
 

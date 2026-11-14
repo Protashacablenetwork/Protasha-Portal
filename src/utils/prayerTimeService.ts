@@ -2,12 +2,14 @@ import { DistrictInfo, detectPreciseLocation, ALL_BANGLADESH_DISTRICTS } from '.
 import { toBengaliNumber } from './formatters';
 import { safeStorage } from './safeStorage';
 import { NotificationItem } from '../types';
+import { getHijriDate, getDaysUntilNextRamadan } from './hijriDate';
 
 export interface PrayerTimings {
   dateStr: string;
   cityBn: string;
   cityEn: string;
   tahajjud: string;   // তাহাজ্জুদ ও সাহরীর শেষ সময়
+  sehriEnd: string;   // সাহরীর শেষ সময় (ফজরের ৬ মিনিট পূর্বে সতর্কতা)
   fajr: string;       // ফজর
   sunrise: string;    // সূর্যোদয়
   ishraq: string;     // ইশরাক
@@ -22,6 +24,7 @@ export interface PrayerTimings {
   nextPrayerTimeBn: string;
   timeRemainingBn: string;
   raw: {
+    sehriEnd: Date;
     fajr: Date;
     sunrise: Date;
     dhuhr: Date;
@@ -184,10 +187,12 @@ export function calculateLocalPrayerTimes(district: DistrictInfo, date: Date = n
   }
   remainingStr += `${toBengaliNumber(diffMins)} মিনিট বাকি`;
 
+  const sehriEndMin = Math.max(0, fajrMin - 6); // Islamic Foundation BD standard 6 min precaution before Fajr
   const tahajjudMin = Math.max(0, fajrMin - 25);
   const ishraqMin = sunriseMin + 15;
   const chashtMin = sunriseMin + 120;
   const awwabinMin = maghribMin + 15;
+  const sehriEndDate = minToDate(sehriEndMin);
 
   const dateStr = date.toISOString().split('T')[0];
 
@@ -196,6 +201,7 @@ export function calculateLocalPrayerTimes(district: DistrictInfo, date: Date = n
     cityBn: district.nameBn,
     cityEn: district.nameEn,
     tahajjud: formatMin(tahajjudMin),
+    sehriEnd: formatMin(sehriEndMin),
     fajr: formatMin(fajrMin),
     sunrise: formatMin(sunriseMin),
     ishraq: formatMin(ishraqMin),
@@ -210,6 +216,7 @@ export function calculateLocalPrayerTimes(district: DistrictInfo, date: Date = n
     nextPrayerTimeBn,
     timeRemainingBn: remainingStr,
     raw: {
+      sehriEnd: sehriEndDate,
       fajr: fajrDate,
       sunrise: sunriseDate,
       dhuhr: dhuhrDate,
@@ -240,6 +247,7 @@ export async function fetchLivePrayerTimes(district: DistrictInfo, date: Date = 
         const localCalc = calculateLocalPrayerTimes(district, date);
 
         const rawFajr = parseTimeToDate(t.Fajr, date);
+        const rawSehriEnd = new Date(rawFajr.getTime() - 6 * 60 * 1000);
         const rawSunrise = parseTimeToDate(t.Sunrise, date);
         const rawDhuhr = parseTimeToDate(t.Dhuhr, date);
         const rawAsr = parseTimeToDate(t.Asr, date);
@@ -247,8 +255,12 @@ export async function fetchLivePrayerTimes(district: DistrictInfo, date: Date = 
         const rawMaghrib = parseTimeToDate(t.Maghrib, date);
         const rawIsha = parseTimeToDate(t.Isha, date);
 
+        const sehriHH = String(rawSehriEnd.getHours()).padStart(2, '0');
+        const sehriMM = String(rawSehriEnd.getMinutes()).padStart(2, '0');
+
         return {
           ...localCalc,
+          sehriEnd: format12hBn(`${sehriHH}:${sehriMM}`),
           fajr: format12hBn(t.Fajr),
           sunrise: format12hBn(t.Sunrise),
           dhuhr: format12hBn(t.Dhuhr),
@@ -257,6 +269,7 @@ export async function fetchLivePrayerTimes(district: DistrictInfo, date: Date = 
           maghrib: format12hBn(t.Maghrib),
           isha: format12hBn(t.Isha),
           raw: {
+            sehriEnd: rawSehriEnd,
             fajr: rawFajr,
             sunrise: rawSunrise,
             dhuhr: rawDhuhr,
@@ -423,6 +436,123 @@ export function checkAndGeneratePrayerNotifications(
     try {
       safeStorage.setItem(safeStorageKey, '1');
     } catch {}
+
+    return {
+      updatedNotifications: [notifItem, ...currentNotifications],
+      newlyAdded: notifItem
+    };
+  }
+
+  return { updatedNotifications: currentNotifications, newlyAdded: null };
+}
+
+export const FASTING_REMINDER_STORAGE_KEY = 'protyasha_fasting_reminder_enabled';
+
+export function isFastingReminderEnabled(): boolean {
+  const val = safeStorage.getItem(FASTING_REMINDER_STORAGE_KEY);
+  return val !== 'false';
+}
+
+export function setFastingReminderEnabled(enabled: boolean): void {
+  safeStorage.setItem(FASTING_REMINDER_STORAGE_KEY, enabled ? 'true' : 'false');
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('fasting-reminder-setting-changed', { detail: { enabled } }));
+  }
+}
+
+/**
+ * Check if current time is within 10 minutes before Sehri End or Iftar (Maghrib),
+ * and generate an automatic reminder notification if enabled in App Settings.
+ */
+export function checkAndGenerateFastingReminders(
+  district: DistrictInfo,
+  currentNotifications: NotificationItem[],
+  isEnabled: boolean = isFastingReminderEnabled()
+): { updatedNotifications: NotificationItem[]; newlyAdded: NotificationItem | null } {
+  if (!isEnabled) {
+    return { updatedNotifications: currentNotifications, newlyAdded: null };
+  }
+
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const citySlug = (district.nameEn || 'dhaka').toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const prayerTimes = calculateLocalPrayerTimes(district, now);
+
+  const TEN_MINUTES_MS = 10 * 60 * 1000;
+  const sehriDiffMs = prayerTimes.raw.sehriEnd.getTime() - now.getTime();
+  const iftarDiffMs = prayerTimes.raw.maghrib.getTime() - now.getTime();
+
+  let slot: {
+    id: string;
+    titleBn: string;
+    titleEn: string;
+    bodyBn: string;
+    bodyEn: string;
+  } | null = null;
+
+  if (sehriDiffMs > 0 && sehriDiffMs <= TEN_MINUTES_MS) {
+    const minsLeft = Math.max(1, Math.ceil(sehriDiffMs / 60000));
+    slot = {
+      id: `fasting_sehri_10m_${citySlug}_${todayStr}`,
+      titleBn: `⏰ সেহরির আর মাত্র ${toBengaliNumber(minsLeft)} মিনিট বাকি — ${district.nameBn}`,
+      titleEn: `⏰ Only ${minsLeft} min left for Sehri — ${district.nameEn}`,
+      bodyBn: `【সেহরির শেষ সতর্কবার্তা • ${district.nameBn}】\n• সেহরির শেষ সময়: ${prayerTimes.sehriEnd}\n• ফজরের ওয়াক্ত শুরু: ${prayerTimes.fajr}\n\nআর মাত্র ${toBengaliNumber(minsLeft)} মিনিট পর সেহরির সময় শেষ হবে। অনুগ্রহ করে দ্রুত সেহরি সম্পন্ন করুন এবং রোজার নিয়ত করুন।`,
+      bodyEn: `【Sehri Reminder • ${district.nameEn}】\nSehri ends at ${prayerTimes.sehriEnd} (${minsLeft} min left). Fajr starts at ${prayerTimes.fajr}.`
+    };
+  } else if (iftarDiffMs > 0 && iftarDiffMs <= TEN_MINUTES_MS) {
+    const minsLeft = Math.max(1, Math.ceil(iftarDiffMs / 60000));
+    slot = {
+      id: `fasting_iftar_10m_${citySlug}_${todayStr}`,
+      titleBn: `🌙 ইফতারের আর মাত্র ${toBengaliNumber(minsLeft)} মিনিট বাকি — ${district.nameBn}`,
+      titleEn: `🌙 Only ${minsLeft} min left for Iftar — ${district.nameEn}`,
+      bodyBn: `【ইফতারের পূর্ব প্রস্তুতি বার্তা • ${district.nameBn}】\n• আজকের ইফতার (মাগরিব): ${prayerTimes.maghrib}\n\nআর মাত্র ${toBengaliNumber(minsLeft)} মিনিট পর ইফতারের সময় হবে। ইফতার সামনে নিয়ে বেশি বেশি দোয়া ও ইস্তিগফার করুন।`,
+      bodyEn: `【Iftar Reminder • ${district.nameEn}】\nIftar is at ${prayerTimes.maghrib} (${minsLeft} min left). Prepare for Iftar and make Dua.`
+    };
+  }
+
+  if (!slot) {
+    return { updatedNotifications: currentNotifications, newlyAdded: null };
+  }
+
+  const safeStorageKey = `notif_fasting_${slot.id}`;
+  const alreadySent = safeStorage.getItem(safeStorageKey);
+  const existsInList = currentNotifications.some(n => n.id === slot!.id);
+
+  if (!alreadySent && !existsInList) {
+    const formattedDate = `${toBengaliNumber(now.getDate())} ${now.toLocaleString('bn-BD', { month: 'short' })}`;
+    const formattedTime = now.toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+    const notifItem: NotificationItem = {
+      id: slot.id,
+      titleBn: slot.titleBn,
+      titleEn: slot.titleEn,
+      bodyBn: slot.bodyBn,
+      bodyEn: slot.bodyEn,
+      messageBn: slot.bodyBn,
+      messageEn: slot.bodyEn,
+      date: formattedDate,
+      timeBn: `${formattedDate}, ${toBengaliNumber(formattedTime)}`,
+      timeEn: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+      type: 'alert',
+      isRead: false,
+      districtBn: district.nameBn,
+      districtEn: district.nameEn,
+      isPrayerAlert: true
+    };
+
+    try {
+      safeStorage.setItem(safeStorageKey, '1');
+    } catch {}
+
+    // Fire native browser Notification if user granted permission
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(slot.titleBn, {
+          body: slot.bodyBn.replace(/\n+/g, ' '),
+          tag: slot.id
+        });
+      } catch {}
+    }
 
     return {
       updatedNotifications: [notifItem, ...currentNotifications],
@@ -694,5 +824,173 @@ export function getActivePrayerCardData(timings: PrayerTimings, now: Date = new 
     times5: t5
   };
 }
+
+export interface PerpetualFastingDay {
+  dayNumber: number;
+  dateStrBn: string;
+  dayShortBn: string;
+  hijriShortBn: string;
+  hijriDay: number;
+  hijriMonth: number;
+  isRamadan: boolean;
+  isAyyamAlBidh: boolean; // 13, 14, 15 Hijri
+  isSunnahWeekDay: boolean; // Monday (1) or Thursday (4)
+  sehriEnd: string;
+  fajr: string;
+  sunrise: string;
+  iftar: string;
+  durationBn: string;
+  isToday: boolean;
+}
+
+/**
+ * Generates year-round perpetual month-by-month Sehri & Iftar timetable for any Bangladesh district
+ */
+export function getPerpetualFastingCalendar(
+  district: DistrictInfo,
+  year: number,
+  monthIndex: number // 0-indexed
+): PerpetualFastingDay[] {
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const today = new Date();
+  const isCurrentYearMonth = today.getFullYear() === year && today.getMonth() === monthIndex;
+  const todayDate = today.getDate();
+
+  const days: PerpetualFastingDay[] = [];
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateObj = new Date(year, monthIndex, d, 12, 0, 0);
+    const timings = calculateLocalPrayerTimes(district, dateObj);
+    const hijri = getHijriDate(dateObj);
+    const dayStr = d < 10 ? `0${d}` : `${d}`;
+    const dateStrBn = `${toBengaliNumber(dayStr)} ${BENGALI_MONTHS[monthIndex]}`;
+    const dow = dateObj.getDay();
+    const dayShortBn = BENGALI_DAYS_SHORT[dow];
+
+    const diffMs = Math.max(0, timings.raw.maghrib.getTime() - timings.raw.sehriEnd.getTime());
+    const totalMins = Math.round(diffMs / 60000);
+    const durH = Math.floor(totalMins / 60);
+    const durM = totalMins % 60;
+    const durationBn = `${toBengaliNumber(durH)} ঘঃ ${toBengaliNumber(durM)} মিঃ`;
+
+    days.push({
+      dayNumber: d,
+      dateStrBn,
+      dayShortBn,
+      hijriShortBn: hijri.shortBn,
+      hijriDay: hijri.day,
+      hijriMonth: hijri.month,
+      isRamadan: hijri.isRamadan,
+      isAyyamAlBidh: hijri.day >= 13 && hijri.day <= 15,
+      isSunnahWeekDay: dow === 1 || dow === 4,
+      sehriEnd: timings.sehriEnd,
+      fajr: timings.fajr,
+      sunrise: timings.sunrise,
+      iftar: timings.maghrib,
+      durationBn,
+      isToday: isCurrentYearMonth && d === todayDate
+    });
+  }
+
+  return days;
+}
+
+export interface ActiveFastingCardData {
+  phase: 'sehri' | 'fasting' | 'after_iftar';
+  phaseTitleBn: string;
+  phaseSubtitleBn: string;
+  countdownTimeBn: string;
+  countdownLabelBn: string;
+  progressPercent: number;
+  sehriEndBn: string;
+  fajrBn: string;
+  sunriseBn: string;
+  iftarBn: string;
+  fastDurationBn: string;
+  hijriFormattedBn: string;
+  ramadanStatusBn: string;
+  isRamadanNow: boolean;
+}
+
+/**
+ * Live countdown and daily Sehri/Iftar dashboard metrics for selected district
+ */
+export function getActiveFastingCardData(
+  timings: PrayerTimings,
+  now: Date = new Date()
+): ActiveFastingCardData {
+  const nowMs = now.getTime();
+  const sehriMs = timings.raw.sehriEnd.getTime();
+  const fajrMs = timings.raw.fajr.getTime();
+  const iftarMs = timings.raw.maghrib.getTime();
+
+  const tomorrowSehri = new Date(timings.raw.sehriEnd);
+  tomorrowSehri.setDate(tomorrowSehri.getDate() + 1);
+  const tomorrowSehriMs = tomorrowSehri.getTime();
+
+  const yesterdayIftar = new Date(timings.raw.maghrib);
+  yesterdayIftar.setDate(yesterdayIftar.getDate() - 1);
+  const yesterdayIftarMs = yesterdayIftar.getTime();
+
+  const hijri = getHijriDate(now);
+  const daysToRamadan = getDaysUntilNextRamadan(now);
+
+  const durMins = Math.max(0, Math.round((iftarMs - sehriMs) / 60000));
+  const durH = Math.floor(durMins / 60);
+  const durM = durMins % 60;
+  const fastDurationBn = `${toBengaliNumber(durH)} ঘণ্টা ${toBengaliNumber(durM)} মিনিট`;
+
+  let phase: ActiveFastingCardData['phase'] = 'fasting';
+  let phaseTitleBn = 'রোজার সময় চলছে';
+  let phaseSubtitleBn = `সাহরী শেষ: ${timings.sehriEnd} · ইফতার: ${timings.maghrib}`;
+  let diffSec = 0;
+  let countdownLabelBn = 'ইফতার হতে বাকি';
+  let progressPercent = 50;
+
+  if (nowMs < sehriMs) {
+    phase = 'sehri';
+    phaseTitleBn = 'সাহরীর সময় চলছে';
+    phaseSubtitleBn = `ফজর শুরু: ${timings.fajr} · আজকের ইফতার: ${timings.maghrib}`;
+    diffSec = (sehriMs - nowMs) / 1000;
+    countdownLabelBn = 'সাহরী শেষ হতে বাকি';
+    progressPercent = Math.min(100, Math.max(4, ((nowMs - yesterdayIftarMs) / Math.max(1, sehriMs - yesterdayIftarMs)) * 100));
+  } else if (nowMs >= sehriMs && nowMs < iftarMs) {
+    phase = 'fasting';
+    phaseTitleBn = nowMs < fajrMs ? 'সতর্কতা বিরতি · ফজর আসন্ন' : 'রোজার সময় চলছে';
+    phaseSubtitleBn = `আজকের সাহরী: ${timings.sehriEnd} · ইফতার: ${timings.maghrib}`;
+    diffSec = (iftarMs - nowMs) / 1000;
+    countdownLabelBn = 'ইফতার হতে বাকি';
+    progressPercent = Math.min(100, Math.max(4, ((nowMs - sehriMs) / Math.max(1, iftarMs - sehriMs)) * 100));
+  } else {
+    phase = 'after_iftar';
+    phaseTitleBn = 'ইফতার সম্পন্ন হয়েছে';
+    phaseSubtitleBn = `আজকের ইফতার: ${timings.maghrib} · পরবর্তী সাহরী প্রস্তুতি`;
+    diffSec = (tomorrowSehriMs - nowMs) / 1000;
+    countdownLabelBn = 'আগামী সাহরী শেষ হতে বাকি';
+    progressPercent = Math.min(100, Math.max(4, ((nowMs - iftarMs) / Math.max(1, tomorrowSehriMs - iftarMs)) * 100));
+  }
+
+  const ramadanStatusBn = hijri.isRamadan
+    ? `পবিত্র রমজান মাস · ${hijri.dayBn}তম রোজা`
+    : `আসন্ন পবিত্র রমজান হতে প্রায় ${toBengaliNumber(daysToRamadan)} দিন বাকি`;
+
+  return {
+    phase,
+    phaseTitleBn,
+    phaseSubtitleBn,
+    countdownTimeBn: formatCountdownHMSBn(diffSec),
+    countdownLabelBn,
+    progressPercent,
+    sehriEndBn: timings.sehriEnd,
+    fajrBn: timings.fajr,
+    sunriseBn: timings.sunrise,
+    iftarBn: timings.maghrib,
+    fastDurationBn,
+    hijriFormattedBn: hijri.formattedBn,
+    ramadanStatusBn,
+    isRamadanNow: hijri.isRamadan
+  };
+}
+
 
 
