@@ -68,6 +68,10 @@ export const signInWithGoogleDrive = async (): Promise<{ user: User; accessToken
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
     console.error('Google Drive sign in error:', error);
+    if (error?.code === 'auth/unauthorized-domain') {
+      const host = typeof window !== 'undefined' ? window.location.hostname : '';
+      throw new Error(`এই ডোমেইনটি (${host}) Firebase Authorized Domains-এ যুক্ত করা নেই। অ্যাডমিনকে Firebase Console -> Authentication -> Settings -> Authorized domains-এ "${host}" যুক্ত করতে বলুন।`);
+    }
     throw error;
   } finally {
     isSigningIn = false;

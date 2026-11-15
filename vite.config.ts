@@ -1,18 +1,37 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {defineConfig} from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function mirrorBuildToDist() {
+  return {
+    name: 'mirror-build-to-dist',
+    closeBundle() {
+      const outDir = path.resolve(__dirname, 'HTDOCS_UPLOAD');
+      const distDir = path.resolve(__dirname, 'dist');
+      if (!fs.existsSync(path.join(outDir, 'index.html'))) return;
+      try {
+        fs.rmSync(distDir, { recursive: true, force: true });
+        fs.cpSync(outDir, distDir, { recursive: true });
+      } catch (err) {
+        console.warn('[Build] Could not mirror HTDOCS_UPLOAD to dist:', err);
+      }
+    },
+  };
+}
+
 export default defineConfig(() => {
   return {
     base: './',
     build: {
       outDir: 'HTDOCS_UPLOAD',
+      emptyOutDir: true,
     },
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), mirrorBuildToDist()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

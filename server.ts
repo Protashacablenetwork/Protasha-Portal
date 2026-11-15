@@ -11,20 +11,26 @@ dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = process.env.PORT || 3000;
+const hasBuiltHtml = (dir: string) => fs.existsSync(path.join(__dirname, dir, 'index.html'));
+const resolvedBuildDir = hasBuiltHtml('HTDOCS_UPLOAD')
+    ? 'HTDOCS_UPLOAD'
+    : (hasBuiltHtml('dist') ? 'dist' : (hasBuiltHtml('docs') ? 'docs' : null));
 const isExplicitDev = process.env.NODE_ENV === 'development' || process.env.npm_lifecycle_event === 'dev' || process.env.DISABLE_HMR === 'true';
-const isProd = !isExplicitDev && (process.env.NODE_ENV === 'production' || fs.existsSync(path.join(__dirname, 'dist')) || fs.existsSync(path.join(__dirname, 'docs')) || fs.existsSync(path.join(__dirname, 'HTDOCS_UPLOAD')));
-const buildDir = fs.existsSync(path.join(__dirname, 'HTDOCS_UPLOAD')) ? 'HTDOCS_UPLOAD' : (fs.existsSync(path.join(__dirname, 'dist')) ? 'dist' : (fs.existsSync(path.join(__dirname, 'docs')) ? 'docs' : 'dist'));
+const isProd = !isExplicitDev && resolvedBuildDir !== null;
+const buildDir = resolvedBuildDir || 'dist';
 
 app.use(cors());
 app.use(compression());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Ensure uploads directory exists
+// Ensure uploads directory exists (safe on read-only serverless containers)
 const uploadDir = path.join(__dirname, 'public', 'uploads');
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-}
+try {
+    if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+    }
+} catch {}
 
 app.use('/uploads', express.static(uploadDir));
 
@@ -111,9 +117,17 @@ if (!isProd) {
     });
     app.use(vite.middlewares);
 } else {
-    app.use(express.static(path.join(__dirname, buildDir)));
+    const staticRoot = path.join(__dirname, buildDir);
+    app.use(express.static(staticRoot, {
+        setHeaders: (res, filePath) => {
+            if (filePath.endsWith('index.html') || filePath.endsWith('version.json')) {
+                res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+            }
+        }
+    }));
     app.get('*', (req: express.Request, res: express.Response) => {
-        res.sendFile(path.join(__dirname, buildDir, 'index.html'));
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.sendFile(path.join(staticRoot, 'index.html'));
     });
 }
 

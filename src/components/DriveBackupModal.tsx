@@ -890,14 +890,16 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
                           {googleUser?.displayName || 'অ্যাডমিন গুগল একাউন্ট'}
                         </span>
                         <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950 px-2 py-0.2 rounded-full border border-emerald-200 dark:border-emerald-800">
-                          সক্রিয়
+                          {isBn ? 'সক্রিয়' : 'Active'}
                         </span>
                       </div>
-                      <p className="text-[11px] text-slate-600 dark:text-slate-300 truncate">
+                      <p className="text-[11px] text-slate-600 dark:text-slate-300 truncate font-mono">
                         {googleUser?.email}
                       </p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">
-                        {isBn ? 'ফোল্ডার: Admin_Backups • প্রত্যাশা ক্যাবল নেটওয়ার্কের ক্লাউড ব্যাকআপ প্রস্তুত' : 'Folder: Admin_Backups • Ready for backup'}
+                      <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium mt-0.5 flex items-center gap-1">
+                        <span>{isBn ? 'ব্র্যান্ডিং নাম:' : 'Branding:'}</span>
+                        <span className="font-extrabold">{isBn ? 'প্রত্যাশা ক্যাবল নেটওয়ার্ক' : 'Protyasha Cable Network'}</span>
+                        <span>• {isBn ? 'ক্লাউড ব্যাকআপ প্রস্তুত' : 'Cloud Backup Ready'}</span>
                       </p>
                     </div>
                   </div>
