@@ -138,11 +138,39 @@ export const LoginView: React.FC<LoginViewProps> = ({
       }
 
       if (isMasterAdminId && cleanPin === effectiveAdminPin) {
+        let serverAdminName = isBn ? 'প্রত্যাশা অ্যাডমিন' : 'Protyasha Admin';
+        let serverAdminPhone = '01777877207';
+        let serverAdminAvatar = adminAvatar || safeStorage.getItem('protyasha_admin_avatar') || '';
+
+        try {
+          const [adminProfileSnap, adminUserSnap] = await Promise.all([
+            getDoc(doc(db, 'settings', 'admin_profile')).catch(() => null),
+            getDoc(doc(db, 'users', 'admin-master')).catch(() => null)
+          ]);
+          const apData = adminProfileSnap?.exists() ? adminProfileSnap.data() : null;
+          const auData = adminUserSnap?.exists() ? adminUserSnap.data() : null;
+
+          if (apData?.name || auData?.name) {
+            serverAdminName = apData?.name || auData?.name || serverAdminName;
+          }
+          if (apData?.phone || auData?.phone) {
+            serverAdminPhone = apData?.phone || auData?.phone || serverAdminPhone;
+          }
+          const fetchedAvatar =
+            (apData?.avatarUrl && !String(apData.avatarUrl).startsWith('/uploads/') ? String(apData.avatarUrl) : '') ||
+            (auData?.avatarUrl && !String(auData.avatarUrl).startsWith('/uploads/') ? String(auData.avatarUrl) : '');
+          if (fetchedAvatar) {
+            serverAdminAvatar = fetchedAvatar;
+            safeStorage.setItem('protyasha_admin_avatar', fetchedAvatar);
+            safeStorage.setItem('protyasha_last_avatar', fetchedAvatar);
+          }
+        } catch {}
+
         const lockResult = await claimDeviceSession({
           id: 'admin-master',
-          phone: '01777877207',
+          phone: serverAdminPhone,
           role: 'admin',
-          name: isBn ? 'প্রত্যাশা অ্যাডমিন' : 'Protyasha Admin'
+          name: serverAdminName
         });
 
         if (!lockResult.allowed) {
@@ -159,9 +187,9 @@ export const LoginView: React.FC<LoginViewProps> = ({
           id: 'admin-master',
           email: 'admin@protyasha.com',
           role: 'admin',
-          name: isBn ? 'প্রত্যাশা অ্যাডমিন' : 'Protyasha Admin',
-          phone: '01777877207',
-          avatarUrl: adminAvatar || '',
+          name: serverAdminName,
+          phone: serverAdminPhone,
+          avatarUrl: serverAdminAvatar || '',
           virtualCardNumber: '9856 0000 2932 9162',
           accountType: 'general',
           profitPreference: false
@@ -179,9 +207,13 @@ export const LoginView: React.FC<LoginViewProps> = ({
         const q = query(usersRef, where('phone', '==', lookupPhone));
         const querySnapshot = await getDocs(q);
         if (!querySnapshot.empty) {
-          const userDoc = querySnapshot.docs[0];
-          userData = userDoc.data();
-          userId = userDoc.id;
+          const matchedDoc =
+            querySnapshot.docs.find(d => d.data()?.pin === cleanPin && d.data()?.avatarUrl) ||
+            querySnapshot.docs.find(d => d.data()?.pin === cleanPin) ||
+            querySnapshot.docs.find(d => d.data()?.avatarUrl) ||
+            querySnapshot.docs[0];
+          userData = matchedDoc.data();
+          userId = matchedDoc.id;
           saveStoredUser({ ...userData, id: userId });
         }
       } catch (err) {

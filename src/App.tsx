@@ -362,6 +362,49 @@ export default function App() {
               return combined;
             });
           }
+
+          const remoteAvatar =
+            typeof data.avatarUrl === 'string' && data.avatarUrl && !data.avatarUrl.startsWith('/uploads/')
+              ? data.avatarUrl
+              : '';
+
+          if (remoteAvatar) {
+            savePersistentImage(`avatar_user_${user.id}`, remoteAvatar);
+            if (user.role === 'admin') {
+              setAdminAvatar(prev => prev || remoteAvatar);
+            }
+          }
+
+          setUser(prev => {
+            if (!prev || prev.id !== user.id) return prev;
+            const nextName = data.name || prev.name;
+            const nextPhone = data.phone || prev.phone;
+            const nextAvatar = remoteAvatar || prev.avatarUrl;
+            const nextGmail = data.gmail !== undefined ? (data.gmail || undefined) : prev.gmail;
+            const nextBound = Array.isArray(data.boundMethods) ? data.boundMethods : prev.boundMethods;
+            const nextRole = data.role || prev.role;
+
+            if (
+              nextName === prev.name &&
+              nextPhone === prev.phone &&
+              nextAvatar === prev.avatarUrl &&
+              nextGmail === prev.gmail &&
+              nextRole === prev.role &&
+              JSON.stringify(nextBound || []) === JSON.stringify(prev.boundMethods || [])
+            ) {
+              return prev;
+            }
+
+            return {
+              ...prev,
+              name: nextName,
+              phone: nextPhone,
+              avatarUrl: nextAvatar,
+              gmail: nextGmail,
+              boundMethods: nextBound,
+              role: nextRole
+            };
+          });
         }
       }, (err) => {
         handleFirestoreError(err, OperationType.GET, `users/${user.id}`);
@@ -617,11 +660,11 @@ export default function App() {
     return legacy && !legacy.startsWith('/uploads/') ? legacy : '';
   });
 
-  // Asynchronously retrieve avatar from IndexedDB on startup
+  // Asynchronously retrieve avatar from IndexedDB on startup (without overwriting newer server avatar)
   useEffect(() => {
     getPersistentImage('avatar_admin').then((savedImg) => {
-      if (savedImg && savedImg.startsWith('data:image/') && !adminAvatar) {
-        setAdminAvatar(savedImg);
+      if (savedImg && savedImg.startsWith('data:image/')) {
+        setAdminAvatar(prev => prev || savedImg);
       }
     });
   }, []);
@@ -653,8 +696,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (adminAvatar && adminAvatar.startsWith('data:image/')) {
-      savePersistentImage('avatar_admin', adminAvatar);
+    if (adminAvatar && !adminAvatar.startsWith('/uploads/')) {
+      if (adminAvatar.startsWith('data:image/')) {
+        savePersistentImage('avatar_admin', adminAvatar);
+      }
       try {
         safeStorage.setItem('protyasha_admin_avatar', adminAvatar);
       } catch (e) {
@@ -857,8 +902,23 @@ export default function App() {
       }
       if (adminSnap.exists()) {
         const ap = adminSnap.data();
-        if (ap.avatarUrl && ap.avatarUrl.startsWith('data:image/')) {
-          setAdminAvatar(ap.avatarUrl);
+        const serverAvatar =
+          typeof ap.avatarUrl === 'string' && ap.avatarUrl && !ap.avatarUrl.startsWith('/uploads/')
+            ? ap.avatarUrl
+            : '';
+        if (serverAvatar) {
+          setAdminAvatar(serverAvatar);
+        }
+        if (ap.name || serverAvatar) {
+          setUser(prev => {
+            if (!prev || prev.role !== 'admin') return prev;
+            return {
+              ...prev,
+              name: ap.name || prev.name,
+              phone: ap.phone || prev.phone,
+              avatarUrl: serverAvatar || prev.avatarUrl
+            };
+          });
         }
       }
       if (auditSnap.exists() && Array.isArray(auditSnap.data()?.logs)) {
@@ -867,23 +927,44 @@ export default function App() {
     } catch {}
   }, []);
 
-  const handleUpdateAdminProfile = (name: string, avatarUrl: string) => {
-    setAdminAvatar(avatarUrl);
-    if (avatarUrl && avatarUrl.startsWith('data:image/')) {
-      savePersistentImage('avatar_admin', avatarUrl);
-      safeStorage.setItem('protyasha_admin_avatar', avatarUrl);
+  const handleUpdateAdminProfile = async (name: string, avatarUrl: string) => {
+    const cleanAvatar = avatarUrl && !avatarUrl.startsWith('/uploads/') ? avatarUrl : '';
+    const nowIso = new Date().toISOString();
+    setAdminAvatar(cleanAvatar);
+    if (cleanAvatar) {
+      if (cleanAvatar.startsWith('data:image/')) {
+        savePersistentImage('avatar_admin', cleanAvatar);
+      }
+      safeStorage.setItem('protyasha_admin_avatar', cleanAvatar);
+      safeStorage.setItem('protyasha_last_avatar', cleanAvatar);
     }
     if (user?.role === 'admin') {
-      const updatedUser = { ...user, name, avatarUrl };
+      const updatedUser = { ...user, name, avatarUrl: cleanAvatar };
       setUser(updatedUser);
       safeStorage.setItem('protyasha_user', JSON.stringify(updatedUser));
     }
-    safeSetDoc(doc(db, 'settings', 'admin_profile'), {
+    const adminProfilePayload = {
       name,
       phone: user?.phone || '01777877207',
-      avatarUrl: avatarUrl || '',
-      updatedAt: new Date().toISOString()
-    }).catch(() => {});
+      avatarUrl: cleanAvatar,
+      updatedAt: nowIso
+    };
+    await safeSetDoc(doc(db, 'settings', 'admin_profile'), adminProfilePayload, { merge: true }).catch(() => {});
+    if (user?.id) {
+      await safeSetDoc(
+        doc(db, 'users', user.id),
+        {
+          id: user.id,
+          name,
+          phone: user.phone || '01777877207',
+          ...(cleanAvatar ? { avatarUrl: cleanAvatar } : {}),
+          role: 'admin',
+          status: 'active',
+          updatedAt: nowIso
+        },
+        { merge: true }
+      ).catch(() => {});
+    }
   };
 
   const handleUpdateUserProfile = async (updatedData: {
@@ -895,19 +976,41 @@ export default function App() {
     if (!user) return { success: false, message: 'অনুগ্রহ করে প্রথমে লগইন করুন' };
 
     try {
-      const targetId = user.id || (user.role === 'admin' ? 'admin-primary' : 'usr_' + Date.now());
+      const nowIso = new Date().toISOString();
+      const targetId = user.id || (user.role === 'admin' ? 'admin-master' : 'usr_' + Date.now());
+      const resolvedAvatar =
+        updatedData.avatarUrl !== undefined
+          ? updatedData.avatarUrl
+          : (user.avatarUrl || (user.role === 'admin' ? adminAvatar : '') || '');
+      const cleanAvatar = resolvedAvatar && !resolvedAvatar.startsWith('/uploads/') ? resolvedAvatar : '';
+
       const userData = {
         id: targetId,
         name: updatedData.name,
         phone: updatedData.phone,
         ...(updatedData.pin ? { pin: updatedData.pin } : {}),
-        ...(updatedData.avatarUrl ? { avatarUrl: updatedData.avatarUrl } : {}),
+        ...(cleanAvatar ? { avatarUrl: cleanAvatar } : {}),
         role: user.role,
-        status: 'active',
-        updatedAt: new Date().toISOString()
+        status: 'active' as const,
+        updatedAt: nowIso
       };
 
       await safeSetDoc(doc(db, 'users', targetId), userData, { merge: true });
+
+      // Critical: For Admin accounts, also persist to settings/admin_profile so all devices & logins sync in real time
+      if (user.role === 'admin') {
+        await safeSetDoc(
+          doc(db, 'settings', 'admin_profile'),
+          {
+            name: updatedData.name,
+            phone: updatedData.phone || '01777877207',
+            avatarUrl: cleanAvatar,
+            updatedAt: nowIso
+          },
+          { merge: true }
+        );
+      }
+
       saveStoredUser(userData as any);
 
       // If phone number changed, transfer single-device lock to the new phone number
@@ -924,22 +1027,27 @@ export default function App() {
       // Update Active Session User State
       const updatedSession: UserSession = {
         ...user,
+        id: targetId,
         name: updatedData.name,
         phone: updatedData.phone,
-        avatarUrl: updatedData.avatarUrl || user.avatarUrl
+        avatarUrl: cleanAvatar || user.avatarUrl
       };
       setUser(updatedSession);
       safeStorage.setItem('protyasha_user', JSON.stringify(updatedSession));
       safeStorage.setItem('protyasha_last_phone', updatedData.phone);
 
-      if (updatedData.avatarUrl) {
-        safeStorage.setItem('protyasha_last_avatar', updatedData.avatarUrl);
+      if (cleanAvatar) {
+        safeStorage.setItem('protyasha_last_avatar', cleanAvatar);
         if (user.role === 'admin') {
-          setAdminAvatar(updatedData.avatarUrl);
-          savePersistentImage('avatar_admin', updatedData.avatarUrl);
-          safeStorage.setItem('protyasha_admin_avatar', updatedData.avatarUrl);
-        } else if (user.id) {
-          savePersistentImage(`avatar_user_${user.id}`, updatedData.avatarUrl);
+          setAdminAvatar(cleanAvatar);
+          if (cleanAvatar.startsWith('data:image/')) {
+            savePersistentImage('avatar_admin', cleanAvatar);
+          }
+          safeStorage.setItem('protyasha_admin_avatar', cleanAvatar);
+        } else {
+          if (cleanAvatar.startsWith('data:image/')) {
+            savePersistentImage(`avatar_user_${targetId}`, cleanAvatar);
+          }
         }
       }
 
@@ -947,7 +1055,7 @@ export default function App() {
       return { success: true };
     } catch (err: any) {
       console.error('Profile update error:', err);
-      return { success: false, message: err.message || 'নেটওয়ার্ক সংযোগে সমস্যা হয়েছে' };
+      return { success: false, message: err.message || 'সার্ভারে সংরক্ষণ ব্যর্থ হয়েছে। পুনরায় চেষ্টা করুন।' };
     }
   };
 
@@ -1620,15 +1728,30 @@ export default function App() {
         (snapshot) => {
           if (!snapshot.exists()) return;
           const ap = snapshot.data();
-          if (ap.avatarUrl && ap.avatarUrl.startsWith('data:image/')) {
-            setAdminAvatar(ap.avatarUrl);
+          const serverAvatar =
+            typeof ap.avatarUrl === 'string' && ap.avatarUrl && !ap.avatarUrl.startsWith('/uploads/')
+              ? ap.avatarUrl
+              : '';
+          if (serverAvatar) {
+            setAdminAvatar(serverAvatar);
+            safeStorage.setItem('protyasha_admin_avatar', serverAvatar);
+            if (serverAvatar.startsWith('data:image/')) {
+              savePersistentImage('avatar_admin', serverAvatar);
+            }
           }
           setUser(prev => {
             if (!prev || prev.role !== 'admin') return prev;
+            const nextName = ap.name || prev.name;
+            const nextPhone = ap.phone || prev.phone;
+            const nextAvatar = serverAvatar || prev.avatarUrl;
+            if (nextName === prev.name && nextPhone === prev.phone && nextAvatar === prev.avatarUrl) {
+              return prev;
+            }
             return {
               ...prev,
-              name: ap.name || prev.name,
-              avatarUrl: ap.avatarUrl || prev.avatarUrl
+              name: nextName,
+              phone: nextPhone,
+              avatarUrl: nextAvatar
             };
           });
         },
@@ -2799,6 +2922,21 @@ export default function App() {
             lang={lang}
             onClose={() => setIsUserManagementOpen(false)}
             onUserUpdated={(updatedUser) => {
+              if (updatedUser.role === 'admin') {
+                if (updatedUser.avatarUrl) {
+                  setAdminAvatar(updatedUser.avatarUrl);
+                }
+                safeSetDoc(
+                  doc(db, 'settings', 'admin_profile'),
+                  {
+                    name: updatedUser.name,
+                    phone: updatedUser.phone,
+                    ...(updatedUser.avatarUrl ? { avatarUrl: updatedUser.avatarUrl } : {}),
+                    updatedAt: new Date().toISOString()
+                  },
+                  { merge: true }
+                ).catch(() => {});
+              }
               if (user && (user.id === updatedUser.id || user.phone === updatedUser.phone || (updatedUser.role === 'admin' && user.role === 'admin'))) {
                 setUser(prev => prev ? {
                   ...prev,
@@ -2807,9 +2945,6 @@ export default function App() {
                   avatarUrl: updatedUser.avatarUrl || prev.avatarUrl,
                   role: updatedUser.role
                 } : null);
-                if (updatedUser.role === 'admin' && updatedUser.avatarUrl) {
-                  setAdminAvatar(updatedUser.avatarUrl);
-                }
               }
             }}
           />
@@ -3023,6 +3158,7 @@ export default function App() {
             onLanguageChange={setLang}
             onUpdateAdminProfile={handleUpdateAdminProfile}
             onUpdateUserProfile={handleUpdateUserProfile}
+            onBindMethods={handleBindMethods}
             onOpenLogin={openLoginView}
             onOpenChangePin={() => {
               if (user?.role === 'admin') {

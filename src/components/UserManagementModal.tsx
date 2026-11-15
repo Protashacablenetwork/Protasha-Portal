@@ -233,19 +233,38 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
     sounds.playTap();
 
     try {
+      const cleanAvatar = editAvatar && !editAvatar.startsWith('/uploads/') ? editAvatar : '';
       const updatedUser: AppUser = {
         ...editingUser,
         name: editName.trim(),
         phone: editPhone.trim(),
         pin: editPin.trim(),
-        avatarUrl: editAvatar,
+        avatarUrl: cleanAvatar,
         status: editStatus,
         role: editRole,
         updatedAt: new Date().toISOString()
       };
 
+      const rawUser = editingUser as Record<string, any>;
+      const firestorePayload: Record<string, any> = {
+        id: updatedUser.id,
+        name: updatedUser.name,
+        phone: updatedUser.phone,
+        pin: updatedUser.pin,
+        avatarUrl: cleanAvatar,
+        role: updatedUser.role,
+        status: updatedUser.status,
+        updatedAt: updatedUser.updatedAt,
+        ...(updatedUser.createdAt ? { createdAt: updatedUser.createdAt } : {}),
+        ...(rawUser.gmail !== undefined ? { gmail: rawUser.gmail } : {}),
+        ...(rawUser.boundMethods !== undefined ? { boundMethods: rawUser.boundMethods } : {}),
+        ...(rawUser.readNotifications !== undefined ? { readNotifications: rawUser.readNotifications } : {}),
+        ...(rawUser.virtualCardNumber !== undefined ? { virtualCardNumber: rawUser.virtualCardNumber } : {}),
+        ...(rawUser.recordedBy !== undefined ? { recordedBy: rawUser.recordedBy } : {})
+      };
+
       saveStoredUser(updatedUser);
-      await safeSetDoc(doc(db, 'users', editingUser.id), updatedUser, { merge: true });
+      await safeSetDoc(doc(db, 'users', editingUser.id), firestorePayload, { merge: true });
 
       if (editStatus === 'suspended') {
         await adminForceReleaseSession({

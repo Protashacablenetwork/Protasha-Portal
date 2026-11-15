@@ -270,10 +270,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   // Image Upload with client compression
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
 
     try {
+      setEditError('');
       const compressedDataUrl = await compressImage(file, 400, 400, 0.85);
+      if (!compressedDataUrl || !compressedDataUrl.startsWith('data:image/')) {
+        throw new Error('Invalid compressed image');
+      }
       setEditAvatar(compressedDataUrl);
       sounds.playSuccess();
     } catch (err) {

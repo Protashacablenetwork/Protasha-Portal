@@ -39,7 +39,16 @@ export const Header: React.FC<HeaderProps> = ({
   const isAdmin = user?.role === 'admin';
   const isSubAdmin = user?.role === 'sub-admin';
   const isLoggedIn = !!user && (user.role === 'admin' || user.role === 'sub-admin' || user.role === 'user');
-  const rawAvatar = user?.avatarUrl || adminAvatar || (typeof window !== 'undefined' ? (safeStorage.getItem('protyasha_admin_avatar') || safeStorage.getItem('protyasha_last_avatar') || '') : '');
+  const rawAvatar = 
+    user?.avatarUrl || 
+    adminAvatar || 
+    (typeof window !== 'undefined' ? (
+      safeStorage.getItem('protyasha_admin_avatar') || 
+      safeStorage.getItem('protyasha_last_avatar') || 
+      safeStorage.getItem('protyasha_img_avatar_admin') ||
+      (user?.id ? safeStorage.getItem(`protyasha_img_avatar_user_${user.id}`) : '') ||
+      ''
+    ) : '');
   const displayAvatar = rawAvatar ? String(rawAvatar).trim() : '';
 
   const [internalWeather, setInternalWeather] = useState<WeatherData | null>(null);

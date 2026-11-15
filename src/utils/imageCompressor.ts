@@ -60,8 +60,13 @@ export async function compressImage(
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Export as JPEG with good compression
-        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        // Export as JPEG with progressive size guard for Firestore (<450KB)
+        let q = quality;
+        let dataUrl = canvas.toDataURL('image/jpeg', q);
+        while (dataUrl.length > 450000 && q > 0.35) {
+          q -= 0.12;
+          dataUrl = canvas.toDataURL('image/jpeg', q);
+        }
         resolve(dataUrl);
       };
 
