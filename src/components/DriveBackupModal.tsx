@@ -791,7 +791,7 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <h4 className="font-black text-base text-slate-900 dark:text-white leading-tight">
-                          {isBn ? 'প্রত্যাশা ক্যাবল নেটওয়ার্ক' : 'Protasha Cable Network'}
+                          {isBn ? 'প্রত্যাশা ডিজিটাল পোর্টাল' : 'Protyasha Digital Portal'}
                         </h4>
                         <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold flex items-center gap-1 ${
                           isConnected 
@@ -898,7 +898,7 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
                       </p>
                       <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium mt-0.5 flex items-center gap-1">
                         <span>{isBn ? 'ব্র্যান্ডিং নাম:' : 'Branding:'}</span>
-                        <span className="font-extrabold">{isBn ? 'প্রত্যাশা ক্যাবল নেটওয়ার্ক' : 'Protyasha Cable Network'}</span>
+                        <span className="font-extrabold">{isBn ? 'প্রত্যাশা ডিজিটাল পোর্টাল' : 'Protyasha Digital Portal'}</span>
                         <span>• {isBn ? 'ক্লাউড ব্যাকআপ প্রস্তুত' : 'Cloud Backup Ready'}</span>
                       </p>
                     </div>

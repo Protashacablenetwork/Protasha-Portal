@@ -129,7 +129,7 @@ export async function getOrCreateBackupFolder(accessToken: string): Promise<stri
     body: JSON.stringify({
       name: 'Admin_Backups',
       mimeType: 'application/vnd.google-apps.folder',
-      description: 'প্রত্যাশা ক্যাবল নেটওয়ার্ক - ক্লাউড ডাটাবেস মাস্টার ব্যাকআপ ফোল্ডার'
+      description: 'প্রত্যাশা ডিজিটাল পোর্টাল - ক্লাউড ডাটাবেস মাস্টার ব্যাকআপ ফোল্ডার'
     })
   });
 

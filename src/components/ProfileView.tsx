@@ -1493,7 +1493,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                           <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60">
                             <Check className="w-3.5 h-3.5 text-emerald-600" />
                             <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
-                              {isBn ? 'প্রত্যাশা ক্যাবল নেটওয়ার্কে সংযুক্ত' : 'Linked to Protyasha'}
+                              {isBn ? 'প্রত্যাশা ডিজিটাল পোর্টালে সংযুক্ত' : 'Linked to Protyasha Digital Portal'}
                             </span>
                           </div>
                           <span className="text-[9px] text-slate-500 font-mono truncate max-w-[150px]">{user.gmail}</span>
