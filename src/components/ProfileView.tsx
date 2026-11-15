@@ -1489,13 +1489,33 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                         </div>
                       </div>
                       {user?.gmail ? (
-                        <div className="flex flex-col items-end gap-0.5">
-                          <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60">
+                        <div className="flex flex-col items-end gap-1">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                setIsSaving(true);
+                                const result = await signInWithGoogleDrive();
+                                if (result.user.email && onBindMethods) {
+                                  await onBindMethods({ gmail: result.user.email });
+                                  setModalSuccessMsg(isBn ? `জিমেইল সফলভাবে পরিবর্তন করা হয়েছে (${result.user.email})` : `Gmail changed to ${result.user.email}`);
+                                  sounds.playSuccess();
+                                }
+                              } catch (err: any) {
+                                setEditError(err.message || (isBn ? 'জিমেইল সংযোগ ব্যর্থ হয়েছে' : 'Gmail linking failed'));
+                              } finally {
+                                setIsSaving(false);
+                              }
+                            }}
+                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/60 border border-emerald-200 dark:border-emerald-900/60 cursor-pointer active:scale-95 transition-all text-left shadow-2xs"
+                            title={isBn ? 'অন্য জিমেইল পরিবর্তন করতে ক্লিক করুন' : 'Click to change Gmail account'}
+                          >
                             <Check className="w-3.5 h-3.5 text-emerald-600" />
                             <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
                               {isBn ? 'প্রত্যাশা ডিজিটাল পোর্টালে সংযুক্ত' : 'Linked to Protyasha Digital Portal'}
                             </span>
-                          </div>
+                            <RefreshCw className="w-2.5 h-2.5 text-emerald-600" />
+                          </button>
                           <span className="text-[9px] text-slate-500 font-mono truncate max-w-[150px]">{user.gmail}</span>
                         </div>
                       ) : (
