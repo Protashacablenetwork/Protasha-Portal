@@ -40,7 +40,7 @@ export const Header: React.FC<HeaderProps> = ({
   const isSubAdmin = user?.role === 'sub-admin';
   const isLoggedIn = !!user && (user.role === 'admin' || user.role === 'sub-admin' || user.role === 'user');
   const rawAvatar = user?.avatarUrl || adminAvatar || (typeof window !== 'undefined' ? (safeStorage.getItem('protyasha_admin_avatar') || safeStorage.getItem('protyasha_last_avatar') || '') : '');
-  const displayAvatar = rawAvatar && !rawAvatar.startsWith('/uploads/') ? rawAvatar : (rawAvatar.startsWith('data:image/') ? rawAvatar : '');
+  const displayAvatar = rawAvatar ? String(rawAvatar).trim() : '';
 
   const [internalWeather, setInternalWeather] = useState<WeatherData | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
