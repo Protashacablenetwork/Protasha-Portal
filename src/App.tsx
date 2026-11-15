@@ -66,6 +66,17 @@ import { checkAndGeneratePrayerNotifications, checkAndGenerateFastingReminders, 
 import { safeStorage } from './utils/safeStorage';
 import { canAddTransactions, canModifyTransaction, isTransactionOwner, isLoggedInSession } from './utils/permissions';
 import { saveStoredUser } from './utils/userStorage';
+import {
+  startDeviceSessionGuard,
+  releaseDeviceSession,
+  claimDeviceSession
+} from './utils/deviceSession';
+import {
+  checkForAppUpdates,
+  buildUpdateNotificationItem,
+  markVersionFeaturesAcknowledged,
+  UpdateCheckResult
+} from './utils/appVersion';
 import { getDriveAccessToken, initDriveAuth, uploadBackupToGoogleDrive } from './utils/googleDrive';
 import { collectMasterBackupData } from './utils/backupCollector';
 import {
@@ -136,6 +147,9 @@ export default function App() {
     }
     return true; // Keep user on login page by default when not logged in
   });
+
+  // Notice shown on Login screen if forced out by single-device lock or admin action
+  const [sessionNotice, setSessionNotice] = useState<string>('');
 
   // Guard: If user is logged out (user === null), enforce login view always
   useEffect(() => {
@@ -327,6 +341,18 @@ export default function App() {
       const unsub = onSnapshot(doc(db, 'users', user.id), (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
+          if (data?.status === 'suspended' && user.id !== 'admin-master') {
+            setSessionNotice(
+              lang === 'bn'
+                ? 'আপনার অ্যাকাউন্টটি সাময়িকভাবে স্থগিত করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।'
+                : 'Your account has been suspended. Please contact admin.'
+            );
+            safeStorage.removeItem('protyasha_user');
+            sessionStorage.removeItem('protyasha_session_active');
+            setUser(null);
+            setIsLoginOpen(true);
+            return;
+          }
           if (Array.isArray(data.readNotifications)) {
             setReadNotifIds(prev => {
               const combined = Array.from(new Set([...prev, ...data.readNotifications]));
@@ -342,7 +368,47 @@ export default function App() {
       });
       return () => unsub();
     }
-  }, [user?.id, userKey]);
+  }, [user?.id, userKey, lang]);
+
+  // Real-time Single-Device Session Guard (Enforces 1 device per login ID across admin, sub-admin & user)
+  useEffect(() => {
+    if (!user || user.role === 'visitor') return;
+
+    const stopGuard = startDeviceSessionGuard(user, (reason, otherDeviceLabel) => {
+      const notice =
+        reason === 'other_device'
+          ? (lang === 'bn'
+              ? `এই অ্যাকাউন্টটি ইতিমধ্যে অন্য একটি ডিভাইসে (${otherDeviceLabel || 'অন্য ডিভাইস'}) সক্রিয় থাকায় আপনার সেশন স্বয়ংক্রিয়ভাবে লগআউট হয়েছে। প্রতিটি আইডি একসাথে শুধুমাত্র ১টি ডিভাইসে ব্যবহার করা যাবে।`
+              : `This account is active on another device (${otherDeviceLabel || 'other device'}), so this session was signed out. Only 1 device is allowed per account.`)
+          : (lang === 'bn'
+              ? 'অ্যাডমিন বা অন্য সেশন থেকে আপনার ডিভাইস লগআউট করা হয়েছে। পুনরায় লগইন করুন।'
+              : 'Your device session was logged out remotely. Please sign in again.');
+
+      setSessionNotice(notice);
+      safeStorage.removeItem('protyasha_user');
+      sessionStorage.removeItem('protyasha_session_active');
+      setUser(null);
+      setActiveTab('home');
+      setIsProfileOpen(false);
+      setSelectedTransaction(null);
+      setActivePortal(null);
+      setIsNotificationsOpen(false);
+      setIsAuditLogOpen(false);
+      setIsUserManagementOpen(false);
+      setIsBannerManagerOpen(false);
+      setIsChannelManagerOpen(false);
+      setIsRecycleBinOpen(false);
+      setIsChangePinOpen(false);
+      setIsFooterSettingsOpen(false);
+      setIsEntryModalOpen(false);
+      setReceiptTransaction(null);
+      setSelectedNotificationDetail(null);
+      setIsLoginOpen(true);
+      window.history.pushState({ screen: 'login' }, '', window.location.pathname);
+    });
+
+    return () => stopGuard();
+  }, [user?.id, user?.phone, user?.role, lang]);
 
   // Real-time synchronization with Cloud Firestore for Staff Accounts
   useEffect(() => {
@@ -844,6 +910,17 @@ export default function App() {
       await safeSetDoc(doc(db, 'users', targetId), userData, { merge: true });
       saveStoredUser(userData as any);
 
+      // If phone number changed, transfer single-device lock to the new phone number
+      if (updatedData.phone && updatedData.phone !== user.phone) {
+        await releaseDeviceSession(user).catch(() => {});
+        await claimDeviceSession({
+          id: targetId,
+          phone: updatedData.phone,
+          role: user.role,
+          name: updatedData.name
+        }).catch(() => {});
+      }
+
       // Update Active Session User State
       const updatedSession: UserSession = {
         ...user,
@@ -1054,6 +1131,85 @@ export default function App() {
       window.removeEventListener('fasting-reminder-setting-changed', handleSettingChange);
     };
   }, [currentDistrict, showAppToast]);
+
+  // Handle manual or automatic app update check & trigger notification if new update/features exist
+  const handleUpdateCheckResult = useCallback(
+    (res: UpdateCheckResult, isBackgroundCheck: boolean = false) => {
+      if (res.status === 'update_available' || res.hasNewFeatures) {
+        const updateNotif = buildUpdateNotificationItem(res);
+        setNotifications(prev => {
+          if (prev.some(n => n.id === updateNotif.id)) return prev;
+          const next = [updateNotif, ...prev];
+          try {
+            safeStorage.setItem('protyasha_notifications', JSON.stringify(next));
+          } catch {}
+          return next;
+        });
+
+        const firstFeature = lang === 'bn'
+          ? (res.releaseInfo.featuresBn[0] || res.releaseInfo.titleBn)
+          : (res.releaseInfo.featuresEn[0] || res.releaseInfo.titleEn);
+
+        if (res.status === 'update_available') {
+          showAppToast(
+            lang === 'bn'
+              ? `নতুন অ্যাপ আপডেট পাওয়া গেছে (v${res.latestVersion})`
+              : `New App Update Available (v${res.latestVersion})`,
+            firstFeature,
+            'amber',
+            8000
+          );
+        } else {
+          showAppToast(
+            lang === 'bn'
+              ? `নতুন ফিচার যুক্ত হয়েছে (v${res.latestVersion})`
+              : `New Features Added (v${res.latestVersion})`,
+            firstFeature,
+            'emerald',
+            7000
+          );
+          markVersionFeaturesAcknowledged(res.releaseInfo);
+        }
+
+        if (
+          typeof window !== 'undefined' &&
+          'Notification' in window &&
+          Notification.permission === 'granted' &&
+          res.status === 'update_available'
+        ) {
+          try {
+            new Notification(updateNotif.titleBn, {
+              body: firstFeature
+            });
+          } catch {}
+        }
+      } else if (!isBackgroundCheck && res.status === 'up_to_date') {
+        showAppToast(
+          lang === 'bn'
+            ? `আপনার অ্যাপটি সর্বশেষ ভার্সনে (v${res.currentVersion}) রয়েছে`
+            : `App is on the latest version (v${res.currentVersion})`,
+          lang === 'bn' ? 'সকল নতুন ফিচার সক্রিয় রয়েছে।' : 'All latest features are active.',
+          'emerald',
+          4500
+        );
+      }
+    },
+    [lang, showAppToast]
+  );
+
+  // Background check on app startup so users automatically receive a notification when new features/versions arrive
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      try {
+        const res = await checkForAppUpdates();
+        if (res.status === 'update_available' || res.hasNewFeatures) {
+          handleUpdateCheckResult(res, true);
+        }
+      } catch {}
+    }, 3500);
+
+    return () => clearTimeout(timer);
+  }, [handleUpdateCheckResult]);
 
   // Listen for iframe portal messages (e.g., in-app back button inside portal)
   useEffect(() => {
@@ -1991,6 +2147,7 @@ export default function App() {
   };
 
   const handleLoginSuccess = (loggedInUser: UserSession) => {
+    setSessionNotice('');
     setUser(loggedInUser);
     safeStorage.setItem('protyasha_user', JSON.stringify(loggedInUser));
     if (loggedInUser.role !== 'visitor') {
@@ -2019,11 +2176,19 @@ export default function App() {
     );
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     sounds.playTap();
-    if (user?.avatarUrl && user.role !== 'visitor') {
-      safeStorage.setItem('protyasha_last_avatar', user.avatarUrl);
+    const currentSessionUser = userRef.current;
+    if (currentSessionUser?.avatarUrl && currentSessionUser.role !== 'visitor') {
+      safeStorage.setItem('protyasha_last_avatar', currentSessionUser.avatarUrl);
     }
+    if (currentSessionUser && currentSessionUser.role !== 'visitor') {
+      await Promise.race([
+        releaseDeviceSession(currentSessionUser),
+        new Promise<void>((resolve) => setTimeout(resolve, 1500))
+      ]).catch(() => {});
+    }
+    setSessionNotice('');
     safeStorage.removeItem('protyasha_user');
     sessionStorage.removeItem('protyasha_session_active');
     setUser(null);
@@ -2236,6 +2401,8 @@ export default function App() {
             footerConfig={footerConfig}
             banners={banners}
             adminAvatar={adminAvatar}
+            sessionNotice={sessionNotice}
+            onClearSessionNotice={() => setSessionNotice('')}
             onLanguageChange={setLang}
             onLoginSuccess={handleLoginSuccess}
             onClose={() => {
@@ -2598,6 +2765,7 @@ export default function App() {
                       openLoginView();
                     }
                   }}
+                  onUpdateChecked={(res) => handleUpdateCheckResult(res, false)}
                   onLogout={handleLogout}
                   onClose={() => setActiveTab('home')}
                 />
@@ -2904,6 +3072,7 @@ export default function App() {
                 openLoginView();
               }
             }}
+            onUpdateChecked={(res) => handleUpdateCheckResult(res, false)}
             onLogout={handleLogout}
             onClose={() => setIsProfileOpen(false)}
           />

@@ -16,7 +16,9 @@ import {
   EyeOff,
   Shield,
   ShieldAlert,
-  Loader2
+  Loader2,
+  MonitorSmartphone,
+  LogOut as LogOutIcon
 } from 'lucide-react';
 import { db, safeSetDoc, safeDeleteDoc, handleFirestoreError, OperationType } from '../utils/firebase';
 import { collection, getDocs, onSnapshot, doc, query, where } from 'firebase/firestore';
@@ -26,6 +28,12 @@ import { safeStorage } from '../utils/safeStorage';
 import { compressImage } from '../utils/imageCompressor';
 import { savePersistentImage, getPersistentImage } from '../utils/imageStorage';
 import { getStoredUsers, saveStoredUser, deleteStoredUser, findStoredUserByPhone } from '../utils/userStorage';
+import {
+  subscribeActiveDeviceSessions,
+  getSessionAccountKey,
+  adminForceReleaseSession,
+  DeviceSessionRecord
+} from '../utils/deviceSession';
 
 interface UserManagementModalProps {
   isOpen: boolean;
@@ -50,6 +58,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [activeSessions, setActiveSessions] = useState<Record<string, DeviceSessionRecord>>({});
+  const [unlockingUserId, setUnlockingUserId] = useState<string | null>(null);
 
   // Editing User State
   const [editingUser, setEditingUser] = useState<AppUser | null>(null);
@@ -138,8 +148,16 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       });
     } catch {}
 
+    let unsubSessions: (() => void) | null = null;
+    try {
+      unsubSessions = subscribeActiveDeviceSessions((sessionsMap) => {
+        setActiveSessions(sessionsMap);
+      });
+    } catch {}
+
     return () => {
       if (unsub) unsub();
+      if (unsubSessions) unsubSessions();
     };
   }, [isOpen]);
 
@@ -228,6 +246,15 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
       saveStoredUser(updatedUser);
       await safeSetDoc(doc(db, 'users', editingUser.id), updatedUser, { merge: true });
+
+      if (editStatus === 'suspended') {
+        await adminForceReleaseSession({
+          id: editingUser.id,
+          phone: editPhone.trim(),
+          role: editRole,
+          name: editName.trim()
+        }).catch(() => {});
+      }
 
       sounds.playSuccess();
       setSuccessMsg(isBn ? 'ব্যবহারকারীর তথ্য সফলভাবে সংরক্ষিত হয়েছে!' : 'User updated successfully!');
@@ -373,10 +400,19 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
     );
     if (!confirmDelete) return;
 
+    const targetUser = users.find(u => u.id === id);
     sounds.playTap();
     try {
       deleteStoredUser(id);
       await safeDeleteDoc(doc(db, 'users', id));
+      if (targetUser) {
+        await adminForceReleaseSession({
+          id: targetUser.id,
+          phone: targetUser.phone,
+          role: targetUser.role,
+          name: targetUser.name
+        }).catch(() => {});
+      }
       sounds.playSuccess();
       setSuccessMsg(isBn ? 'ব্যবহারকারী মুছে ফেলা হয়েছে!' : 'User deleted successfully!');
       setUsers(prev => prev.filter(u => u.id !== id));
@@ -384,6 +420,39 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
     } catch (err) {
       console.error('Delete user error:', err);
       setErrorMsg(isBn ? 'ডিলিট করা যায়নি' : 'Delete failed');
+    }
+  };
+
+  const handleForceUnlockDevice = async (targetUser: AppUser, deviceLabel: string) => {
+    const confirmed = window.confirm(
+      isBn
+        ? `"${targetUser.name}"-এর বর্তমান ডিভাইস (${deviceLabel}) থেকে লগআউট করে ডিভাইস লক আনলক করতে চান?`
+        : `Force logout "${targetUser.name}" from (${deviceLabel}) and unlock device?`
+    );
+    if (!confirmed) return;
+
+    sounds.playTap();
+    setUnlockingUserId(targetUser.id);
+    setErrorMsg('');
+    try {
+      await adminForceReleaseSession({
+        id: targetUser.id,
+        phone: targetUser.phone,
+        role: targetUser.role,
+        name: targetUser.name
+      });
+      sounds.playSuccess();
+      setSuccessMsg(
+        isBn
+          ? `"${targetUser.name}"-এর ডিভাইস লক আনলক করা হয়েছে। এখন নতুন ডিভাইস থেকে লগইন করা যাবে।`
+          : `Device lock cleared for "${targetUser.name}". They can now log in on a new device.`
+      );
+      setTimeout(() => setSuccessMsg(''), 4000);
+    } catch (err) {
+      console.error('Device unlock error:', err);
+      setErrorMsg(isBn ? 'ডিভাইস আনলক করা যায়নি' : 'Failed to unlock device');
+    } finally {
+      setUnlockingUserId(null);
     }
   };
 
@@ -709,6 +778,12 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                 filteredUsers.map((u) => {
                   const isAdmin = u.role === 'admin';
                   const isSuspended = u.status === 'suspended';
+                  const sessionKey = getSessionAccountKey({
+                    id: u.id,
+                    phone: u.phone,
+                    role: u.role
+                  });
+                  const activeSession = activeSessions[sessionKey];
 
                   return (
                     <div
@@ -765,6 +840,25 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                               {u.pin}
                             </span>
                           </div>
+
+                          {activeSession && (
+                            <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-900/50">
+                                <MonitorSmartphone className="w-3 h-3" />
+                                <span>{isBn ? `লগইন: ${activeSession.deviceLabel}` : `Active: ${activeSession.deviceLabel}`}</span>
+                              </span>
+                              <button
+                                type="button"
+                                disabled={unlockingUserId === u.id}
+                                onClick={() => handleForceUnlockDevice(u, activeSession.deviceLabel)}
+                                className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 border border-amber-200/80 dark:border-amber-800 transition-colors cursor-pointer disabled:opacity-50"
+                                title={isBn ? 'ডিভাইস থেকে লগআউট ও আনলক করুন' : 'Force logout & unlock device'}
+                              >
+                                <LogOutIcon className="w-2.5 h-2.5" />
+                                <span>{unlockingUserId === u.id ? (isBn ? 'আনলক হচ্ছে...' : 'Unlocking...') : (isBn ? 'ডিভাইস আনলক' : 'Unlock Device')}</span>
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
 

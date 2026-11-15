@@ -31,7 +31,9 @@ import {
   Cloud,
   UploadCloud,
   Layers,
-  Clock
+  Clock,
+  RefreshCw,
+  Download
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Language, UserSession } from '../types';
@@ -43,6 +45,14 @@ import { db } from '../utils/firebase';
 import { enableNetwork, disableNetwork } from 'firebase/firestore';
 import { signInWithGoogleDrive } from '../utils/googleDrive';
 import { isFastingReminderEnabled, setFastingReminderEnabled } from '../utils/prayerTimeService';
+import { getDeviceLabel } from '../utils/deviceSession';
+import {
+  CURRENT_APP_VERSION,
+  checkForAppUpdates,
+  applyAppUpdateAndReload,
+  markVersionFeaturesAcknowledged,
+  UpdateCheckResult
+} from '../utils/appVersion';
 
 interface ProfileViewProps {
   user: UserSession | null;
@@ -66,6 +76,7 @@ interface ProfileViewProps {
   onBindMethods?: (data: { phone?: string; gmail?: string; pin?: string }) => Promise<{ success: boolean; message?: string }>;
   onOpenLogin?: () => void;
   onOpenFooterSettings?: () => void;
+  onUpdateChecked?: (result: UpdateCheckResult) => void;
   isTabMode?: boolean;
 }
 
@@ -91,6 +102,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onBindMethods,
   onOpenLogin,
   onOpenFooterSettings,
+  onUpdateChecked,
   isTabMode = false
 }) => {
   const t = translations[lang];
@@ -160,6 +172,37 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     return safeStorage.getItem('protyasha_offline_mode') === 'true';
   });
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // App Version & Check for Update State
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
+  const [isApplyingUpdate, setIsApplyingUpdate] = useState(false);
+
+  const handleCheckForUpdate = async () => {
+    sounds.playTap();
+    setIsCheckingUpdate(true);
+    try {
+      const res = await checkForAppUpdates();
+      setUpdateResult(res);
+      setIsUpdateModalOpen(true);
+
+      if (onUpdateChecked) {
+        onUpdateChecked(res);
+      }
+
+      if (res.status === 'update_available') {
+        sounds.playSuccess();
+      } else if (res.status === 'up_to_date') {
+        sounds.playSuccess();
+        markVersionFeaturesAcknowledged(res.releaseInfo);
+      }
+    } catch (err) {
+      console.error('Update check failed:', err);
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
 
   const handleToggleOfflineMode = async (val: boolean) => {
     sounds.playTap();
@@ -484,7 +527,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   <span>{user?.phone || '০১৭৭৭৮৭৭২০৭'}</span>
                 </p>
 
-                <div className="flex items-center gap-1.5 mt-1.5">
+                <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                   {isAdmin ? (
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200/50">
                       <ShieldCheck className="w-3 h-3" />
@@ -501,6 +544,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                       <span>{isBn ? 'নিবন্ধিত সম্মানিত সদস্য' : 'Registered Member'}</span>
                     </span>
                   )}
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700">
+                    <Lock className="w-2.5 h-2.5 text-emerald-600" />
+                    <span>{isBn ? `১ ডিভাইস (${getDeviceLabel()})` : `1-Device (${getDeviceLabel()})`}</span>
+                  </span>
                 </div>
               </div>
             </div>
@@ -628,49 +675,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 ENG
               </button>
             </div>
-          </div>
-
-          {/* Sehri & Iftar 10-Min Auto-Reminder Setting Row */}
-          <div className="p-4 flex items-center justify-between gap-3 bg-gradient-to-r from-emerald-50/40 to-teal-50/30 dark:from-emerald-950/15 dark:to-teal-950/10">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
-                fastingReminderEnabled
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'bg-slate-200 dark:bg-slate-800 text-slate-500'
-              }`}>
-                <Bell className="w-5 h-5" />
-              </div>
-              <div className="min-w-0">
-                <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 flex-wrap">
-                  <span>{isBn ? 'সেহরি ও ইফতার রিমাইন্ডার' : 'Sehri & Iftar Reminder'}</span>
-                  <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-                    fastingReminderEnabled
-                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300'
-                      : 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                  }`}>
-                    {fastingReminderEnabled ? (isBn ? 'চালু' : 'ON') : (isBn ? 'বন্ধ' : 'OFF')}
-                  </span>
-                </h4>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {isBn
-                    ? 'সেহরি শেষ ও ইফতারের ১০ মিনিট আগে স্বয়ংক্রিয় নোটিফিকেশন পাঠাবে'
-                    : 'Auto-notify 10 minutes before Sehri ends and Iftar'}
-                </p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => handleToggleFastingReminder(!fastingReminderEnabled)}
-              aria-label={isBn ? 'সেহরি ও ইফতার রিমাইন্ডার চালু বা বন্ধ করুন' : 'Toggle Sehri & Iftar reminder'}
-              className={`w-12 h-7 rounded-full transition-colors relative p-1 cursor-pointer shrink-0 ${
-                fastingReminderEnabled ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
-              }`}
-            >
-              <div className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${
-                fastingReminderEnabled ? 'translate-x-5' : 'translate-x-0'
-              }`} />
-            </button>
           </div>
 
           {/* Sub-Admin Control & Permissions Info Card */}
@@ -918,7 +922,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </>
           )}
 
-          {/* Offline Mode & Auto-Sync Toggle Row (Placed at the very bottom of the list) */}
+          {/* Offline Mode & Auto-Sync Toggle Row */}
           <div className="p-4 flex items-center justify-between bg-gradient-to-r from-amber-50/40 to-orange-50/30 dark:from-amber-950/20 dark:to-orange-950/10">
             <div className="flex items-center gap-3">
               <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${offlineMode ? 'bg-amber-500 text-white shadow-md' : 'bg-emerald-500 text-white shadow-md'}`}>
@@ -963,6 +967,87 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Sehri & Iftar 10-Min Auto-Reminder Setting Row */}
+          <div className="p-4 flex items-center justify-between gap-3 bg-gradient-to-r from-emerald-50/40 to-teal-50/30 dark:from-emerald-950/15 dark:to-teal-950/10">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+                fastingReminderEnabled
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'bg-slate-200 dark:bg-slate-800 text-slate-500'
+              }`}>
+                <Bell className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 flex-wrap">
+                  <span>{isBn ? 'সেহরি ও ইফতার রিমাইন্ডার' : 'Sehri & Iftar Reminder'}</span>
+                  <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                    fastingReminderEnabled
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300'
+                      : 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                  }`}>
+                    {fastingReminderEnabled ? (isBn ? 'চালু' : 'ON') : (isBn ? 'বন্ধ' : 'OFF')}
+                  </span>
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {isBn
+                    ? 'সেহরি শেষ ও ইফতারের ১০ মিনিট আগে স্বয়ংক্রিয় নোটিফিকেশন পাঠাবে'
+                    : 'Auto-notify 10 minutes before Sehri ends and Iftar'}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleToggleFastingReminder(!fastingReminderEnabled)}
+              aria-label={isBn ? 'সেহরি ও ইফতার রিমাইন্ডার চালু বা বন্ধ করুন' : 'Toggle Sehri & Iftar reminder'}
+              className={`w-12 h-7 rounded-full transition-colors relative p-1 cursor-pointer shrink-0 ${
+                fastingReminderEnabled ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
+              }`}
+            >
+              <div className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${
+                fastingReminderEnabled ? 'translate-x-5' : 'translate-x-0'
+              }`} />
+            </button>
+          </div>
+
+          {/* Check for Update Row (Placed at the very bottom of the list) */}
+          <button
+            type="button"
+            onClick={handleCheckForUpdate}
+            disabled={isCheckingUpdate}
+            className="w-full p-4 flex items-center justify-between gap-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors text-left cursor-pointer bg-gradient-to-r from-sky-50/40 to-indigo-50/30 dark:from-sky-950/15 dark:to-indigo-950/10 disabled:opacity-75"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-2xl bg-sky-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                <RefreshCw className={`w-5 h-5 ${isCheckingUpdate ? 'animate-spin' : ''}`} />
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 flex-wrap">
+                  <span>{isBn ? 'চেক ফর আপডেট' : 'Check for Update'}</span>
+                  <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 dark:bg-sky-900/60 dark:text-sky-300 font-mono">
+                    v{CURRENT_APP_VERSION}
+                  </span>
+                  {updateResult?.status === 'update_available' && (
+                    <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 dark:bg-rose-900/60 dark:text-rose-300">
+                      {isBn ? 'নতুন আপডেট!' : 'Update Ready'}
+                    </span>
+                  )}
+                  {updateResult?.status === 'up_to_date' && (
+                    <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
+                      {isBn ? 'সর্বশেষ' : 'Latest'}
+                    </span>
+                  )}
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {isCheckingUpdate
+                    ? (isBn ? 'সর্বশেষ ভার্সন যাচাই করা হচ্ছে...' : 'Checking for latest version...')
+                    : (isBn ? 'অ্যাপের বর্তমান ভার্সন ও নতুন ফিচার যাচাই করুন' : 'Verify latest version and view new features')}
+                </p>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5 text-slate-400 shrink-0" />
+          </button>
         </div>
 
         {/* Logout Button */}
@@ -1446,6 +1531,178 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </div>
               )}
 
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================== */}
+      {/* APP UPDATE CHECK & NEW FEATURES MODAL                          */}
+      {/* ============================================================== */}
+      {isUpdateModalOpen && updateResult && (
+        <div className="fixed inset-0 z-[85] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh]">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-white shadow-md ${
+                  updateResult.status === 'update_available'
+                    ? 'bg-gradient-to-tr from-rose-500 to-amber-500'
+                    : updateResult.status === 'offline'
+                    ? 'bg-amber-500'
+                    : 'bg-gradient-to-tr from-emerald-500 to-teal-600'
+                }`}>
+                  {updateResult.status === 'update_available' ? (
+                    <Download className="w-5 h-5" />
+                  ) : updateResult.status === 'offline' ? (
+                    <AlertCircle className="w-5 h-5" />
+                  ) : (
+                    <CheckCircle2 className="w-5 h-5" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                    {isBn ? 'অ্যাপ আপডেট ও ভার্সন তথ্য' : 'App Update & Version Info'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
+                    {isBn ? `বর্তমান ভার্সন: v${updateResult.currentVersion}` : `Current: v${updateResult.currentVersion}`}
+                    {updateResult.latestVersion !== updateResult.currentVersion && (
+                      <span> → v{updateResult.latestVersion}</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  markVersionFeaturesAcknowledged(updateResult.releaseInfo);
+                  setIsUpdateModalOpen(false);
+                }}
+                className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3.5 overflow-y-auto">
+              {updateResult.status === 'update_available' ? (
+                <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60">
+                  <p className="text-xs font-extrabold text-rose-800 dark:text-rose-200">
+                    {isBn
+                      ? `নতুন আপডেট (v${updateResult.latestVersion}) পাওয়া গেছে!`
+                      : `New update (v${updateResult.latestVersion}) is available!`}
+                  </p>
+                  <p className="text-[11px] text-rose-700/90 dark:text-rose-300 mt-1">
+                    {isBn
+                      ? 'নতুন ফিচার ও উন্নতি পেতে নিচের বাটনে ট্যাপ করে অ্যাপটি আপডেট করুন।'
+                      : 'Tap the update button below to load the latest version and new features.'}
+                  </p>
+                </div>
+              ) : updateResult.status === 'offline' ? (
+                <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60">
+                  <p className="text-xs font-extrabold text-amber-800 dark:text-amber-200">
+                    {isBn ? 'আপনি এখন অফলাইন মোডে আছেন' : 'You are currently offline'}
+                  </p>
+                  <p className="text-[11px] text-amber-700/90 dark:text-amber-300 mt-1">
+                    {isBn
+                      ? 'নতুন আপডেট যাচাই করতে ইন্টারনেট সংযোগ ও অনলাইন মোড চালু করুন।'
+                      : 'Connect to the internet and turn off offline mode to check for updates.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60">
+                  <p className="text-xs font-extrabold text-emerald-800 dark:text-emerald-200">
+                    {isBn
+                      ? `অ্যাপটি সর্বশেষ ভার্সনে (v${updateResult.currentVersion}) রয়েছে!`
+                      : `Your app is on the latest version (v${updateResult.currentVersion})!`}
+                  </p>
+                  <p className="text-[11px] text-emerald-700/90 dark:text-emerald-300 mt-1">
+                    {isBn
+                      ? 'সব নতুন ফিচার ও নিরাপত্তা আপডেট সঠিকভাবে চালু আছে।'
+                      : 'All new features and security updates are active.'}
+                  </p>
+                </div>
+              )}
+
+              {/* Release Features List */}
+              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700 space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-extrabold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                    <span>
+                      {isBn
+                        ? `নতুন ফিচারসমূহ (v${updateResult.releaseInfo.version})`
+                        : `New Features (v${updateResult.releaseInfo.version})`}
+                    </span>
+                  </h4>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {updateResult.releaseInfo.releaseDate}
+                  </span>
+                </div>
+                <p className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                  {isBn ? updateResult.releaseInfo.titleBn : updateResult.releaseInfo.titleEn}
+                </p>
+                <ul className="space-y-1.5 pt-1">
+                  {(isBn ? updateResult.releaseInfo.featuresBn : updateResult.releaseInfo.featuresEn).map((feat, i) => (
+                    <li key={i} className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-200">
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                      <span>{feat}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex items-center gap-2">
+              {updateResult.status === 'update_available' ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      markVersionFeaturesAcknowledged(updateResult.releaseInfo);
+                      setIsUpdateModalOpen(false);
+                    }}
+                    className="flex-1 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold cursor-pointer"
+                  >
+                    {isBn ? 'পরে করব' : 'Later'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isApplyingUpdate}
+                    onClick={async () => {
+                      sounds.playTap();
+                      setIsApplyingUpdate(true);
+                      markVersionFeaturesAcknowledged(updateResult.releaseInfo);
+                      await applyAppUpdateAndReload();
+                    }}
+                    className="flex-1 py-2.5 rounded-xl bg-[#E52E2E] hover:bg-rose-700 text-white text-xs font-bold shadow-md shadow-rose-600/30 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
+                  >
+                    {isApplyingUpdate ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                    <span>{isBn ? 'এখনই আপডেট করুন' : 'Update Now'}</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleCheckForUpdate}
+                    disabled={isCheckingUpdate}
+                    className="flex-1 py-2.5 rounded-xl bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 border border-sky-200/80 dark:border-sky-800 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isCheckingUpdate ? 'animate-spin' : ''}`} />
+                    <span>{isBn ? 'পুনরায় যাচাই' : 'Re-check'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      markVersionFeaturesAcknowledged(updateResult.releaseInfo);
+                      setIsUpdateModalOpen(false);
+                    }}
+                    className="flex-1 py-2.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-bold cursor-pointer"
+                  >
+                    {isBn ? 'ঠিক আছে' : 'Got it'}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

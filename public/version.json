@@ -1,0 +1,19 @@
+{
+  "version": "2.5.0",
+  "buildNumber": 250,
+  "releaseDate": "2026-11-14",
+  "titleBn": "নিরাপত্তা ও স্মার্ট ফিচার আপডেট",
+  "titleEn": "Security & Smart Features Update",
+  "featuresBn": [
+    "একই লগইন আইডিতে একসাথে ১টি ডিভাইস নিরাপত্তা লক",
+    "সাব-অ্যাডমিন নিয়ন্ত্রণ ও ৩০ মিনিট এডিট/ডিলিট সুবিধা",
+    "রমজানের চিরস্থায়ী ক্যালেন্ডার ও সেহরি-ইফতারের ১০ মিনিট আগের অটো রিমাইন্ডার",
+    "অফলাইন মোড ও অটো-সিংক এবং চেক ফর আপডেট সিস্টেম"
+  ],
+  "featuresEn": [
+    "Single-device simultaneous login lock per account",
+    "Sub-admin access control with 30-minute edit/delete window",
+    "Perpetual Ramadan calendar and 10-min Sehri & Iftar auto-reminders",
+    "Offline mode with auto-sync and Check for Update system"
+  ]
+}

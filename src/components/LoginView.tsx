@@ -27,6 +27,7 @@ import { safeStorage } from '../utils/safeStorage';
 import { sounds } from '../utils/audio';
 import { compressImage } from '../utils/imageCompressor';
 import { saveStoredUser, findStoredUserByPhone } from '../utils/userStorage';
+import { claimDeviceSession } from '../utils/deviceSession';
 
 interface LoginViewProps {
   lang: Language;
@@ -39,6 +40,8 @@ interface LoginViewProps {
   onOpenStoreModal?: () => void;
   onOpenOfferModal?: () => void;
   onOpenHelpModal?: () => void;
+  sessionNotice?: string;
+  onClearSessionNotice?: () => void;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({
@@ -51,7 +54,9 @@ export const LoginView: React.FC<LoginViewProps> = ({
   onClose,
   onOpenStoreModal,
   onOpenOfferModal,
-  onOpenHelpModal
+  onOpenHelpModal,
+  sessionNotice,
+  onClearSessionNotice
 }) => {
   const isBn = lang === 'bn';
   const t = translations[lang];
@@ -98,7 +103,8 @@ export const LoginView: React.FC<LoginViewProps> = ({
   // Handle Login
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanId = accountNumber.trim().toLowerCase();
+    const rawId = accountNumber.trim();
+    const cleanId = rawId.toLowerCase();
     const cleanPin = pin.trim();
 
     if (!cleanId || cleanPin.length < 4) {
@@ -107,103 +113,141 @@ export const LoginView: React.FC<LoginViewProps> = ({
     }
 
     sounds.playTap();
-
-    // Fast-path 1: Master Admin Instant Login (check saved custom admin PIN or default 12588)
-    let effectiveAdminPin = safeStorage.getItem('protyasha_admin_pin') || '12588';
-    const looksLikeAdminPhone = cleanId.includes('admin') || cleanId.includes('01777877207');
-    if (looksLikeAdminPhone && cleanPin !== effectiveAdminPin) {
-      try {
-        const secSnap = await getDoc(doc(db, 'settings', 'admin_security'));
-        if (secSnap.exists() && secSnap.data()?.pin) {
-          effectiveAdminPin = String(secSnap.data().pin);
-          safeStorage.setItem('protyasha_admin_pin', effectiveAdminPin);
-        }
-      } catch {}
-    }
-
-    if ((cleanPin === effectiveAdminPin && (looksLikeAdminPhone || cleanId === '')) ||
-        (cleanId === '01777877207' && cleanPin === effectiveAdminPin) ||
-        (cleanPin === effectiveAdminPin && cleanId.length > 0)) {
-      sounds.playSuccess();
-      onLoginSuccess({
-        id: 'admin-master',
-        email: 'admin@protyasha.com',
-        role: 'admin',
-        name: isBn ? 'প্রত্যাশা অ্যাডমিন' : 'Protyasha Admin',
-        phone: '01777877207',
-        avatarUrl: adminAvatar || '',
-        virtualCardNumber: '9856 0000 2932 9162',
-        accountType: 'general',
-        profitPreference: false
-      });
-      return;
-    }
-
     setIsLoading(true);
     setErrorMsg('');
     setSuccessMsg('');
+    if (onClearSessionNotice) onClearSessionNotice();
 
     try {
+      // 1. Master Admin Check (only for explicit master admin IDs: 'admin' or '01777877207')
+      const isMasterAdminId =
+        cleanId === 'admin' ||
+        cleanId === '01777877207' ||
+        cleanId === 'admin-master' ||
+        cleanId === 'admin-primary';
+
+      let effectiveAdminPin = safeStorage.getItem('protyasha_admin_pin') || '12588';
+      if (isMasterAdminId && cleanPin !== effectiveAdminPin) {
+        try {
+          const secSnap = await getDoc(doc(db, 'settings', 'admin_security'));
+          if (secSnap.exists() && secSnap.data()?.pin) {
+            effectiveAdminPin = String(secSnap.data().pin);
+            safeStorage.setItem('protyasha_admin_pin', effectiveAdminPin);
+          }
+        } catch {}
+      }
+
+      if (isMasterAdminId && cleanPin === effectiveAdminPin) {
+        const lockResult = await claimDeviceSession({
+          id: 'admin-master',
+          phone: '01777877207',
+          role: 'admin',
+          name: isBn ? 'প্রত্যাশা অ্যাডমিন' : 'Protyasha Admin'
+        });
+
+        if (!lockResult.allowed) {
+          setIsLoading(false);
+          sounds.playTap();
+          setErrorMsg(isBn ? (lockResult.messageBn || 'অন্য ডিভাইসে লগইন করা আছে') : (lockResult.messageEn || 'Already logged in on another device'));
+          return;
+        }
+
+        safeStorage.setItem('protyasha_last_phone', rawId);
+        setIsLoading(false);
+        sounds.playSuccess();
+        onLoginSuccess({
+          id: 'admin-master',
+          email: 'admin@protyasha.com',
+          role: 'admin',
+          name: isBn ? 'প্রত্যাশা অ্যাডমিন' : 'Protyasha Admin',
+          phone: '01777877207',
+          avatarUrl: adminAvatar || '',
+          virtualCardNumber: '9856 0000 2932 9162',
+          accountType: 'general',
+          profitPreference: false
+        });
+        return;
+      }
+
+      // 2. Check Cloud Firestore FIRST so latest PIN / Role / Status updates from Admin apply immediately
       let userData: any = null;
       let userId: string = '';
 
-      // 1. Check local persistent store
-      const localUser = findStoredUserByPhone(accountNumber.trim());
-      if (localUser) {
-        userData = localUser;
-        userId = localUser.id;
+      try {
+        const usersRef = collection(db, 'users');
+        const lookupPhone = cleanId === 'admin' ? '01777877207' : rawId;
+        const q = query(usersRef, where('phone', '==', lookupPhone));
+        const querySnapshot = await getDocs(q);
+        if (!querySnapshot.empty) {
+          const userDoc = querySnapshot.docs[0];
+          userData = userDoc.data();
+          userId = userDoc.id;
+          saveStoredUser({ ...userData, id: userId });
+        }
+      } catch (err) {
+        console.warn('Firestore login check skipped, using local store:', err);
       }
 
-      // 2. Query Firestore if available
+      // Fallback to local persistent store if offline or not found remotely
       if (!userData) {
-        try {
-          const usersRef = collection(db, 'users');
-          const q = query(usersRef, where('phone', '==', accountNumber.trim()));
-          const querySnapshot = await getDocs(q);
-          if (!querySnapshot.empty) {
-            const userDoc = querySnapshot.docs[0];
-            userData = userDoc.data();
-            userId = userDoc.id;
-            saveStoredUser({ ...userData, id: userId });
-          }
-        } catch (err) {
-          console.warn('Firestore login check skipped, using local store:', err);
+        const localUser = findStoredUserByPhone(cleanId === 'admin' ? '01777877207' : rawId);
+        if (localUser) {
+          userData = localUser;
+          userId = localUser.id;
         }
       }
-
-      setIsLoading(false);
 
       if (userData) {
         if (userData.pin === cleanPin) {
           if (userData.status === 'suspended') {
+            setIsLoading(false);
             setErrorMsg(isBn ? 'আপনার অ্যাকাউন্টটি সাময়িকভাবে স্থগিত করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।' : 'Your account has been suspended. Contact admin.');
             return;
           }
 
-          safeStorage.setItem('protyasha_last_phone', accountNumber.trim());
-          safeStorage.setItem('protyasha_user_phone', accountNumber.trim());
+          const resolvedRole = userData.role || 'user';
+          const resolvedId = userId || ('usr_' + Date.now());
+          const lockResult = await claimDeviceSession({
+            id: resolvedId,
+            phone: userData.phone,
+            role: resolvedRole,
+            name: userData.name || ''
+          });
+
+          if (!lockResult.allowed) {
+            setIsLoading(false);
+            sounds.playTap();
+            setErrorMsg(isBn ? (lockResult.messageBn || 'অন্য ডিভাইসে লগইন করা আছে') : (lockResult.messageEn || 'Already logged in on another device'));
+            return;
+          }
+
+          setIsLoading(false);
+          safeStorage.setItem('protyasha_last_phone', userData.phone || rawId);
+          safeStorage.setItem('protyasha_user_phone', userData.phone || rawId);
           if (userData.avatarUrl) {
             safeStorage.setItem('protyasha_last_avatar', userData.avatarUrl);
           }
           sounds.playSuccess();
           onLoginSuccess({
-            id: userId || ('usr_' + Date.now()),
+            id: resolvedId,
             email: `${userData.phone}@protyasha.com`,
-            role: userData.role || 'user',
+            role: resolvedRole,
             name: userData.name,
             phone: userData.phone,
             gmail: userData.gmail || undefined,
             boundMethods: userData.boundMethods || undefined,
             avatarUrl: userData.avatarUrl,
-            virtualCardNumber: userData.virtualCardNumber || ('9856 ' + userData.phone.slice(-4).padStart(4, '0') + ' 2932 9162'),
+            virtualCardNumber: userData.virtualCardNumber || ('9856 ' + String(userData.phone || '').slice(-4).padStart(4, '0') + ' 2932 9162'),
             accountType: 'general',
             profitPreference: false
           });
         } else {
+          setIsLoading(false);
           sounds.playTap();
           setErrorMsg(isBn ? 'ভুল পিন নম্বর! পুনরায় চেষ্টা করুন।' : 'Invalid PIN! Please try again.');
         }
       } else {
+        setIsLoading(false);
         sounds.playTap();
         setErrorMsg(isBn ? 'এই মোবাইল নাম্বারে কোনো অ্যাকাউন্ট পাওয়া যায়নি।' : 'No account found with this phone number.');
       }
@@ -280,6 +324,14 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
       // 2. Save directly to Cloud Firestore so user works across all devices in real time
       await safeSetDoc(doc(db, 'users', newId), newUser).catch(() => {});
+
+      // 3. Claim single-device session lock for this new account
+      await claimDeviceSession({
+        id: newUser.id,
+        phone: newUser.phone,
+        role: 'user',
+        name: newUser.name
+      }).catch(() => {});
       
       setIsLoading(false);
       sounds.playSuccess();
@@ -467,6 +519,11 @@ export const LoginView: React.FC<LoginViewProps> = ({
         </div>
 
         {/* Feedback Messages */}
+        {sessionNotice && !errorMsg && (
+          <div className="mb-3 p-2.5 rounded-xl text-xs font-semibold text-amber-800 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 text-center">
+            {sessionNotice}
+          </div>
+        )}
         {errorMsg && (
           <div className="mb-3 p-2.5 rounded-xl text-xs font-semibold text-rose-700 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-center animate-shake">
             {errorMsg}
@@ -493,8 +550,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 </div>
                 <input
                   type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
                   autoComplete="off"
                   autoCorrect="off"
                   autoCapitalize="off"
@@ -502,7 +557,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   data-lpignore="true"
                   data-1password-type="off"
                   value={accountNumber}
-                  onChange={(e) => setAccountNumber(e.target.value)}
+                  onChange={(e) => {
+                    setAccountNumber(e.target.value);
+                    if (onClearSessionNotice) onClearSessionNotice();
+                  }}
                   placeholder={isBn ? '০১XXXXXXXXX অথবা admin' : '01XXXXXXXXX or admin'}
                   required
                   className="w-full h-12 pl-10 pr-4 text-sm font-semibold bg-white/95 dark:bg-slate-800/95 text-slate-900 dark:text-white rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xs focus:outline-none focus:border-[#E52E2E] transition-all"

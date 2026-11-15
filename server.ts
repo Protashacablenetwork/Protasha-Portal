@@ -11,7 +11,8 @@ dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const port = process.env.PORT || 3000;
-const isProd = process.env.NODE_ENV === 'production' || fs.existsSync(path.join(__dirname, 'dist')) || fs.existsSync(path.join(__dirname, 'docs')) || fs.existsSync(path.join(__dirname, 'HTDOCS_UPLOAD'));
+const isExplicitDev = process.env.NODE_ENV === 'development' || process.env.npm_lifecycle_event === 'dev' || process.env.DISABLE_HMR === 'true';
+const isProd = !isExplicitDev && (process.env.NODE_ENV === 'production' || fs.existsSync(path.join(__dirname, 'dist')) || fs.existsSync(path.join(__dirname, 'docs')) || fs.existsSync(path.join(__dirname, 'HTDOCS_UPLOAD')));
 const buildDir = fs.existsSync(path.join(__dirname, 'HTDOCS_UPLOAD')) ? 'HTDOCS_UPLOAD' : (fs.existsSync(path.join(__dirname, 'dist')) ? 'dist' : (fs.existsSync(path.join(__dirname, 'docs')) ? 'docs' : 'dist'));
 
 app.use(cors());
@@ -67,6 +68,38 @@ app.get('/api/ay-byay/external/summary', async (req: express.Request, res: expre
         console.error('Proxy error:', err);
         res.status(500).json({ success: false, message: 'External service unreachable' });
     }
+});
+
+// API: App Version & Release Notes (No-cache live version check)
+app.get('/api/app-version', (_req: express.Request, res: express.Response) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    const candidatePaths = [
+        path.join(__dirname, 'public', 'version.json'),
+        path.join(__dirname, buildDir, 'version.json')
+    ];
+
+    for (const filePath of candidatePaths) {
+        try {
+            if (fs.existsSync(filePath)) {
+                const raw = fs.readFileSync(filePath, 'utf-8');
+                const parsed = JSON.parse(raw);
+                return res.json(parsed);
+            }
+        } catch {}
+    }
+
+    return res.json({
+        version: '2.5.0',
+        buildNumber: 250,
+        releaseDate: '2026-11-14',
+        titleBn: 'নিরাপত্তা ও স্মার্ট ফিচার আপডেট',
+        titleEn: 'Security & Smart Features Update',
+        featuresBn: [],
+        featuresEn: []
+    });
 });
 
 // Vite integration
