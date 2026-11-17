@@ -19,15 +19,18 @@ import {
   Clock,
   Phone
 } from 'lucide-react';
-import { db, safeSetDoc } from '../utils/firebase';
+import { db, staffDb, safeSetDoc } from '../utils/firebase';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
-import { Language, FooterConfig, UserSession, BannerAd } from '../types';
+import { Language, FooterConfig, UserSession, BannerAd, StaffAccount, StaffSupportSession } from '../types';
 import { translations } from '../utils/formatters';
 import { safeStorage } from '../utils/safeStorage';
 import { sounds } from '../utils/audio';
 import { compressImage } from '../utils/imageCompressor';
 import { saveStoredUser, findStoredUserByPhone } from '../utils/userStorage';
 import { claimDeviceSession } from '../utils/deviceSession';
+import { normalizePhoneNumber } from '../utils/permissions';
+import { readCachedStaffAccounts } from '../utils/staffSync';
+import { useSubViewBack } from '../utils/useSubViewBack';
 
 interface LoginViewProps {
   lang: Language;
@@ -42,6 +45,7 @@ interface LoginViewProps {
   onOpenHelpModal?: () => void;
   sessionNotice?: string;
   onClearSessionNotice?: () => void;
+  onSubViewChange?: (isSubView: boolean) => void;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({
@@ -56,7 +60,8 @@ export const LoginView: React.FC<LoginViewProps> = ({
   onOpenOfferModal,
   onOpenHelpModal,
   sessionNotice,
-  onClearSessionNotice
+  onClearSessionNotice,
+  onSubViewChange
 }) => {
   const isBn = lang === 'bn';
   const t = translations[lang];
@@ -73,6 +78,14 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
   // Informational Pop-up Modal State for Store, Offer, and Help
   const [activeModal, setActiveModal] = useState<'store' | 'offer' | 'help' | null>(null);
+
+  useSubViewBack(
+    true,
+    activeModal ? 1 : 0,
+    () => setActiveModal(null),
+    onSubViewChange,
+    'loginModal'
+  );
 
   // Register Form States (নাম, মোবাইল নাম্বার, ছবি, পিন)
   const [regName, setRegName] = useState('');
@@ -273,11 +286,111 @@ export const LoginView: React.FC<LoginViewProps> = ({
             accountType: 'general',
             profitPreference: false
           });
-        } else {
-          setIsLoading(false);
-          sounds.playTap();
-          setErrorMsg(isBn ? 'ভুল পিন নম্বর! পুনরায় চেষ্টা করুন।' : 'Invalid PIN! Please try again.');
+          return;
         }
+      }
+
+      // 3. Unified Staff Directory Direct Login (Staff added from Staff Manager / Ay-Byay / User Mgmt can log in right on the main page)
+      let staffList: StaffAccount[] = readCachedStaffAccounts();
+      try {
+        const staffSnap = await getDocs(collection(staffDb, 'staff'));
+        const cloudStaff: StaffAccount[] = [];
+        staffSnap.forEach((docSnap) => {
+          const sData = docSnap.data() as StaffAccount;
+          if (sData && (sData.id || docSnap.id) && sData.name) {
+            cloudStaff.push({
+              ...sData,
+              id: String(sData.id || docSnap.id),
+              isActive: sData.isActive !== false
+            });
+          }
+        });
+        if (cloudStaff.length > 0) {
+          staffList = cloudStaff;
+        }
+      } catch {}
+
+      const inputNormPhone = normalizePhoneNumber(rawId);
+      const matchedStaff = staffList.find((s) => {
+        if (s.isActive === false) return false;
+        const sNormPhone = normalizePhoneNumber(s.phone);
+        if (inputNormPhone.length >= 6 && sNormPhone === inputNormPhone) return true;
+        if (s.userCode && s.userCode.trim().toLowerCase() === cleanId) return true;
+        if (String(s.id).trim().toLowerCase() === cleanId) return true;
+        return false;
+      });
+
+      if (matchedStaff) {
+        let globalStaffPin = '1234';
+        let staffPins: Record<string, string> = {};
+        try {
+          const pinSnap = await getDoc(doc(db, 'settings', 'staff_support_auth'));
+          if (pinSnap.exists()) {
+            const pData = pinSnap.data() as { globalPin?: string; staffPins?: Record<string, string> };
+            if (pData.globalPin) globalStaffPin = String(pData.globalPin);
+            if (pData.staffPins && typeof pData.staffPins === 'object') staffPins = pData.staffPins;
+          }
+        } catch {}
+
+        const expectedStaffPin = String(staffPins[matchedStaff.id] || globalStaffPin || '1234').trim();
+        if (cleanPin === expectedStaffPin) {
+          const staffPhone = matchedStaff.phone || rawId;
+          const lockResult = await claimDeviceSession({
+            id: matchedStaff.id,
+            phone: staffPhone,
+            role: 'sub-admin',
+            name: matchedStaff.name
+          });
+
+          if (!lockResult.allowed) {
+            setIsLoading(false);
+            sounds.playTap();
+            setErrorMsg(isBn ? (lockResult.messageBn || 'অন্য ডিভাইসে লগইন করা আছে') : (lockResult.messageEn || 'Already logged in on another device'));
+            return;
+          }
+
+          try {
+            const staffSessionObj: StaffSupportSession = {
+              staffId: matchedStaff.id,
+              name: matchedStaff.name,
+              phone: staffPhone,
+              roleTitle: matchedStaff.role || 'স্টাফ',
+              loggedInAt: new Date().toISOString()
+            };
+            sessionStorage.setItem('protyasha_support_staff_session', JSON.stringify(staffSessionObj));
+          } catch {}
+
+          setIsLoading(false);
+          safeStorage.setItem('protyasha_last_phone', staffPhone);
+          safeStorage.setItem('protyasha_user_phone', staffPhone);
+          if (matchedStaff.avatarUrl) {
+            safeStorage.setItem('protyasha_last_avatar', matchedStaff.avatarUrl);
+          }
+          sounds.playSuccess();
+          onLoginSuccess({
+            id: matchedStaff.id,
+            email: `${staffPhone}@protyasha.com`,
+            role: 'sub-admin',
+            name: matchedStaff.name,
+            phone: staffPhone,
+            avatarUrl: matchedStaff.avatarUrl || '',
+            virtualCardNumber: '9856 ' + String(staffPhone).slice(-4).padStart(4, '0') + ' 2932 9162',
+            accountType: 'general',
+            profitPreference: false
+          });
+          return;
+        }
+
+        setIsLoading(false);
+        sounds.playTap();
+        setErrorMsg(isBn ? 'ভুল পিন নম্বর! পুনরায় চেষ্টা করুন।' : 'Invalid PIN! Please try again.');
+        return;
+      }
+
+      if (userData) {
+        setIsLoading(false);
+        sounds.playTap();
+        setErrorMsg(isBn ? 'ভুল পিন নম্বর! পুনরায় চেষ্টা করুন।' : 'Invalid PIN! Please try again.');
       } else {
         setIsLoading(false);
         sounds.playTap();
@@ -413,7 +526,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-md flex items-center justify-center p-0 md:p-6 select-none overflow-y-auto">
-      <div className="w-full max-w-md md:max-w-3xl lg:max-w-4xl bg-gradient-to-br from-[#FCEAE5] via-[#FFF8F5] to-[#FDE6E0] dark:from-slate-950 dark:via-slate-900 dark:to-stone-950 md:rounded-3xl shadow-2xl flex flex-col md:flex-row overflow-hidden min-h-[100dvh] md:min-h-[580px] border border-slate-200/60 dark:border-slate-800">
+      <div className="w-full max-w-md md:max-w-4xl lg:max-w-5xl bg-gradient-to-br from-[#FCEAE5] via-[#FFF8F5] to-[#FDE6E0] dark:from-slate-950 dark:via-slate-900 dark:to-stone-950 md:rounded-3xl shadow-2xl flex flex-col md:flex-row overflow-hidden min-h-[100dvh] md:min-h-[620px] border border-slate-200/60 dark:border-slate-800">
         
         {/* Left Hero Sidebar on PC/Desktop monitors */}
         <div className="hidden md:flex md:w-5/12 bg-gradient-to-br from-[#D32F2F] via-[#E52E2E] to-[#B71C1C] p-8 text-white flex-col justify-between relative overflow-hidden shrink-0">

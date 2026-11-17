@@ -34,19 +34,23 @@ import {
   adminForceReleaseSession,
   DeviceSessionRecord
 } from '../utils/deviceSession';
+import { syncSubAdminUserToStaffDirectory } from '../utils/staffSync';
+import { useSubViewBack } from '../utils/useSubViewBack';
 
 interface UserManagementModalProps {
   isOpen: boolean;
   lang: Language;
   onClose: () => void;
   onUserUpdated?: (user: AppUser) => void;
+  onSubViewChange?: (isSubView: boolean) => void;
 }
 
 export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   isOpen,
   lang,
   onClose,
-  onUserUpdated
+  onUserUpdated,
+  onSubViewChange
 }) => {
   const isBn = lang === 'bn';
 
@@ -73,6 +77,17 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
   // New User State
   const [isAddingNew, setIsAddingNew] = useState(false);
+
+  useSubViewBack(
+    isOpen,
+    editingUser || isAddingNew ? 1 : 0,
+    () => {
+      setEditingUser(null);
+      setIsAddingNew(false);
+    },
+    onSubViewChange,
+    'userMgmt'
+  );
 
   // Fetch users from server and merge with persistent image storage
   const loadUsers = async () => {
@@ -266,6 +281,11 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       saveStoredUser(updatedUser);
       await safeSetDoc(doc(db, 'users', editingUser.id), firestorePayload, { merge: true });
 
+      // Auto-sync Sub-Admin (Staff) accounts into unified staff directory across the whole app
+      if (updatedUser.role === 'sub-admin') {
+        await syncSubAdminUserToStaffDirectory(updatedUser).catch(() => {});
+      }
+
       if (editStatus === 'suspended') {
         await adminForceReleaseSession({
           id: editingUser.id,
@@ -394,6 +414,11 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       // 2. Save in Firestore
       await safeSetDoc(doc(db, 'users', newId), newUser);
 
+      // 3. Auto-sync Sub-Admin (Staff) accounts into unified staff directory across the whole app
+      if (newUser.role === 'sub-admin') {
+        await syncSubAdminUserToStaffDirectory(newUser).catch(() => {});
+      }
+
       sounds.playSuccess();
       setSuccessMsg(isBn ? 'নতুন ব্যবহারকারী সফলভাবে তৈরি হয়েছে!' : 'User created successfully!');
       setUsers(prev => [newUser, ...prev]);
@@ -497,8 +522,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 select-none animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col max-h-[90vh] overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 lg:p-6 select-none animate-in fade-in duration-200">
+      <div className="bg-white dark:bg-slate-900 w-full max-w-4xl rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 flex flex-col max-h-[92vh] overflow-hidden">
         
         {/* Top Header */}
         <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/80 dark:bg-slate-900/80">

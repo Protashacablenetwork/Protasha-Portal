@@ -12,7 +12,9 @@ import {
   BannerAd,
   StaffAccount,
   ServiceStatusConfig,
-  QuickHisabOwner
+  QuickHisabOwner,
+  SupportTicket,
+  StaffAttendanceRecord
 } from './types';
 import confetti from 'canvas-confetti';
 import { 
@@ -58,14 +60,24 @@ import { ServiceNoticeModal } from './components/ServiceNoticeModal';
 import { ServiceManagerModal } from './components/ServiceManagerModal';
 import { QuickHisabModal } from './components/QuickHisabModal';
 import { DriveBackupModal } from './components/DriveBackupModal';
+import { SupportTicketModal } from './components/SupportTicketModal';
+import { PublicTicketTracker } from './components/PublicTicketTracker';
+import { clearTrackFromCurrentUrl, extractTrackTicketIdFromLocation } from './components/TicketTrackingHelpers';
+import { StaffAttendanceModal } from './components/StaffAttendanceModal';
 import { AyByayPortal } from './portals/ayByay/App';
 import { BillManagerPortal } from './portals/billManager/BillManagerPortal';
 import { fetchLiveWeather, WeatherData, detectPreciseLocation, DistrictInfo, getUserPreferredDistrict, ALL_BANGLADESH_DISTRICTS, DEFAULT_HEADQUARTERS_DISTRICT } from './utils/weatherService';
 import { checkAndGenerateWeatherNotifications } from './utils/weatherNotificationService';
 import { checkAndGeneratePrayerNotifications, checkAndGenerateFastingReminders, isFastingReminderEnabled } from './utils/prayerTimeService';
 import { safeStorage } from './utils/safeStorage';
-import { canAddTransactions, canModifyTransaction, isTransactionOwner, isLoggedInSession } from './utils/permissions';
+import { canAddTransactions, canModifyTransaction, isTransactionOwner, isLoggedInSession, isSupportTicketOwner } from './utils/permissions';
 import { saveStoredUser } from './utils/userStorage';
+import {
+  sanitizeStaffForFirestore,
+  broadcastStaffAccounts,
+  isStaffOrAdminUser,
+  syncMainLoginStaffSession
+} from './utils/staffSync';
 import {
   startDeviceSessionGuard,
   releaseDeviceSession,
@@ -150,6 +162,12 @@ export default function App() {
 
   // Notice shown on Login screen if forced out by single-device lock or admin action
   const [sessionNotice, setSessionNotice] = useState<string>('');
+
+  // Public Online Tracking URL (?track=<ticketId>, #track=<ticketId>, #/track/<ticketId>, /track/<ticketId>)
+  const [publicTrackTicketId, setPublicTrackTicketId] = useState<string | null>(() =>
+    extractTrackTicketIdFromLocation()
+  );
+  const isPublicPreviewOverlayRef = useRef(false);
 
   // Guard: If user is logged out (user === null), enforce login view always
   useEffect(() => {
@@ -266,6 +284,30 @@ export default function App() {
       }
     } catch {}
     return initialBanners;
+  });
+
+  // Customer Support Tickets (Real-time synced with Firestore 'support_tickets')
+  const [supportTickets, setSupportTickets] = useState<SupportTicket[]>(() => {
+    try {
+      const saved = safeStorage.getItem('protyasha_support_tickets');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed.filter((t: any) => t && t.id);
+      }
+    } catch {}
+    return [];
+  });
+
+  // Staff Attendance & Leave Records (Real-time synced with Firestore 'staff_attendance')
+  const [attendanceRecords, setAttendanceRecords] = useState<StaffAttendanceRecord[]>(() => {
+    try {
+      const saved = safeStorage.getItem('protyasha_staff_attendance');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed.filter((r: any) => r && r.id);
+      }
+    } catch {}
+    return [];
   });
 
   // Helper to filter out legacy dummy/demo notifications and sanitize duplicate weather advice prefixes
@@ -447,7 +489,9 @@ export default function App() {
       setReceiptTransaction(null);
       setSelectedNotificationDetail(null);
       setIsLoginOpen(true);
-      window.history.pushState({ screen: 'login' }, '', window.location.pathname);
+      if (!stateRef.current.publicTrackTicketId) {
+        window.history.pushState({ screen: 'login' }, '', window.location.pathname);
+      }
     });
 
     return () => stopGuard();
@@ -463,7 +507,7 @@ export default function App() {
             const metaSnap = await getDoc(doc(db, 'settings', 'staff_meta'));
             if (metaSnap.exists() && metaSnap.data()?.initialized) {
               setStaffAccounts([]);
-              safeStorage.setItem('protyasha_staff', JSON.stringify([]));
+              broadcastStaffAccounts([]);
             }
           } catch {}
           return;
@@ -472,13 +516,18 @@ export default function App() {
         snapshot.forEach(docSnap => {
           const data = docSnap.data() as StaffAccount;
           if (data && (data.id || docSnap.id) && data.name) {
-            cloudStaff.push({ ...data, id: data.id || docSnap.id });
+            cloudStaff.push({
+              ...data,
+              id: String(data.id || docSnap.id),
+              phone: data.phone || '',
+              role: data.role || 'লাইন টেকনিশিয়ান',
+              isActive: data.isActive !== false,
+              transactions: Array.isArray(data.transactions) ? data.transactions : []
+            });
           }
         });
         setStaffAccounts(cloudStaff);
-        try {
-          safeStorage.setItem('protyasha_staff', JSON.stringify(cloudStaff));
-        } catch {}
+        broadcastStaffAccounts(cloudStaff);
       }, (err) => {
         handleFirestoreError(err, OperationType.LIST, 'staff');
       });
@@ -605,6 +654,60 @@ export default function App() {
     }
     return () => {
       if (unsubColl) unsubColl();
+    };
+  }, []);
+
+  // Real-time synchronization for Customer Support Tickets ('support_tickets')
+  useEffect(() => {
+    let unsubTickets: (() => void) | null = null;
+    try {
+      unsubTickets = onSnapshot(collection(db, 'support_tickets'), (snapshot) => {
+        const list: SupportTicket[] = [];
+        snapshot.forEach((dSnap) => {
+          const item = dSnap.data() as SupportTicket;
+          if (item && (item.id || dSnap.id) && item.customerName) {
+            list.push({ ...item, id: String(item.id || dSnap.id) });
+          }
+        });
+        setSupportTickets(list);
+        try {
+          safeStorage.setItem('protyasha_support_tickets', JSON.stringify(list));
+        } catch {}
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'support_tickets');
+      });
+    } catch (e) {
+      console.warn('Support tickets Firestore listener notice:', e);
+    }
+    return () => {
+      if (unsubTickets) unsubTickets();
+    };
+  }, []);
+
+  // Real-time synchronization for Staff Attendance & Leave ('staff_attendance')
+  useEffect(() => {
+    let unsubAttendance: (() => void) | null = null;
+    try {
+      unsubAttendance = onSnapshot(collection(db, 'staff_attendance'), (snapshot) => {
+        const list: StaffAttendanceRecord[] = [];
+        snapshot.forEach((dSnap) => {
+          const item = dSnap.data() as StaffAttendanceRecord;
+          if (item && (item.id || dSnap.id) && item.staffId && item.date) {
+            list.push({ ...item, id: String(item.id || dSnap.id) });
+          }
+        });
+        setAttendanceRecords(list);
+        try {
+          safeStorage.setItem('protyasha_staff_attendance', JSON.stringify(list));
+        } catch {}
+      }, (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'staff_attendance');
+      });
+    } catch (e) {
+      console.warn('Staff attendance Firestore listener notice:', e);
+    }
+    return () => {
+      if (unsubAttendance) unsubAttendance();
     };
   }, []);
 
@@ -830,7 +933,9 @@ export default function App() {
         serviceSnap,
         footerSnap,
         adminSnap,
-        auditSnap
+        auditSnap,
+        ticketsSnap,
+        attendanceSnap
       ] = await Promise.all([
         getDocs(collection(db, 'transactions')),
         getDocs(collection(staffDb, 'staff')),
@@ -841,7 +946,9 @@ export default function App() {
         getDoc(doc(db, 'settings', 'service_control')),
         getDoc(doc(db, 'settings', 'footer_config')),
         getDoc(doc(db, 'settings', 'admin_profile')),
-        getDoc(doc(db, 'settings', 'audit_logs'))
+        getDoc(doc(db, 'settings', 'audit_logs')),
+        getDocs(collection(db, 'support_tickets')),
+        getDocs(collection(db, 'staff_attendance'))
       ]);
 
       const mainTxs: Transaction[] = [];
@@ -890,6 +997,20 @@ export default function App() {
         });
         setQuickHisabOwners(rows);
       }
+
+      const ticketRows: SupportTicket[] = [];
+      ticketsSnap.forEach(d => {
+        const item = d.data() as SupportTicket;
+        if (item && item.customerName) ticketRows.push({ ...item, id: String(item.id || d.id) });
+      });
+      setSupportTickets(ticketRows);
+
+      const attendanceRows: StaffAttendanceRecord[] = [];
+      attendanceSnap.forEach(d => {
+        const item = d.data() as StaffAttendanceRecord;
+        if (item && item.staffId && item.date) attendanceRows.push({ ...item, id: String(item.id || d.id) });
+      });
+      setAttendanceRecords(attendanceRows);
 
       if (notifSnap.exists() && Array.isArray(notifSnap.data()?.list)) {
         setNotifications(cleanDemoNotifications(notifSnap.data().list));
@@ -1107,6 +1228,8 @@ export default function App() {
   const [isWeatherOpen, setIsWeatherOpen] = useState(false);
   const [isPrayerTimesOpen, setIsPrayerTimesOpen] = useState(false);
   const [isQuickHisabOpen, setIsQuickHisabOpen] = useState(false);
+  const [isSupportTicketsOpen, setIsSupportTicketsOpen] = useState(false);
+  const [isStaffAttendanceOpen, setIsStaffAttendanceOpen] = useState(false);
   const [isLaunchingAyByay, setIsLaunchingAyByay] = useState(false);
   const [isLaunchingBillManager, setIsLaunchingBillManager] = useState(false);
 
@@ -1412,24 +1535,57 @@ export default function App() {
   }, [serviceStatuses, activePortal, activeTab, isStaffManagerOpen, isQuickHisabOpen]);
 
   // -------------------------------------------------------------
+  // AUTO-SYNC MAIN-PAGE STAFF SESSION (ZERO EXTRA PIN ANYWHERE)
+  // -------------------------------------------------------------
+  useEffect(() => {
+    syncMainLoginStaffSession(user, staffAccounts);
+  }, [user, staffAccounts]);
+
+  // -------------------------------------------------------------
   // UNIVERSAL DEVICE HARDWARE / BROWSER BACK BUTTON SUPPORT
   // -------------------------------------------------------------
   const isNavigatingBackRef = useRef(false);
   const isPrayerSubViewActiveRef = useRef(false);
+  const isSupportSubViewActiveRef = useRef(false);
+  const isAttendanceSubViewActiveRef = useRef(false);
+  const isStaffManagerSubViewActiveRef = useRef(false);
+  const isUserMgmtSubViewActiveRef = useRef(false);
+  const isQuickHisabSubViewActiveRef = useRef(false);
+  const isProfileSubViewActiveRef = useRef(false);
+  const isWeatherSubViewActiveRef = useRef(false);
+  const isDriveBackupSubViewActiveRef = useRef(false);
+  const isBannerSubViewActiveRef = useRef(false);
+  const isLoginSubViewActiveRef = useRef(false);
 
   const pushHistoryStep = useCallback(() => {
     if (!isNavigatingBackRef.current) {
-      window.history.pushState({ appOverlay: true, time: Date.now() }, '');
+      try {
+        window.history.pushState({ appOverlay: true, time: Date.now() }, '');
+      } catch {}
     }
+  }, []);
+
+  const closeOverlayViaBack = useCallback((fallbackClose: () => void) => {
+    try {
+      if (window.history.state?.appOverlay || window.history.state?.appSubView || window.history.state?.ayByayPortal) {
+        window.history.back();
+        return;
+      }
+    } catch {}
+    fallbackClose();
   }, []);
 
   // Initialize browser history on mount
   useEffect(() => {
-    window.history.replaceState({ appRoot: true }, '');
+    try {
+      window.history.replaceState({ appRoot: true }, '');
+    } catch {}
   }, []);
 
   // Use a stateRef to always read live states in popstate without stale closure or missing dependencies
   const stateRef = useRef({
+    publicTrackTicketId,
+    deleteTrx,
     user,
     activePortal,
     isUserManagementOpen,
@@ -1453,10 +1609,14 @@ export default function App() {
     activeServiceNotice,
     isQuickHisabOpen,
     isServiceManagerOpen,
-    isDriveBackupOpen
+    isDriveBackupOpen,
+    isSupportTicketsOpen,
+    isStaffAttendanceOpen
   });
 
   stateRef.current = {
+    publicTrackTicketId,
+    deleteTrx,
     user,
     activePortal,
     isUserManagementOpen,
@@ -1480,33 +1640,51 @@ export default function App() {
     activeServiceNotice,
     isQuickHisabOpen,
     isServiceManagerOpen,
-    isDriveBackupOpen
+    isDriveBackupOpen,
+    isSupportTicketsOpen,
+    isStaffAttendanceOpen
   };
 
-  // Popstate Listener: Handlers respond to device back button
+  // Popstate Listener: Handlers respond to device hardware/browser back button in strict LIFO order
   useEffect(() => {
+    const releaseBackLock = () => {
+      setTimeout(() => {
+        isNavigatingBackRef.current = false;
+      }, 50);
+    };
+
     const handlePopState = () => {
       isNavigatingBackRef.current = true;
       const s = stateRef.current;
 
       const hState = window.history.state || {};
-      
-      // Close top-most layer first
-      if (s.activeServiceNotice) {
+
+      // Close top-most layer first (respecting any active inner sub-view inside modals/portals)
+      if (s.publicTrackTicketId) {
+        isPublicPreviewOverlayRef.current = false;
+        setPublicTrackTicketId(null);
+      } else if (s.deleteTrx) {
+        setDeleteTrx(null);
+      } else if (s.activeServiceNotice) {
         setActiveServiceNotice(null);
       } else if (s.activePortal) {
-        // If we are in AyByay native portal, check if an internal subpage or modal was active
-        if (s.activePortal === 'ay-byay') {
-          if (hState && (hState.appStep || hState.appOverlay)) {
-            // Internal portal navigation (drawer, subpage, or modal) was handled by portal's own popstate listener
-            isNavigatingBackRef.current = false;
-            return;
-          }
+        // If we are in AyByay native portal and history is still inside AyByay's stack, let portal unwind first
+        if (s.activePortal === 'ay-byay' && hState && hState.ayByayPortal) {
+          releaseBackLock();
+          return;
         }
         setActivePortal(null);
       } else if (s.isUserManagementOpen) {
+        if (isUserMgmtSubViewActiveRef.current) {
+          releaseBackLock();
+          return;
+        }
         setIsUserManagementOpen(false);
       } else if (s.isDriveBackupOpen) {
+        if (isDriveBackupSubViewActiveRef.current) {
+          releaseBackLock();
+          return;
+        }
         setIsDriveBackupOpen(false);
       } else if (s.selectedNotificationDetail) {
         setSelectedNotificationDetail(null);
@@ -1516,10 +1694,18 @@ export default function App() {
         setIsEntryModalOpen(false);
         setEditingTransaction(null);
       } else if (s.isBannerManagerOpen) {
+        if (isBannerSubViewActiveRef.current) {
+          releaseBackLock();
+          return;
+        }
         setIsBannerManagerOpen(false);
       } else if (s.isChannelManagerOpen) {
         setIsChannelManagerOpen(false);
       } else if (s.isStaffManagerOpen) {
+        if (isStaffManagerSubViewActiveRef.current) {
+          releaseBackLock();
+          return;
+        }
         setIsStaffManagerOpen(false);
       } else if (s.isServiceManagerOpen) {
         setIsServiceManagerOpen(false);
@@ -1532,36 +1718,69 @@ export default function App() {
       } else if (s.isFooterSettingsOpen) {
         setIsFooterSettingsOpen(false);
       } else if (s.isWeatherOpen) {
+        if (isWeatherSubViewActiveRef.current) {
+          releaseBackLock();
+          return;
+        }
         setIsWeatherOpen(false);
       } else if (s.isQuickHisabOpen) {
+        if (isQuickHisabSubViewActiveRef.current) {
+          releaseBackLock();
+          return;
+        }
         setIsQuickHisabOpen(false);
+      } else if (s.isSupportTicketsOpen) {
+        if (isSupportSubViewActiveRef.current) {
+          releaseBackLock();
+          return;
+        }
+        setIsSupportTicketsOpen(false);
+      } else if (s.isStaffAttendanceOpen) {
+        if (isAttendanceSubViewActiveRef.current) {
+          releaseBackLock();
+          return;
+        }
+        setIsStaffAttendanceOpen(false);
       } else if (s.isPrayerTimesOpen) {
         if (isPrayerSubViewActiveRef.current) {
-          // Inner view in PrayerTimesModal (e.g. Niyat, Quran, Hadith, Rules, Calendar, Picker) handles single back to daily schedule
+          releaseBackLock();
           return;
         }
         setIsPrayerTimesOpen(false);
       } else if (s.isNotificationsOpen) {
         setIsNotificationsOpen(false);
+        setEditingNotification(null);
       } else if (s.isProfileOpen) {
+        if (isProfileSubViewActiveRef.current) {
+          releaseBackLock();
+          return;
+        }
         setIsProfileOpen(false);
       } else if (s.selectedTransaction) {
         setSelectedTransaction(null);
       } else if (s.isLoginOpen) {
+        if (isLoginSubViewActiveRef.current) {
+          releaseBackLock();
+          return;
+        }
         // If user is logged out (!user), DO NOT close login view into visitor mode!
         if (isLoggedInSession(s.user)) {
           setIsLoginOpen(false);
         } else {
           // Keep user locked on the login page
-          window.history.pushState({ screen: 'login' }, '', window.location.pathname);
+          try {
+            window.history.pushState({ screen: 'login' }, '', window.location.pathname);
+          } catch {}
         }
       } else if (s.activeTab !== 'home') {
+        if (s.activeTab === 'profile' && isProfileSubViewActiveRef.current) {
+          releaseBackLock();
+          return;
+        }
         setActiveTab('home');
       }
 
-      setTimeout(() => {
-        isNavigatingBackRef.current = false;
-      }, 50);
+      releaseBackLock();
     };
 
     window.addEventListener('popstate', handlePopState);
@@ -1573,7 +1792,7 @@ export default function App() {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
-  }, [activeTab, selectedTransaction, activePortal, isPrayerTimesOpen, isWeatherOpen, isNotificationsOpen, isProfileOpen]);
+  }, [activeTab, selectedTransaction, activePortal, isPrayerTimesOpen, isWeatherOpen, isNotificationsOpen, isProfileOpen, publicTrackTicketId]);
 
   // Apply Theme & Lang to DOM
   useEffect(() => {
@@ -2184,6 +2403,7 @@ export default function App() {
     }
     sounds.playTap();
     setDeleteTrx(trx);
+    pushHistoryStep();
   };
 
   const confirmDelete = () => {
@@ -2314,6 +2534,9 @@ export default function App() {
     setSessionNotice('');
     safeStorage.removeItem('protyasha_user');
     sessionStorage.removeItem('protyasha_session_active');
+    try {
+      sessionStorage.removeItem('protyasha_support_staff_session');
+    } catch {}
     setUser(null);
     setActiveTab('home');
     setIsProfileOpen(false);
@@ -2432,11 +2655,9 @@ export default function App() {
   };
 
   const handleSaveStaffAccounts = (updated: StaffAccount[]) => {
-    const cleanUpdated: StaffAccount[] = JSON.parse(JSON.stringify(updated)).map((s: StaffAccount) => ({
-      ...s,
-      id: String(s.id),
-      phone: s.phone || ''
-    }));
+    const cleanUpdated: StaffAccount[] = JSON.parse(JSON.stringify(updated)).map((s: StaffAccount) =>
+      sanitizeStaffForFirestore(s)
+    );
     const nextIds = new Set(cleanUpdated.map(s => String(s.id)));
     const removedIds = staffAccounts
       .map(s => String(s.id))
@@ -2444,17 +2665,17 @@ export default function App() {
     const nowIso = new Date().toISOString();
 
     setStaffAccounts(cleanUpdated);
-    try {
-      safeStorage.setItem('protyasha_staff', JSON.stringify(cleanUpdated));
-    } catch (e) {
-      console.warn('LocalStorage limit reached for staffAccounts:', e);
-    }
+    broadcastStaffAccounts(cleanUpdated);
 
     cleanUpdated.forEach(staff => {
-      safeSetDoc(doc(staffDb, 'staff', String(staff.id)), staff).catch(() => {});
+      safeSetDoc(doc(staffDb, 'staff', String(staff.id)), staff).catch((err) => {
+        handleFirestoreError(err, OperationType.WRITE, `staff/${staff.id}`);
+      });
     });
     removedIds.forEach(id => {
-      safeDeleteDoc(doc(staffDb, 'staff', id)).catch(() => {});
+      safeDeleteDoc(doc(staffDb, 'staff', id)).catch((err) => {
+        handleFirestoreError(err, OperationType.DELETE, `staff/${id}`);
+      });
     });
     safeSetDoc(doc(db, 'settings', 'staff_meta'), { initialized: true, updatedAt: nowIso }).catch(() => {});
 
@@ -2465,9 +2686,7 @@ export default function App() {
     const remaining = staffAccounts.filter(s => String(s.id) !== String(staffId));
     const nowIso = new Date().toISOString();
     setStaffAccounts(remaining);
-    try {
-      safeStorage.setItem('protyasha_staff', JSON.stringify(remaining));
-    } catch {}
+    broadcastStaffAccounts(remaining);
 
     safeDeleteDoc(doc(staffDb, 'staff', String(staffId))).catch((err) => {
       handleFirestoreError(err, OperationType.DELETE, `staff/${staffId}`);
@@ -2475,6 +2694,111 @@ export default function App() {
     safeSetDoc(doc(db, 'settings', 'staff_meta'), { initialized: true, updatedAt: nowIso }).catch(() => {});
 
     logAction('Deleted Staff Account', 'স্টাফ অ্যাকাউন্ট মোছা হয়েছে', `স্টাফ আইডি: ${staffId}`);
+  };
+
+  // Support Ticket Handlers (Firestore 'support_tickets')
+  const handleSaveSupportTicket = async (ticket: SupportTicket) => {
+    setSupportTickets((prev) => {
+      const exists = prev.some((t) => t.id === ticket.id);
+      const next = exists ? prev.map((t) => (t.id === ticket.id ? ticket : t)) : [ticket, ...prev];
+      try {
+        safeStorage.setItem('protyasha_support_tickets', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    await safeSetDoc(doc(db, 'support_tickets', String(ticket.id)), ticket).catch((err) => {
+      handleFirestoreError(err, OperationType.WRITE, `support_tickets/${ticket.id}`);
+      throw err;
+    });
+
+    logAction(
+      'Support Ticket Updated',
+      'সাপোর্ট টিকেট হালনাগাদ',
+      `#${ticket.ticketNumber} • ${ticket.customerName} (${ticket.status})`
+    );
+  };
+
+  const handleDeleteSupportTicket = async (ticketId: string) => {
+    setSupportTickets((prev) => {
+      const next = prev.filter((t) => t.id !== ticketId);
+      try {
+        safeStorage.setItem('protyasha_support_tickets', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    await safeDeleteDoc(doc(db, 'support_tickets', String(ticketId))).catch((err) => {
+      handleFirestoreError(err, OperationType.DELETE, `support_tickets/${ticketId}`);
+    });
+
+    logAction('Deleted Support Ticket', 'সাপোর্ট টিকেট মোছা হয়েছে', `টিকেট আইডি: ${ticketId}`);
+  };
+
+  // Staff Attendance & Leave Handlers (Firestore 'staff_attendance')
+  const handleSaveAttendance = async (record: StaffAttendanceRecord) => {
+    setAttendanceRecords((prev) => {
+      const exists = prev.some((r) => r.id === record.id);
+      const next = exists ? prev.map((r) => (r.id === record.id ? record : r)) : [record, ...prev];
+      try {
+        safeStorage.setItem('protyasha_staff_attendance', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    await safeSetDoc(doc(db, 'staff_attendance', String(record.id)), record).catch((err) => {
+      handleFirestoreError(err, OperationType.WRITE, `staff_attendance/${record.id}`);
+      throw err;
+    });
+
+    logAction(
+      'Staff Attendance Marked',
+      'স্টাফ হাজিরা আপডেট',
+      `${record.staffName} • ${record.date} (${record.status})`
+    );
+  };
+
+  const handleSaveBulkAttendance = async (records: StaffAttendanceRecord[]) => {
+    if (!records.length) return;
+    setAttendanceRecords((prev) => {
+      const map = new Map(prev.map((r) => [r.id, r]));
+      records.forEach((r) => map.set(r.id, r));
+      const next = Array.from(map.values());
+      try {
+        safeStorage.setItem('protyasha_staff_attendance', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    await Promise.all(
+      records.map((rec) =>
+        safeSetDoc(doc(db, 'staff_attendance', String(rec.id)), rec).catch((err) => {
+          handleFirestoreError(err, OperationType.WRITE, `staff_attendance/${rec.id}`);
+        })
+      )
+    );
+
+    logAction(
+      'Bulk Attendance Updated',
+      'স্টাফ হাজিরা/ছুটি সংরক্ষণ',
+      `${records.length}টি এন্ট্রি আপডেট করা হয়েছে`
+    );
+  };
+
+  const handleDeleteAttendance = async (recordId: string) => {
+    setAttendanceRecords((prev) => {
+      const next = prev.filter((r) => r.id !== recordId);
+      try {
+        safeStorage.setItem('protyasha_staff_attendance', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    await safeDeleteDoc(doc(db, 'staff_attendance', String(recordId))).catch((err) => {
+      handleFirestoreError(err, OperationType.DELETE, `staff_attendance/${recordId}`);
+    });
+
+    logAction('Deleted Attendance Record', 'হাজিরা/ছুটি রেকর্ড মোছা হয়েছে', `আইডি: ${recordId}`);
   };
 
   const handleDeleteStaffTransaction = (staffId: string, txId: string) => {
@@ -2512,10 +2836,30 @@ export default function App() {
     });
   };
 
+  const handleExitPublicTracker = () => {
+    if (isPublicPreviewOverlayRef.current && window.history.state?.appOverlay) {
+      window.history.back();
+      return;
+    }
+    isPublicPreviewOverlayRef.current = false;
+    clearTrackFromCurrentUrl();
+    setPublicTrackTicketId(null);
+  };
+
+  if (publicTrackTicketId) {
+    return (
+      <PublicTicketTracker
+        ticketId={publicTrackTicketId}
+        lang={lang}
+        onExitToApp={handleExitPublicTracker}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-white dark:bg-slate-900 flex flex-col w-full selection:bg-rose-500 selection:text-white">
-      {/* Full Screen Responsive App Container for Mobile & Desktop PC */}
-      <div className="relative w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl mx-auto bg-white dark:bg-slate-900 min-h-screen shadow-2xl flex flex-col transition-all">
+      {/* Full Screen Responsive App Container for Mobile Native App & Desktop PC Full-Screen */}
+      <div className="relative w-full bg-white dark:bg-slate-900 min-h-screen flex flex-col transition-all">
         
         {/* If Login View is explicitly requested */}
         {isLoginOpen ? (
@@ -2528,11 +2872,14 @@ export default function App() {
             onClearSessionNotice={() => setSessionNotice('')}
             onLanguageChange={setLang}
             onLoginSuccess={handleLoginSuccess}
+            onSubViewChange={(isSubView) => {
+              isLoginSubViewActiveRef.current = isSubView;
+            }}
             onClose={() => {
               // Only allow closing login modal if user already has an active session
               if (isLoggedInSession(user)) {
-                setIsLoginOpen(false);
                 sessionStorage.setItem('protyasha_session_active', 'true');
+                closeOverlayViaBack(() => setIsLoginOpen(false));
               }
             }}
           />
@@ -2542,7 +2889,7 @@ export default function App() {
             transaction={selectedTransaction}
             lang={lang}
             user={user}
-            onBack={() => setSelectedTransaction(null)}
+            onBack={() => closeOverlayViaBack(() => setSelectedTransaction(null))}
             onEdit={handleStartEdit}
             onDelete={handleDeleteTransaction}
             onViewReceipt={(trx) => {
@@ -2600,6 +2947,39 @@ export default function App() {
                     if (!checkServiceAccess('quickHisab', 'কুইক হিসাব ও লভ্যাংশ বণ্টন')) return;
                     sounds.playTap();
                     setIsQuickHisabOpen(true);
+                    pushHistoryStep();
+                  }}
+                  openTicketsCount={
+                    supportTickets.filter((t) => {
+                      if (t.status === 'resolved') return false;
+                      if (isStaffOrAdminUser(user, staffAccounts)) return true;
+                      return isSupportTicketOwner(t, user);
+                    }).length
+                  }
+                  todayPresentCount={(() => {
+                    const d = new Date();
+                    const todayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                    return attendanceRecords.filter(
+                      (r) =>
+                        r.date === todayKey &&
+                        (r.status === 'present' || r.status === 'late' || r.status === 'half_day')
+                    ).length;
+                  })()}
+                  totalStaffCount={staffAccounts.filter((s) => s.isActive !== false).length}
+                  onOpenSupportTickets={() => {
+                    sounds.playTap();
+                    setIsSupportTicketsOpen(true);
+                    pushHistoryStep();
+                  }}
+                  onOpenStaffAttendance={() => {
+                    sounds.playTap();
+                    setIsStaffAttendanceOpen(true);
+                    pushHistoryStep();
+                  }}
+                  onOpenAuditReport={() => {
+                    if (!checkServiceAccess('ledger', 'অডিট ও রিপোর্ট খাতা')) return;
+                    sounds.playTap();
+                    setActiveTab('ledger');
                     pushHistoryStep();
                   }}
                 />
@@ -2889,8 +3269,11 @@ export default function App() {
                     }
                   }}
                   onUpdateChecked={(res) => handleUpdateCheckResult(res, false)}
+                  onSubViewChange={(isSubView) => {
+                    isProfileSubViewActiveRef.current = isSubView;
+                  }}
                   onLogout={handleLogout}
-                  onClose={() => setActiveTab('home')}
+                  onClose={() => closeOverlayViaBack(() => setActiveTab('home'))}
                 />
               </div>
             )}
@@ -2920,7 +3303,10 @@ export default function App() {
           <UserManagementModal
             isOpen={isUserManagementOpen}
             lang={lang}
-            onClose={() => setIsUserManagementOpen(false)}
+            onClose={() => closeOverlayViaBack(() => setIsUserManagementOpen(false))}
+            onSubViewChange={(isSubView) => {
+              isUserMgmtSubViewActiveRef.current = isSubView;
+            }}
             onUserUpdated={(updatedUser) => {
               if (updatedUser.role === 'admin') {
                 if (updatedUser.avatarUrl) {
@@ -2953,7 +3339,10 @@ export default function App() {
         {/* Centralized Master Google Drive Backup & Restore Modal */}
         <DriveBackupModal
           isOpen={isDriveBackupOpen}
-          onClose={() => setIsDriveBackupOpen(false)}
+          onClose={() => closeOverlayViaBack(() => setIsDriveBackupOpen(false))}
+          onSubViewChange={(isSubView) => {
+            isDriveBackupSubViewActiveRef.current = isSubView;
+          }}
           lang={lang}
           currentUser={user}
           adminAvatar={adminAvatar}
@@ -2967,7 +3356,10 @@ export default function App() {
             isOpen={isBannerManagerOpen}
             banners={banners}
             lang={lang}
-            onClose={() => setIsBannerManagerOpen(false)}
+            onClose={() => closeOverlayViaBack(() => setIsBannerManagerOpen(false))}
+            onSubViewChange={(isSubView) => {
+              isBannerSubViewActiveRef.current = isSubView;
+            }}
             onSaveBanners={handleSaveBanners}
             onDeleteBanner={handleDeleteBanner}
           />
@@ -2979,7 +3371,7 @@ export default function App() {
             isOpen={isChannelManagerOpen}
             channels={channels}
             lang={lang}
-            onClose={() => setIsChannelManagerOpen(false)}
+            onClose={() => closeOverlayViaBack(() => setIsChannelManagerOpen(false))}
             onSaveChannels={(updated) => {
               const nowIso = new Date().toISOString();
               const normalized = updated.map((ch, idx) => ({
@@ -3024,7 +3416,7 @@ export default function App() {
             customMessage={activeServiceNotice.message}
             logoUrl={activeServiceNotice.logoUrl}
             lang={lang}
-            onClose={() => setActiveServiceNotice(null)}
+            onClose={() => closeOverlayViaBack(() => setActiveServiceNotice(null))}
           />
         )}
 
@@ -3034,7 +3426,7 @@ export default function App() {
             isOpen={isServiceManagerOpen}
             serviceStatuses={serviceStatuses}
             lang={lang}
-            onClose={() => setIsServiceManagerOpen(false)}
+            onClose={() => closeOverlayViaBack(() => setIsServiceManagerOpen(false))}
             onSaveServiceStatuses={(updated) => {
               setServiceStatuses(updated);
               try {
@@ -3065,10 +3457,51 @@ export default function App() {
           staffAccounts={staffAccounts}
           lang={lang}
           user={user}
-          onClose={() => setIsStaffManagerOpen(false)}
+          onClose={() => closeOverlayViaBack(() => setIsStaffManagerOpen(false))}
+          onSubViewChange={(isSubView) => {
+            isStaffManagerSubViewActiveRef.current = isSubView;
+          }}
           onSaveStaffAccounts={handleSaveStaffAccounts}
           onDeleteStaffAccount={handleDeleteStaffAccount}
           onDeleteStaffTransaction={handleDeleteStaffTransaction}
+          onLogAction={logAction}
+        />
+
+        {/* Real-Time Customer Support Ticket & Complaint Tracker Modal */}
+        <SupportTicketModal
+          isOpen={isSupportTicketsOpen}
+          tickets={supportTickets}
+          staffAccounts={staffAccounts}
+          lang={lang}
+          user={user}
+          onClose={() => closeOverlayViaBack(() => setIsSupportTicketsOpen(false))}
+          onSubViewChange={(isSubView) => {
+            isSupportSubViewActiveRef.current = isSubView;
+          }}
+          onSaveTicket={handleSaveSupportTicket}
+          onDeleteTicket={handleDeleteSupportTicket}
+          onLogAction={logAction}
+          onPreviewPublicLink={(ticketId) => {
+            isPublicPreviewOverlayRef.current = true;
+            setPublicTrackTicketId(ticketId);
+            pushHistoryStep();
+          }}
+        />
+
+        {/* Staff Attendance & Leave Management Modal */}
+        <StaffAttendanceModal
+          isOpen={isStaffAttendanceOpen}
+          staffAccounts={staffAccounts}
+          attendanceRecords={attendanceRecords}
+          lang={lang}
+          user={user}
+          onClose={() => closeOverlayViaBack(() => setIsStaffAttendanceOpen(false))}
+          onSubViewChange={(isSubView) => {
+            isAttendanceSubViewActiveRef.current = isSubView;
+          }}
+          onSaveAttendance={handleSaveAttendance}
+          onSaveBulkAttendance={handleSaveBulkAttendance}
+          onDeleteAttendance={handleDeleteAttendance}
           onLogAction={logAction}
         />
 
@@ -3076,7 +3509,7 @@ export default function App() {
         <ReceiptModal
           transaction={receiptTransaction}
           lang={lang}
-          onClose={() => setReceiptTransaction(null)}
+          onClose={() => closeOverlayViaBack(() => setReceiptTransaction(null))}
         />
 
         {/* Income / Expense Entry & Edit Modal */}
@@ -3088,10 +3521,12 @@ export default function App() {
           existingCustomers={existingCustomers}
           channels={channels}
           lang={lang}
-          onClose={() => {
-            setIsEntryModalOpen(false);
-            setEditingTransaction(null);
-          }}
+          onClose={() =>
+            closeOverlayViaBack(() => {
+              setIsEntryModalOpen(false);
+              setEditingTransaction(null);
+            })
+          }
           onSave={handleSaveEntry}
         />
 
@@ -3101,10 +3536,12 @@ export default function App() {
           notifications={userNotifications}
           lang={lang}
           user={user}
-          onClose={() => {
-            setIsNotificationsOpen(false);
-            setEditingNotification(null);
-          }}
+          onClose={() =>
+            closeOverlayViaBack(() => {
+              setIsNotificationsOpen(false);
+              setEditingNotification(null);
+            })
+          }
           onSelectNotification={(notif) => {
             handleMarkNotificationAsRead(notif.id);
             setSelectedNotificationDetail(notif);
@@ -3126,7 +3563,7 @@ export default function App() {
           notification={selectedNotificationDetail}
           lang={lang}
           user={user}
-          onClose={() => setSelectedNotificationDetail(null)}
+          onClose={() => closeOverlayViaBack(() => setSelectedNotificationDetail(null))}
           onDelete={handleDeleteNotification}
           onMarkAsRead={handleMarkNotificationAsRead}
           onOpenWeather={() => {
@@ -3209,8 +3646,11 @@ export default function App() {
               }
             }}
             onUpdateChecked={(res) => handleUpdateCheckResult(res, false)}
+            onSubViewChange={(isSubView) => {
+              isProfileSubViewActiveRef.current = isSubView;
+            }}
             onLogout={handleLogout}
-            onClose={() => setIsProfileOpen(false)}
+            onClose={() => closeOverlayViaBack(() => setIsProfileOpen(false))}
           />
         )}
 
@@ -3219,7 +3659,7 @@ export default function App() {
           isOpen={isRecycleBinOpen}
           transactions={transactions}
           lang={lang}
-          onClose={() => setIsRecycleBinOpen(false)}
+          onClose={() => closeOverlayViaBack(() => setIsRecycleBinOpen(false))}
           onRestore={handleRestore}
           onPermanentDelete={handlePermanentDelete}
           onEmptyTrash={handleEmptyTrash}
@@ -3230,7 +3670,7 @@ export default function App() {
           isOpen={isAuditLogOpen}
           logs={auditLogs}
           lang={lang}
-          onClose={() => setIsAuditLogOpen(false)}
+          onClose={() => closeOverlayViaBack(() => setIsAuditLogOpen(false))}
         />
 
         {/* Footer Settings Modal */}
@@ -3239,7 +3679,7 @@ export default function App() {
           config={footerConfig}
           banners={banners}
           lang={lang}
-          onClose={() => setIsFooterSettingsOpen(false)}
+          onClose={() => closeOverlayViaBack(() => setIsFooterSettingsOpen(false))}
           onSave={(newCfg) => {
             setFooterConfig(newCfg);
             safeStorage.setItem('protyasha_footer', JSON.stringify(newCfg));
@@ -3257,7 +3697,7 @@ export default function App() {
         <ChangePinModal
           isOpen={isChangePinOpen}
           lang={lang}
-          onClose={() => setIsChangePinOpen(false)}
+          onClose={() => closeOverlayViaBack(() => setIsChangePinOpen(false))}
           onPinChanged={(newPin) => {
             safeStorage.setItem('protyasha_admin_pin', newPin);
             safeSetDoc(doc(db, 'settings', 'admin_security'), {
@@ -3273,7 +3713,10 @@ export default function App() {
           isOpen={isWeatherOpen}
           lang={lang}
           isAdmin={user?.role === 'admin'}
-          onClose={() => setIsWeatherOpen(false)}
+          onClose={() => closeOverlayViaBack(() => setIsWeatherOpen(false))}
+          onSubViewChange={(isSubView) => {
+            isWeatherSubViewActiveRef.current = isSubView;
+          }}
           onSendWeatherNotification={(notif) => {
             handleSendNotification(notif);
           }}
@@ -3292,7 +3735,7 @@ export default function App() {
           isOpen={isPrayerTimesOpen}
           lang={lang}
           isAdmin={user?.role === 'admin'}
-          onClose={() => setIsPrayerTimesOpen(false)}
+          onClose={() => closeOverlayViaBack(() => setIsPrayerTimesOpen(false))}
           onSendNotification={(notif) => {
             handleSendNotification(notif);
           }}
@@ -3317,7 +3760,10 @@ export default function App() {
           staffAccounts={staffAccounts}
           quickHisabOwners={quickHisabOwners}
           onSaveOwners={handleSaveQuickHisabOwners}
-          onClose={() => setIsQuickHisabOpen(false)}
+          onClose={() => closeOverlayViaBack(() => setIsQuickHisabOpen(false))}
+          onSubViewChange={(isSubView) => {
+            isQuickHisabSubViewActiveRef.current = isSubView;
+          }}
         />
 
         {/* Ay-Byay Launching Animation Overlay with Branded Logo */}
@@ -3393,7 +3839,7 @@ export default function App() {
           <div className="fixed inset-0 z-[60] bg-[#f0f4fa] dark:bg-slate-950 overflow-y-auto select-none animate-in fade-in duration-150">
             {activePortal === 'ay-byay' ? (
               <AyByayPortal 
-                onExit={() => setActivePortal(null)}
+                onExit={() => closeOverlayViaBack(() => setActivePortal(null))}
                 staffAccounts={staffAccounts}
                 onSaveStaffAccounts={handleSaveStaffAccounts}
                 quickHisabOwners={quickHisabOwners}
@@ -3406,7 +3852,7 @@ export default function App() {
                 onAdminLogout={handleAyByayAdminLogout}
               />
             ) : (
-              <BillManagerPortal onExit={() => setActivePortal(null)} />
+              <BillManagerPortal onExit={() => closeOverlayViaBack(() => setActivePortal(null))} />
             )}
           </div>
         )}
@@ -3425,7 +3871,7 @@ export default function App() {
               </p>
               <div className="flex gap-3">
                 <button
-                  onClick={() => setDeleteTrx(null)}
+                  onClick={() => closeOverlayViaBack(() => setDeleteTrx(null))}
                   className="flex-1 py-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold"
                 >
                   {lang === 'bn' ? 'বাতিল' : 'Cancel'}

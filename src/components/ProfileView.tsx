@@ -53,6 +53,7 @@ import {
   markVersionFeaturesAcknowledged,
   UpdateCheckResult
 } from '../utils/appVersion';
+import { useSubViewBack } from '../utils/useSubViewBack';
 
 interface ProfileViewProps {
   user: UserSession | null;
@@ -77,6 +78,7 @@ interface ProfileViewProps {
   onOpenLogin?: () => void;
   onOpenFooterSettings?: () => void;
   onUpdateChecked?: (result: UpdateCheckResult) => void;
+  onSubViewChange?: (isSubView: boolean) => void;
   isTabMode?: boolean;
 }
 
@@ -103,6 +105,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onOpenLogin,
   onOpenFooterSettings,
   onUpdateChecked,
+  onSubViewChange,
   isTabMode = false
 }) => {
   const t = translations[lang];
@@ -178,6 +181,20 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
   const [isApplyingUpdate, setIsApplyingUpdate] = useState(false);
+
+  useSubViewBack(
+    true,
+    (isEditModalOpen ? 1 : 0) + (isUpdateModalOpen ? 1 : 0),
+    () => {
+      if (isUpdateModalOpen) {
+        setIsUpdateModalOpen(false);
+      } else if (isEditModalOpen) {
+        setIsEditModalOpen(false);
+      }
+    },
+    onSubViewChange,
+    'profileView'
+  );
 
   const handleCheckForUpdate = async () => {
     sounds.playTap();

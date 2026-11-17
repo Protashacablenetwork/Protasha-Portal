@@ -143,7 +143,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({
       </div>
 
       {/* Main Page Content */}
-      <div className="flex-1 px-4 py-4 space-y-4 pb-28 max-w-md mx-auto w-full">
+      <div className="flex-1 px-4 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-4 pb-28 w-full max-w-5xl mx-auto">
         {/* Hero Card */}
         <div
           className={`p-5 rounded-3xl border shadow-md relative overflow-hidden ${

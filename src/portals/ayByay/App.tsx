@@ -43,6 +43,13 @@ import {
 import { ArrowDownToLine, CheckCircle2, AlertCircle, ArrowLeft, Boxes, BarChart3, Sparkles, PlusCircle, FileSpreadsheet } from 'lucide-react';
 import { StaffAccount, QuickHisabOwner, UserSession } from '../../types';
 import { initialTransactions } from '../../data/initialData';
+import {
+  sanitizeStaffForFirestore,
+  upsertSingleStaffToCloud,
+  deleteSingleStaffFromCloud,
+  broadcastStaffAccounts,
+  findMatchedStaffForUser
+} from '../../utils/staffSync';
 import { staffDb, safeSetDoc, safeDeleteDoc, handleFirestoreError, OperationType } from '../../utils/firebase';
 import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { safeStorage } from '../../utils/safeStorage';
@@ -88,7 +95,6 @@ export function AyByayPortal({
   const isAdmin = userRole === 'admin';
   const isSubAdmin = userRole === 'sub-admin';
   const isVisitor = userRole === 'visitor';
-  const canEdit = isAdmin || isSubAdmin;
 
 
   // Internal staff accounts for company dues deduction
@@ -105,10 +111,17 @@ export function AyByayPortal({
   });
 
   useEffect(() => {
-    if (propStaffAccounts && propStaffAccounts.length > 0) {
+    if (Array.isArray(propStaffAccounts)) {
       setStaffAccounts(propStaffAccounts);
     }
   }, [propStaffAccounts]);
+
+  // Any staff member logged in on the main page automatically gets edit access with zero extra PIN
+  const matchedMainStaff = useMemo(
+    () => findMatchedStaffForUser(currentUser || null, staffAccounts),
+    [currentUser, staffAccounts]
+  );
+  const canEdit = isAdmin || isSubAdmin || Boolean(matchedMainStaff);
 
   useEffect(() => {
     const handleStaffChange = (e: any) => {
@@ -133,8 +146,15 @@ export function AyByayPortal({
         const cloudStaff: StaffAccount[] = [];
         snapshot.forEach(docSnap => {
           const data = docSnap.data() as StaffAccount;
-          if (data && data.id && data.name) {
-            cloudStaff.push(data);
+          if (data && (data.id || docSnap.id) && data.name) {
+            cloudStaff.push({
+              ...data,
+              id: String(data.id || docSnap.id),
+              phone: data.phone || '',
+              role: data.role || 'লাইন টেকনিশিয়ান',
+              isActive: data.isActive !== false,
+              transactions: Array.isArray(data.transactions) ? data.transactions : []
+            });
           }
         });
         setStaffAccounts(cloudStaff);
@@ -276,71 +296,56 @@ export function AyByayPortal({
   }, []);
 
   const handleSaveStaffAccounts = (updated: StaffAccount[]) => {
-    setStaffAccounts(updated);
+    const sanitized = updated.map((s) => sanitizeStaffForFirestore(s));
+    setStaffAccounts(sanitized);
     if (propOnSaveStaffAccounts) {
-      propOnSaveStaffAccounts(updated);
+      propOnSaveStaffAccounts(sanitized);
     } else {
-      safeStorage.setItem('protyasha_staff', JSON.stringify(updated));
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('staff-data-changed', { detail: updated }));
-      }, 0);
-      updated.forEach(staff => {
-        safeSetDoc(doc(staffDb, 'staff', String(staff.id)), {
-          ...staff,
-          phone: staff.phone || ''
-        }).catch(() => {});
+      broadcastStaffAccounts(sanitized);
+      sanitized.forEach(staff => {
+        safeSetDoc(doc(staffDb, 'staff', String(staff.id)), staff).catch(() => {});
       });
     }
   };
 
-  // Unified staff roster combining staffList and staffAccounts so neither is ever lost or missing across reloads/upgrades
+  // Unified staff roster derived directly from live Firestore staffAccounts (single source of truth across entire app)
   const effectiveStaffList = useMemo<Staff[]>(() => {
     const list: Staff[] = [];
     const seenIds = new Set<string>();
-    const seenPhones = new Set<string>();
-    const cleanPhone = (p: string) => (p || '').replace(/[^0-9]/g, '');
-
-    (staffList || []).forEach(s => {
-      if (s && s.id && !seenIds.has(s.id)) {
-        list.push(s);
-        seenIds.add(s.id);
-        const p = cleanPhone(s.phone);
-        if (p.length >= 10) seenPhones.add(p);
-      }
-    });
 
     (staffAccounts || []).forEach(acc => {
-      if (!acc || !acc.id) return;
-      const p = cleanPhone(acc.phone);
-      if (seenIds.has(acc.id) || (p.length >= 10 && seenPhones.has(p))) {
-        const idx = list.findIndex(s => s.id === acc.id || (p.length >= 10 && cleanPhone(s.phone) === p));
-        if (idx !== -1) {
-          list[idx] = {
-            ...list[idx],
-            designation: list[idx].designation || acc.role || 'লাইন টেকনিশিয়ান',
-            baseSalary: list[idx].baseSalary || acc.baseSalary || 15000,
-            phone: list[idx].phone || acc.phone
-          };
+      if (!acc || !acc.id || seenIds.has(String(acc.id))) return;
+      seenIds.add(String(acc.id));
+      let joinDate = '2026-01-01';
+      if (acc.createdAt) {
+        const parsed = new Date(acc.createdAt);
+        if (!isNaN(parsed.getTime())) {
+          joinDate = parsed.toISOString().split('T')[0];
         }
-        return;
       }
-      seenIds.add(acc.id);
-      if (p.length >= 10) seenPhones.add(p);
       list.push({
-        id: acc.id,
+        id: String(acc.id),
         name: acc.name,
         designation: acc.role || 'লাইন টেকনিশিয়ান',
-        phone: acc.phone,
-        joinDate: acc.createdAt ? new Date(acc.createdAt).toISOString().split('T')[0] : '2026-01-01',
-        baseSalary: acc.baseSalary || 15000,
+        phone: acc.phone || '',
+        joinDate,
+        baseSalary: Number(acc.baseSalary) || 0,
         status: acc.isActive !== false ? 'active' : 'inactive',
-        notes: '',
+        notes: acc.notes || '',
         createdAt: acc.createdAt || new Date().toISOString()
       });
     });
 
+    // Include any optimistic local entries not yet reflected in staffAccounts
+    (staffList || []).forEach(s => {
+      if (s && s.id && !seenIds.has(String(s.id))) {
+        seenIds.add(String(s.id));
+        list.push(s);
+      }
+    });
+
     return list;
-  }, [staffList, staffAccounts]);
+  }, [staffAccounts, staffList]);
 
   const [config, setConfig] = useState<AppConfig>(() => {
     let localSaved: any = null;
@@ -880,7 +885,7 @@ export function AyByayPortal({
       })
       .reduce((acc, t) => acc + parseNumber(t.amount), 0);
 
-    const activeStaffCount = (staffList || []).filter(s => s && s.status === 'active').length;
+    const activeStaffCount = (effectiveStaffList || []).filter(s => s && s.status === 'active').length;
 
     return {
       totalIncome,
@@ -892,7 +897,7 @@ export function AyByayPortal({
       expenseCount,
       staffCount: activeStaffCount
     };
-  }, [monthTransactions, salaries, staffList, selectedMonth]);
+  }, [monthTransactions, salaries, effectiveStaffList, selectedMonth]);
 
   // Interactive Card Click Handler (Opens Full Page Card Detail View)
   const handleCardClick = (type: DashboardCardType) => {
@@ -1042,7 +1047,7 @@ export function AyByayPortal({
     }
   };
 
-  // STAFF MANAGEMENT HANDLERS (Firestore staff-collection-db + API sync)
+  // STAFF MANAGEMENT HANDLERS (Unified Firestore 'staff' collection + instant app-wide sync)
   const handleAddStaff = async (data: Omit<Staff, 'id' | 'createdAt'>) => {
     if (!canEdit) {
       setIsAdminLoginModalOpen(true);
@@ -1052,37 +1057,29 @@ export function AyByayPortal({
     try {
       const newStaffId = `stf-${Date.now()}`;
       const nowIso = new Date().toISOString();
-      const newStaff: Staff = {
-        ...data,
-        id: newStaffId,
-        createdAt: nowIso
-      };
 
-      // 1. Save directly to Google Cloud Firestore staffDb collection 'staff'
-      const newStaffAccount: StaffAccount = {
-        id: newStaffId,
-        name: newStaff.name,
-        phone: newStaff.phone,
-        role: newStaff.designation,
-        baseSalary: newStaff.baseSalary,
-        totalDue: 0,
-        totalCollected: 0,
-        remainingDue: 0,
-        transactions: [],
-        createdAt: nowIso,
-        isActive: newStaff.status === 'active',
-        recordedBy: currentUser?.id
-      };
-      await safeSetDoc(doc(staffDb, 'staff', newStaffId), newStaffAccount).catch(err => {
-        handleFirestoreError(err, OperationType.WRITE, `staff/${newStaffId}`);
-      });
+      const { updatedList } = await upsertSingleStaffToCloud(
+        {
+          id: newStaffId,
+          name: data.name,
+          phone: data.phone || '',
+          role: data.designation || 'লাইন টেকনিশিয়ান',
+          baseSalary: Number(data.baseSalary) || 0,
+          notes: data.notes || '',
+          totalDue: 0,
+          totalCollected: 0,
+          remainingDue: 0,
+          transactions: [],
+          createdAt: nowIso,
+          updatedAt: nowIso,
+          isActive: data.status !== 'inactive',
+          recordedBy: currentUser?.id || currentUser?.name || 'admin'
+        },
+        staffAccounts
+      );
 
-      // 2. Update state and local caches
-      setStaffList(prev => [...prev, newStaff]);
-      const updatedAccounts = [...staffAccounts, newStaffAccount];
-      handleSaveStaffAccounts(updatedAccounts);
-
-      setSyncToast({ message: `কর্মী "${newStaff.name}" ক্লাউডে সফলভাবে সংরক্ষিত হয়েছে`, type: 'success' });
+      setStaffAccounts(updatedList);
+      setSyncToast({ message: `কর্মী "${data.name}" ক্লাউডে সফলভাবে সংরক্ষিত হয়েছে`, type: 'success' });
       return true;
     } catch (err) {
       console.error('Error adding staff:', err);
@@ -1097,26 +1094,37 @@ export function AyByayPortal({
       return false;
     }
     try {
-      // 1. Update Firestore staffDb document
-      const existingAcc = staffAccounts.find(a => a.id === id);
-      if (existingAcc) {
-        const updatedAcc: StaffAccount = {
-          ...existingAcc,
-          name: data.name !== undefined ? data.name : existingAcc.name,
-          phone: data.phone !== undefined ? data.phone : existingAcc.phone,
-          role: data.designation !== undefined ? data.designation : existingAcc.role,
-          baseSalary: data.baseSalary !== undefined ? data.baseSalary : existingAcc.baseSalary,
-          isActive: data.status !== undefined ? (data.status === 'active') : existingAcc.isActive
-        };
-        await safeSetDoc(doc(staffDb, 'staff', id), updatedAcc).catch(err => {
-          handleFirestoreError(err, OperationType.UPDATE, `staff/${id}`);
-        });
-        const updatedAccounts = staffAccounts.map(a => a.id === id ? updatedAcc : a);
-        handleSaveStaffAccounts(updatedAccounts);
-      }
+      const existingAcc = staffAccounts.find(a => String(a.id) === String(id));
+      const { updatedList } = await upsertSingleStaffToCloud(
+        {
+          ...(existingAcc || {
+            id,
+            totalDue: 0,
+            totalCollected: 0,
+            remainingDue: 0,
+            transactions: [],
+            createdAt: new Date().toISOString()
+          }),
+          id,
+          name: data.name !== undefined ? data.name : existingAcc?.name || 'স্টাফ',
+          phone: data.phone !== undefined ? data.phone : existingAcc?.phone || '',
+          role: data.designation !== undefined ? data.designation : existingAcc?.role || 'লাইন টেকনিশিয়ান',
+          baseSalary:
+            data.baseSalary !== undefined
+              ? Number(data.baseSalary) || 0
+              : existingAcc?.baseSalary || 0,
+          notes: data.notes !== undefined ? data.notes : existingAcc?.notes || '',
+          isActive:
+            data.status !== undefined
+              ? data.status === 'active'
+              : existingAcc?.isActive !== false,
+          updatedAt: new Date().toISOString()
+        },
+        staffAccounts
+      );
 
-      // 2. Update local staffList state
-      setStaffList(prev => prev.map(s => (s.id === id ? { ...s, ...data } : s)));
+      setStaffAccounts(updatedList);
+      setStaffList(prev => prev.filter(s => String(s.id) !== String(id)));
 
       setSyncToast({ message: 'স্টাফ তথ্য ক্লাউডে সফলভাবে আপডেট হয়েছে', type: 'success' });
       return true;
@@ -1133,15 +1141,9 @@ export function AyByayPortal({
       return false;
     }
     try {
-      // 1. Delete from Google Cloud Firestore staffDb
-      await safeDeleteDoc(doc(staffDb, 'staff', id)).catch(err => {
-        handleFirestoreError(err, OperationType.DELETE, `staff/${id}`);
-      });
-
-      // 2. Update state and local caches
-      setStaffList(prev => prev.filter(s => s.id !== id));
-      const updatedAccounts = staffAccounts.filter(a => a.id !== id);
-      handleSaveStaffAccounts(updatedAccounts);
+      const updatedList = await deleteSingleStaffFromCloud(id, staffAccounts);
+      setStaffAccounts(updatedList);
+      setStaffList(prev => prev.filter(s => String(s.id) !== String(id)));
 
       setSyncToast({ message: 'স্টাফ ক্লাউড ডাটাবেজ থেকে মুছে ফেলা হয়েছে', type: 'success' });
       return true;
@@ -1462,7 +1464,7 @@ export function AyByayPortal({
   };
 
   return (
-    <main className={`min-h-screen w-full ${isDarkMode ? 'bg-slate-950 text-slate-100 dark' : 'bg-[#f0f4fa] text-slate-900'} py-3 sm:py-5 px-3 sm:px-6 max-w-7xl mx-auto font-sans pb-28 sm:pb-12 transition-colors`}>
+    <main className={`min-h-screen w-full ${isDarkMode ? 'bg-slate-950 text-slate-100 dark' : 'bg-[#f0f4fa] text-slate-900'} py-3 sm:py-5 px-3 sm:px-6 lg:px-8 font-sans pb-28 sm:pb-12 transition-colors`}>
       {/* Offline Status Indicator for PWA */}
       <OfflineIndicator />
 
@@ -1583,7 +1585,7 @@ export function AyByayPortal({
           <DashboardOverview
             transactions={transactions}
             salaries={salaries}
-            staffList={staffList}
+            staffList={effectiveStaffList}
             selectedMonth={selectedMonth}
             onMonthChange={handleMonthChange}
             onOpenCardDetail={handleCardClick}
@@ -1745,7 +1747,7 @@ export function AyByayPortal({
           type={activeCardDetail}
           transactions={transactions}
           salaries={salaries}
-          staffList={staffList}
+          staffList={effectiveStaffList}
           config={config}
           selectedMonth={selectedMonth}
           onMonthChange={handleMonthChange}
@@ -1907,7 +1909,7 @@ export function AyByayPortal({
         }}
         transactions={transactions}
         salaries={salaries}
-        staffList={staffList}
+        staffList={effectiveStaffList}
         config={config}
         selectedMonth={selectedMonth}
         onMonthChange={handleMonthChange}

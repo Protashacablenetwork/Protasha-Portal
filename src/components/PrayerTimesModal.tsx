@@ -454,7 +454,7 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
           TOP APP BAR (Fixed Top Header)
           ======================================================== */}
       <header className="relative z-40 shrink-0 bg-[#002b23] border-b border-emerald-800/40 shadow-2xl backdrop-blur-xl bg-opacity-95">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-3">
           
           <div className="flex items-center gap-3 min-w-0 flex-1">
             {viewMode !== 'daily' && (
@@ -513,7 +513,7 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
 
       {/* Main Content Area */}
       <main ref={mainScrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto relative z-10 scrollbar-none pb-safe">
-        <div className="max-w-4xl mx-auto px-1 sm:px-4 py-3 sm:py-6">
+        <div className="w-full px-2 sm:px-6 lg:px-8 py-3 sm:py-6">
         
         {viewMode === 'monthly' ? (
           <div className="space-y-5 pb-28 animate-in slide-in-from-right-4 duration-300">

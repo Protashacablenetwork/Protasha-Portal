@@ -39,6 +39,7 @@ import {
 import { buildWeatherNotification, getCurrentSlot } from '../utils/weatherNotificationService';
 import { toBengaliNumber } from '../utils/formatters';
 import { sounds } from '../utils/audio';
+import { useSubViewBack } from '../utils/useSubViewBack';
 
 interface WeatherModalProps {
   isOpen: boolean;
@@ -47,6 +48,7 @@ interface WeatherModalProps {
   isAdmin?: boolean;
   onSendWeatherNotification?: (notif: NotificationItem) => void;
   onLocationChanged?: () => void;
+  onSubViewChange?: (isSubView: boolean) => void;
 }
 
 export const WeatherModal: React.FC<WeatherModalProps> = ({ 
@@ -55,7 +57,8 @@ export const WeatherModal: React.FC<WeatherModalProps> = ({
   onClose,
   isAdmin = false,
   onSendWeatherNotification,
-  onLocationChanged
+  onLocationChanged,
+  onSubViewChange
 }) => {
   const isBn = lang === 'bn';
   const [weather, setWeather] = useState<WeatherData | null>(null);
@@ -69,6 +72,14 @@ export const WeatherModal: React.FC<WeatherModalProps> = ({
   const [selectedDivision, setSelectedDivision] = useState<string>('সব');
   const [notificationSentToast, setNotificationSentToast] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
+
+  useSubViewBack(
+    isOpen,
+    isDistrictPickerOpen ? 1 : 0,
+    () => setIsDistrictPickerOpen(false),
+    onSubViewChange,
+    'weather'
+  );
 
   // Live real-time clock ticking every second
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -262,7 +273,7 @@ export const WeatherModal: React.FC<WeatherModalProps> = ({
 
       {/* Top Header Bar with Widescreen Desktop Container */}
       <div className="relative z-10 border-b border-white/10 backdrop-blur-md bg-black/30">
-        <div className="max-w-5xl xl:max-w-6xl mx-auto px-4 pt-4 pb-3 flex items-center justify-between">
+        <div className="w-full px-4 sm:px-6 lg:px-8 pt-4 pb-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
               onClick={() => {
@@ -345,7 +356,7 @@ export const WeatherModal: React.FC<WeatherModalProps> = ({
       )}
 
       {/* Main Content Container - Full Screen PC Responsive 2-Column Grid */}
-      <div className="relative z-10 flex-1 px-4 py-6 max-w-5xl xl:max-w-6xl mx-auto w-full space-y-6 pb-20">
+      <div className="relative z-10 flex-1 px-4 sm:px-6 lg:px-8 py-6 w-full space-y-6 pb-20">
         
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           

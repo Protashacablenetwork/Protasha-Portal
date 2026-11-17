@@ -44,9 +44,9 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   const isBn = lang === 'bn';
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl mx-auto select-none pointer-events-none">
-      <div className="pointer-events-auto bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/90 dark:border-slate-800 px-2 sm:px-6 pb-safe pt-1 shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
-        <div className="grid grid-cols-4 items-center h-14">
+    <div className="fixed bottom-0 left-0 right-0 z-50 w-full select-none pointer-events-none">
+      <div className="pointer-events-auto bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/90 dark:border-slate-800 px-2 sm:px-6 lg:px-8 pb-safe pt-1 shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
+        <div className="grid grid-cols-4 items-center h-14 max-w-4xl mx-auto">
           {/* Tab 1: Home */}
           <button
             onClick={() => {

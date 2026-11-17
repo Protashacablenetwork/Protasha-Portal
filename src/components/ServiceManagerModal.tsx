@@ -165,8 +165,8 @@ export const ServiceManagerModal: React.FC<ServiceManagerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-2.5 sm:p-4 select-none animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-slate-900 w-full max-w-lg rounded-3xl p-4 sm:p-6 shadow-2xl space-y-4 sm:space-y-5 max-h-[92vh] overflow-y-auto overflow-x-hidden border border-slate-200 dark:border-slate-800">
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-2.5 sm:p-4 lg:p-6 select-none animate-in fade-in duration-200">
+      <div className="bg-white dark:bg-slate-900 w-full max-w-3xl rounded-3xl p-4 sm:p-6 shadow-2xl space-y-4 sm:space-y-5 max-h-[92vh] overflow-y-auto overflow-x-hidden border border-slate-200 dark:border-slate-800">
         
         {/* Header */}
         <div className="flex items-center justify-between pb-3 sm:pb-4 border-b border-slate-100 dark:border-slate-800">

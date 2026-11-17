@@ -24,6 +24,7 @@ import { formatCurrency, toBengaliNumber, toEnglishNumber } from '../utils/forma
 import { sounds } from '../utils/audio';
 import { compressImage } from '../utils/imageCompressor';
 import { savePersistentImage } from '../utils/imageStorage';
+import { useSubViewBack } from '../utils/useSubViewBack';
 
 interface StaffManagerModalProps {
   isOpen: boolean;
@@ -35,6 +36,7 @@ interface StaffManagerModalProps {
   onDeleteStaffAccount?: (staffId: string) => void;
   onDeleteStaffTransaction?: (staffId: string, txId: string) => void;
   onLogAction?: (action: string, actionBn: string, details: string) => void;
+  onSubViewChange?: (isSubView: boolean) => void;
 }
 
 export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
@@ -46,7 +48,8 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
   onSaveStaffAccounts,
   onDeleteStaffAccount,
   onDeleteStaffTransaction,
-  onLogAction
+  onLogAction,
+  onSubViewChange
 }) => {
   const isBn = lang === 'bn';
 
@@ -118,36 +121,43 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
     });
   };
 
-  // Handle hardware device/browser back button & Escape key inside StaffManagerModal
-  useEffect(() => {
-    if (!isOpen) return;
+  // Universal device hardware/browser back button for inner sub-views (LIFO unwinding)
+  const staffSubViewDepth =
+    (selectedStaff ? 1 : 0) +
+    (isPrintingReport ? 1 : 0) +
+    (isAddStaffOpen ? 1 : 0) +
+    (entryStaff || editingTx ? 1 : 0) +
+    (deletingStaff ? 1 : 0) +
+    (deletingTx ? 1 : 0);
 
-    const handleModalPopState = (e: PopStateEvent) => {
+  useSubViewBack(
+    isOpen,
+    staffSubViewDepth,
+    () => {
       if (deletingStaff) {
-        e.stopImmediatePropagation();
         setDeletingStaff(null);
       } else if (deletingTx) {
-        e.stopImmediatePropagation();
         setDeletingTx(null);
       } else if (isPrintingReport) {
-        e.stopImmediatePropagation();
         setIsPrintingReport(false);
         setPrintingStaff(null);
       } else if (isAddStaffOpen) {
-        e.stopImmediatePropagation();
         setIsAddStaffOpen(false);
         setEditingStaff(null);
       } else if (entryStaff || editingTx) {
-        e.stopImmediatePropagation();
         setEntryStaff(null);
         setEditingTx(null);
       } else if (selectedStaff) {
-        e.stopImmediatePropagation();
         setSelectedStaff(null);
-      } else {
-        onClose();
       }
-    };
+    },
+    onSubViewChange,
+    'staffManager'
+  );
+
+  // Escape key inside StaffManagerModal
+  useEffect(() => {
+    if (!isOpen) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -172,13 +182,11 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
       }
     };
 
-    window.addEventListener('popstate', handleModalPopState, false);
     window.addEventListener('keydown', handleKeyDown);
     return () => {
-      window.removeEventListener('popstate', handleModalPopState, false);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isOpen, isAddStaffOpen, entryStaff, selectedStaff, isPrintingReport, deletingStaff, deletingTx, onClose]);
+  }, [isOpen, isAddStaffOpen, entryStaff, editingTx, selectedStaff, isPrintingReport, deletingStaff, deletingTx, onClose]);
 
   if (!isOpen) return null;
 
@@ -192,9 +200,9 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
     const q = searchQuery.trim().toLowerCase();
     if (!q) return true;
     return (
-      a.name.toLowerCase().includes(q) ||
-      a.phone.toLowerCase().includes(q) ||
-      a.role.toLowerCase().includes(q)
+      (a.name || '').toLowerCase().includes(q) ||
+      (a.phone || '').toLowerCase().includes(q) ||
+      (a.role || '').toLowerCase().includes(q)
     );
   });
 
@@ -233,7 +241,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
     let updatedList: StaffAccount[] = [];
 
     if (editingStaff) {
-      // Edit existing staff
+      // Edit existing staff (preserve userCode, baseSalary, isActive)
       updatedList = accounts.map(a => {
         if (a.id === editingStaff.id) {
           return {
@@ -241,11 +249,12 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
             name: staffName.trim(),
             phone: staffPhone.trim(),
             role: staffRole.trim(),
-            userCode: '',
+            userCode: a.userCode || '',
             address: staffAddress.trim() || '',
             reference: staffReference.trim() || '',
             avatarUrl: staffAvatar || a.avatarUrl || '',
-            notes: staffNotes.trim() || ''
+            notes: staffNotes.trim() || '',
+            isActive: a.isActive !== false
           };
         }
         return a;
@@ -288,6 +297,9 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
         totalCollected: 0,
         remainingDue: initDueVal,
         notes: staffNotes.trim() || '',
+        isActive: true,
+        baseSalary: 0,
+        recordedBy: user?.id || user?.name || 'admin',
         createdAt: new Date().toISOString(),
         transactions: initialTx
       };

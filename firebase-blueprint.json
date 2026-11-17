@@ -224,6 +224,78 @@
         "id": { "type": "string", "maxLength": 128 },
         "updatedAt": { "type": "string", "maxLength": 64 }
       }
+    },
+    "SupportTicket": {
+      "title": "SupportTicket",
+      "description": "Customer complaint and real-time line fault support ticket",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ticketNumber": { "type": "string", "maxLength": 32 },
+        "customerName": { "type": "string", "maxLength": 150 },
+        "customerPhone": { "type": "string", "maxLength": 32 },
+        "customerCode": { "type": "string", "maxLength": 64 },
+        "area": { "type": "string", "maxLength": 150 },
+        "category": { "type": "string", "enum": ["line_cut", "onu_router", "slow_net", "dish_signal", "billing", "new_line", "other"] },
+        "priority": { "type": "string", "enum": ["urgent", "high", "normal"] },
+        "status": { "type": "string", "enum": ["pending", "reviewing", "in_progress", "resolved"] },
+        "assignedStaffId": { "type": "string", "maxLength": 128 },
+        "assignedStaffName": { "type": "string", "maxLength": 150 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "resolutionNote": { "type": "string", "maxLength": 2000 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdById": { "type": "string", "maxLength": 128 },
+        "createdByPhone": { "type": "string", "maxLength": 32 },
+        "createdByRole": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 },
+        "resolvedAt": { "type": "string", "maxLength": 64 },
+        "resolvedBy": { "type": "string", "maxLength": 150 },
+        "resolvedByRole": { "type": "string", "maxLength": 32 },
+        "messageCount": { "type": "number" },
+        "lastMessageText": { "type": "string", "maxLength": 300 },
+        "lastMessageBy": { "type": "string", "maxLength": 150 },
+        "lastMessageAt": { "type": "string", "maxLength": 64 },
+        "isPublicTrackingEnabled": { "type": "boolean" },
+        "activityHistory": { "type": "array", "maxItems": 100 }
+      },
+      "required": ["id", "ticketNumber", "customerName", "category", "priority", "status"]
+    },
+    "SupportTicketMessage": {
+      "title": "SupportTicketMessage",
+      "description": "Real-time chat message inside a customer support ticket",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "ticketId": { "type": "string", "maxLength": 128 },
+        "senderId": { "type": "string", "maxLength": 128 },
+        "senderName": { "type": "string", "maxLength": 150 },
+        "senderRole": { "type": "string", "enum": ["admin", "sub-admin", "user", "visitor", "staff"] },
+        "text": { "type": "string", "maxLength": 2000 },
+        "type": { "type": "string", "enum": ["message", "system"] },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "ticketId", "senderName", "text", "createdAt"]
+    },
+    "StaffAttendance": {
+      "title": "StaffAttendance",
+      "description": "Daily staff attendance and leave management record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "staffId": { "type": "string", "maxLength": 128 },
+        "staffName": { "type": "string", "maxLength": 150 },
+        "staffRole": { "type": "string", "maxLength": 150 },
+        "date": { "type": "string", "maxLength": 16 },
+        "month": { "type": "string", "maxLength": 16 },
+        "status": { "type": "string", "enum": ["present", "absent", "late", "leave", "half_day"] },
+        "checkInTime": { "type": "string", "maxLength": 32 },
+        "leaveType": { "type": "string", "enum": ["casual", "sick", "emergency", "unpaid", "none"] },
+        "note": { "type": "string", "maxLength": 1000 },
+        "recordedBy": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "staffId", "date", "month", "status"]
     }
   },
   "firestore": {
@@ -239,6 +311,9 @@
     "/ay_byay_inventory/{itemId}": { "schema": "InventoryItem", "description": "Cable and router hardware stock items" },
     "/ay_byay_inventory_logs/{logId}": { "schema": "InventoryLog", "description": "Inventory stock movement history logs" },
     "/ay_byay_config/{configId}": { "schema": "AyByayConfig", "description": "Ay-Byay portal active month and company config" },
-    "/settings/{settingId}": { "schema": "SettingsDocument", "description": "Application settings and domain metadata documents" }
+    "/settings/{settingId}": { "schema": "SettingsDocument", "description": "Application settings and domain metadata documents" },
+    "/support_tickets/{ticketId}": { "schema": "SupportTicket", "description": "Real-time customer complaints and support tickets" },
+    "/support_tickets/{ticketId}/messages/{messageId}": { "schema": "SupportTicketMessage", "description": "Real-time conversation messages for each support ticket" },
+    "/staff_attendance/{recordId}": { "schema": "StaffAttendance", "description": "Daily staff attendance and leave records" }
   }
 }

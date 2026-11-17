@@ -260,6 +260,83 @@ service cloud.firestore {
       return data is map && data.keys().size() >= 1 && data.keys().size() <= 30;
     }
 
+    function isValidSupportTicket(data) {
+      return data.keys().hasAll(['id', 'ticketNumber', 'customerName', 'category', 'priority', 'status']) &&
+        data.keys().hasOnly([
+          'id', 'ticketNumber', 'customerName', 'customerPhone', 'customerCode',
+          'area', 'category', 'priority', 'status', 'assignedStaffId',
+          'assignedStaffName', 'description', 'resolutionNote', 'createdBy',
+          'createdById', 'createdByPhone', 'createdByRole', 'createdAt',
+          'updatedAt', 'resolvedAt', 'resolvedBy', 'resolvedByRole',
+          'messageCount', 'lastMessageText', 'lastMessageBy', 'lastMessageAt',
+          'isPublicTrackingEnabled', 'activityHistory'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+        data.ticketNumber is string && data.ticketNumber.size() >= 1 && data.ticketNumber.size() <= 32 &&
+        data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 150 &&
+        data.category in ['line_cut', 'onu_router', 'slow_net', 'dish_signal', 'billing', 'new_line', 'other'] &&
+        data.priority in ['urgent', 'high', 'normal'] &&
+        data.status in ['pending', 'reviewing', 'in_progress', 'resolved'] &&
+        (!('customerPhone' in data) || (data.customerPhone is string && data.customerPhone.size() <= 32)) &&
+        (!('customerCode' in data) || (data.customerCode is string && data.customerCode.size() <= 64)) &&
+        (!('area' in data) || (data.area is string && data.area.size() <= 150)) &&
+        (!('assignedStaffId' in data) || data.assignedStaffId == null || (data.assignedStaffId is string && data.assignedStaffId.size() <= 128)) &&
+        (!('assignedStaffName' in data) || data.assignedStaffName == null || (data.assignedStaffName is string && data.assignedStaffName.size() <= 150)) &&
+        (!('description' in data) || (data.description is string && data.description.size() <= 2000)) &&
+        (!('resolutionNote' in data) || (data.resolutionNote is string && data.resolutionNote.size() <= 2000)) &&
+        (!('createdBy' in data) || data.createdBy == null || (data.createdBy is string && data.createdBy.size() <= 128)) &&
+        (!('createdById' in data) || data.createdById == null || (data.createdById is string && data.createdById.size() <= 128)) &&
+        (!('createdByPhone' in data) || data.createdByPhone == null || (data.createdByPhone is string && data.createdByPhone.size() <= 32)) &&
+        (!('createdByRole' in data) || data.createdByRole == null || (data.createdByRole is string && data.createdByRole.size() <= 32)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64)) &&
+        (!('resolvedAt' in data) || data.resolvedAt == null || (data.resolvedAt is string && data.resolvedAt.size() <= 64)) &&
+        (!('resolvedBy' in data) || data.resolvedBy == null || (data.resolvedBy is string && data.resolvedBy.size() <= 150)) &&
+        (!('resolvedByRole' in data) || data.resolvedByRole == null || (data.resolvedByRole is string && data.resolvedByRole.size() <= 32)) &&
+        (!('messageCount' in data) || data.messageCount is number) &&
+        (!('lastMessageText' in data) || data.lastMessageText == null || (data.lastMessageText is string && data.lastMessageText.size() <= 300)) &&
+        (!('lastMessageBy' in data) || data.lastMessageBy == null || (data.lastMessageBy is string && data.lastMessageBy.size() <= 150)) &&
+        (!('lastMessageAt' in data) || data.lastMessageAt == null || (data.lastMessageAt is string && data.lastMessageAt.size() <= 64)) &&
+        (!('isPublicTrackingEnabled' in data) || data.isPublicTrackingEnabled is bool) &&
+        (!('activityHistory' in data) || (data.activityHistory is list && data.activityHistory.size() <= 100));
+    }
+
+    function isValidTicketMessage(data) {
+      return data.keys().hasAll(['id', 'ticketId', 'senderName', 'text', 'createdAt']) &&
+        data.keys().hasOnly([
+          'id', 'ticketId', 'senderId', 'senderName', 'senderRole',
+          'text', 'type', 'createdAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+        data.ticketId is string && data.ticketId.size() >= 1 && data.ticketId.size() <= 128 &&
+        data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 150 &&
+        data.text is string && data.text.size() >= 1 && data.text.size() <= 2000 &&
+        data.createdAt is string && data.createdAt.size() >= 1 && data.createdAt.size() <= 64 &&
+        (!('senderId' in data) || data.senderId == null || (data.senderId is string && data.senderId.size() <= 128)) &&
+        (!('senderRole' in data) || data.senderRole == null || data.senderRole in ['admin', 'sub-admin', 'user', 'visitor', 'staff']) &&
+        (!('type' in data) || data.type in ['message', 'system']);
+    }
+
+    function isValidStaffAttendance(data) {
+      return data.keys().hasAll(['id', 'staffId', 'date', 'month', 'status']) &&
+        data.keys().hasOnly([
+          'id', 'staffId', 'staffName', 'staffRole', 'date', 'month',
+          'status', 'checkInTime', 'leaveType', 'note', 'recordedBy', 'updatedAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+        data.staffId is string && data.staffId.size() >= 1 && data.staffId.size() <= 128 &&
+        data.date is string && data.date.size() >= 8 && data.date.size() <= 16 &&
+        data.month is string && data.month.size() >= 4 && data.month.size() <= 16 &&
+        data.status in ['present', 'absent', 'late', 'leave', 'half_day'] &&
+        (!('staffName' in data) || (data.staffName is string && data.staffName.size() <= 150)) &&
+        (!('staffRole' in data) || (data.staffRole is string && data.staffRole.size() <= 150)) &&
+        (!('checkInTime' in data) || (data.checkInTime is string && data.checkInTime.size() <= 32)) &&
+        (!('leaveType' in data) || data.leaveType == null || data.leaveType in ['casual', 'sick', 'emergency', 'unpaid', 'none']) &&
+        (!('note' in data) || (data.note is string && data.note.size() <= 1000)) &&
+        (!('recordedBy' in data) || data.recordedBy == null || (data.recordedBy is string && data.recordedBy.size() <= 128)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
     match /transactions/{txId} {
       allow get: if isValidId(txId);
       allow list: if isActiveRequest();
@@ -349,6 +426,27 @@ service cloud.firestore {
       allow list: if isActiveRequest();
       allow create, update: if isValidId(settingId) && isValidSettingsDoc(incoming());
       allow delete: if isValidId(settingId);
+    }
+
+    match /support_tickets/{ticketId} {
+      allow get: if isValidId(ticketId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(ticketId) && isValidSupportTicket(incoming());
+      allow delete: if isValidId(ticketId);
+
+      match /messages/{messageId} {
+        allow get: if isValidId(ticketId) && isValidId(messageId);
+        allow list: if isValidId(ticketId) && isActiveRequest();
+        allow create, update: if isValidId(ticketId) && isValidId(messageId) && isValidTicketMessage(incoming());
+        allow delete: if isValidId(ticketId) && isValidId(messageId);
+      }
+    }
+
+    match /staff_attendance/{recordId} {
+      allow get: if isValidId(recordId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(recordId) && isValidStaffAttendance(incoming());
+      allow delete: if isValidId(recordId);
     }
   }
 }

@@ -36,6 +36,7 @@ import { isIncomeTransaction, isExpenseTransaction, parseNumber, getTransactionM
 import { db, staffDb, safeSetDoc, safeDeleteDoc, handleFirestoreError, OperationType } from '../utils/firebase';
 import { collection, doc, getDoc, getDocs, onSnapshot } from 'firebase/firestore';
 import { safeStorage } from '../utils/safeStorage';
+import { useSubViewBack } from '../utils/useSubViewBack';
 
 interface QuickHisabModalProps {
   isOpen: boolean;
@@ -45,6 +46,7 @@ interface QuickHisabModalProps {
   quickHisabOwners?: QuickHisabOwner[];
   onSaveOwners?: (updated: QuickHisabOwner[]) => void;
   onClose: () => void;
+  onSubViewChange?: (isSubView: boolean) => void;
 }
 
 interface SummaryData {
@@ -77,7 +79,8 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
   staffAccounts,
   quickHisabOwners: propOwners,
   onSaveOwners,
-  onClose
+  onClose,
+  onSubViewChange
 }) => {
   const isBn = lang === 'bn';
   const isAdmin = user?.role === 'admin';
@@ -247,6 +250,21 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
   const [editExpense, setEditExpense] = useState(String(summary.totalExpense));
   const [editStaffSalary, setEditStaffSalary] = useState(String(summary.staffSalary));
   const [isSavingFin, setIsSavingFin] = useState(false);
+
+  useSubViewBack(
+    isOpen,
+    (isEditorOpen ? 1 : 0) + (isFinEditorOpen ? 1 : 0),
+    () => {
+      if (isFinEditorOpen) {
+        setIsFinEditorOpen(false);
+      } else if (isEditorOpen) {
+        setIsEditorOpen(false);
+        setEditingOwner(null);
+      }
+    },
+    onSubViewChange,
+    'quickHisab'
+  );
 
   const handleOpenFinEditor = () => {
     if (!isAdmin) return;

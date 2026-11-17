@@ -182,3 +182,97 @@ export interface QuickHisabOwner {
   createdAt?: string;
   updatedAt?: string;
 }
+
+export type SupportTicketCategory =
+  | 'line_cut'
+  | 'onu_router'
+  | 'slow_net'
+  | 'dish_signal'
+  | 'billing'
+  | 'new_line'
+  | 'other';
+
+export type SupportTicketPriority = 'urgent' | 'high' | 'normal';
+
+export type SupportTicketStatus = 'pending' | 'reviewing' | 'in_progress' | 'resolved';
+
+export interface SupportTicketActivity {
+  id: string;
+  action: 'created' | 'status_changed' | 'assigned' | 'resolved' | 'edited';
+  titleBn: string;
+  titleEn: string;
+  actorName: string;
+  actorRole?: string;
+  note?: string;
+  status?: SupportTicketStatus;
+  timestamp: string;
+}
+
+export interface SupportTicketMessage {
+  id: string;
+  ticketId: string;
+  senderId?: string;
+  senderName: string;
+  senderRole?: 'admin' | 'sub-admin' | 'user' | 'visitor' | 'staff';
+  text: string;
+  type?: 'message' | 'system';
+  createdAt: string;
+}
+
+export interface StaffSupportSession {
+  staffId: string;
+  name: string;
+  phone: string;
+  roleTitle: string;
+  loggedInAt: string;
+}
+
+export interface SupportTicket {
+  id: string;
+  ticketNumber: string;
+  customerName: string;
+  customerPhone: string;
+  customerCode?: string;
+  area?: string;
+  category: SupportTicketCategory;
+  priority: SupportTicketPriority;
+  status: SupportTicketStatus;
+  assignedStaffId?: string;
+  assignedStaffName?: string;
+  description?: string;
+  resolutionNote?: string;
+  createdBy?: string;
+  createdById?: string;
+  createdByPhone?: string;
+  createdByRole?: string;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string | null;
+  resolvedBy?: string | null;
+  resolvedByRole?: string | null;
+  messageCount?: number;
+  lastMessageText?: string | null;
+  lastMessageBy?: string | null;
+  lastMessageAt?: string | null;
+  isPublicTrackingEnabled?: boolean;
+  activityHistory?: SupportTicketActivity[];
+}
+
+export type AttendanceStatus = 'present' | 'absent' | 'late' | 'leave' | 'half_day';
+
+export type LeaveType = 'casual' | 'sick' | 'emergency' | 'unpaid' | 'none';
+
+export interface StaffAttendanceRecord {
+  id: string; // `${staffId}_${date}`
+  staffId: string;
+  staffName: string;
+  staffRole?: string;
+  date: string; // YYYY-MM-DD
+  month: string; // YYYY-MM
+  status: AttendanceStatus;
+  checkInTime?: string;
+  leaveType?: LeaveType;
+  note?: string;
+  recordedBy?: string;
+  updatedAt: string;
+}

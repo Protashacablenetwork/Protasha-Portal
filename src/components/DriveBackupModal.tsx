@@ -50,6 +50,7 @@ import { collection, doc, getDocs, getDoc } from 'firebase/firestore';
 import { AppUser, UserSession } from '../types';
 import { collectMasterBackupData } from '../utils/backupCollector';
 import { syncMasterDataToCloudArchive } from '../utils/cloudArchiveSync';
+import { useSubViewBack } from '../utils/useSubViewBack';
 
 interface DriveBackupModalProps {
   isOpen: boolean;
@@ -59,6 +60,7 @@ interface DriveBackupModalProps {
   adminAvatar?: string;
   onLogAction?: (action: string, actionBn: string, details: string) => void;
   onDataRestored?: () => void;
+  onSubViewChange?: (isSubView: boolean) => void;
 }
 
 export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
@@ -68,7 +70,8 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
   currentUser,
   adminAvatar,
   onLogAction,
-  onDataRestored
+  onDataRestored,
+  onSubViewChange
 }) => {
   const isBn = lang === 'bn';
 
@@ -98,6 +101,20 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
     message: '',
     actionType: 'restore'
   });
+
+  useSubViewBack(
+    isOpen,
+    (confirmDialog.isOpen ? 1 : 0) + (isAccountOptionsOpen ? 1 : 0),
+    () => {
+      if (confirmDialog.isOpen) {
+        setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
+      } else if (isAccountOptionsOpen) {
+        setIsAccountOptionsOpen(false);
+      }
+    },
+    onSubViewChange,
+    'driveBackup'
+  );
 
   const [isRestoring, setIsRestoring] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'drive' | 'local' | 'security'>('drive');
@@ -672,7 +689,7 @@ export const DriveBackupModal: React.FC<DriveBackupModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-150">
       <div 
         onClick={e => e.stopPropagation()}
-        className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl max-w-2xl w-full my-auto max-h-[92vh] flex flex-col overflow-hidden border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 duration-150"
+        className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl max-w-4xl w-full my-auto max-h-[92vh] flex flex-col overflow-hidden border border-slate-200 dark:border-slate-800 animate-in zoom-in-95 duration-150"
       >
         {/* Modal Header */}
         <div className="p-4 sm:p-5 bg-gradient-to-r from-[#D32F2F] via-[#E52E2E] to-rose-700 text-white flex items-center justify-between shrink-0 shadow-sm">

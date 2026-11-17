@@ -17,6 +17,7 @@ import {
 import { BannerAd, Language } from '../types';
 import { sounds } from '../utils/audio';
 import { compressImage } from '../utils/imageCompressor';
+import { useSubViewBack } from '../utils/useSubViewBack';
 
 interface BannerManagerModalProps {
   isOpen: boolean;
@@ -25,6 +26,7 @@ interface BannerManagerModalProps {
   onClose: () => void;
   onSaveBanners: (updated: BannerAd[]) => void;
   onDeleteBanner?: (id: string) => void;
+  onSubViewChange?: (isSubView: boolean) => void;
 }
 
 const MAX_BANNERS = 10;
@@ -36,7 +38,8 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
   lang,
   onClose,
   onSaveBanners,
-  onDeleteBanner
+  onDeleteBanner,
+  onSubViewChange
 }) => {
   const [bannerList, setBannerList] = useState<BannerAd[]>(banners || []);
   const [editingBanner, setEditingBanner] = useState<BannerAd | null>(null);
@@ -59,6 +62,23 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
   const [isFormActive, setIsFormActive] = useState<boolean>(true);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
+
+  useSubViewBack(
+    isOpen,
+    (editingBanner || isCreating ? 1 : 0) + (deleteConfirmId ? 1 : 0) + (validationError ? 1 : 0),
+    () => {
+      if (validationError) {
+        setValidationError(null);
+      } else if (deleteConfirmId) {
+        setDeleteConfirmId(null);
+      } else if (editingBanner || isCreating) {
+        setEditingBanner(null);
+        setIsCreating(false);
+      }
+    },
+    onSubViewChange,
+    'bannerManager'
+  );
 
   React.useEffect(() => {
     if (Array.isArray(banners)) {

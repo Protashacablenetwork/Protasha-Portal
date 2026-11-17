@@ -1,6 +1,13 @@
-import React, { Component, ErrorInfo, ReactNode } from 'react';
+import React, { Component, ErrorInfo, ReactNode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
+import { PublicTicketTracker } from './components/PublicTicketTracker';
+import {
+  clearTrackFromCurrentUrl,
+  extractTrackTicketIdFromLocation
+} from './components/TicketTrackingHelpers';
+import { Language } from './types';
+import { safeStorage } from './utils/safeStorage';
 import './index.css';
 
 interface Props {
@@ -134,6 +141,43 @@ class ErrorBoundary extends Component<Props, State> {
   }
 }
 
+const RootRouter: React.FC = () => {
+  const [standaloneTrackId, setStandaloneTrackId] = useState<string | null>(() =>
+    extractTrackTicketIdFromLocation()
+  );
+
+  useEffect(() => {
+    const syncFromUrl = () => {
+      const nextId = extractTrackTicketIdFromLocation();
+      if (nextId) {
+        setStandaloneTrackId(nextId);
+      }
+    };
+    window.addEventListener('hashchange', syncFromUrl);
+    window.addEventListener('popstate', syncFromUrl);
+    return () => {
+      window.removeEventListener('hashchange', syncFromUrl);
+      window.removeEventListener('popstate', syncFromUrl);
+    };
+  }, []);
+
+  if (standaloneTrackId) {
+    const savedLang = (safeStorage.getItem('protyasha_lang') as Language) || 'bn';
+    return (
+      <PublicTicketTracker
+        ticketId={standaloneTrackId}
+        lang={savedLang}
+        onExitToApp={() => {
+          clearTrackFromCurrentUrl();
+          setStandaloneTrackId(null);
+        }}
+      />
+    );
+  }
+
+  return <App />;
+};
+
 // Ensure app-ready class is added after mount
 window.addEventListener('DOMContentLoaded', () => {
   setTimeout(() => {
@@ -147,7 +191,7 @@ if (container) {
   const root = createRoot(container);
   root.render(
     <ErrorBoundary>
-      <App />
+      <RootRouter />
     </ErrorBoundary>
   );
 }

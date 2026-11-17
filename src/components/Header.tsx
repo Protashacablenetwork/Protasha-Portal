@@ -125,7 +125,7 @@ export const Header: React.FC<HeaderProps> = ({
                 }
               : undefined
           }
-          className={`pointer-events-auto max-w-5xl lg:max-w-6xl xl:max-w-7xl mx-auto w-full transition-all duration-300 ease-out border-b ${
+          className={`pointer-events-auto w-full transition-all duration-300 ease-out border-b ${
             isScrolled
               ? 'bg-white/78 dark:bg-slate-900/80 border-slate-200/75 dark:border-slate-700/70 shadow-[0_10px_30px_-10px_rgba(15,23,42,0.14)] py-2'
               : 'bg-transparent border-transparent shadow-none py-2.5'
@@ -138,7 +138,7 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           />
 
-          <div className="flex items-center justify-between gap-2 px-3 sm:px-5">
+          <div className="flex items-center justify-between gap-2 px-3 sm:px-6 lg:px-8">
             {/* Brand & User Profile Trigger */}
             <button
               type="button"
