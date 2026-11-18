@@ -10,6 +10,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 function mirrorBuildToDist() {
   return {
     name: 'mirror-build-to-dist',
+    buildStart() {
+      const assetsDir = path.resolve(__dirname, 'HTDOCS_UPLOAD', 'assets');
+      try {
+        if (fs.existsSync(assetsDir)) {
+          fs.rmSync(assetsDir, { recursive: true, force: true });
+        }
+      } catch (err) {
+        console.warn('[Build] Could not clean stale HTDOCS_UPLOAD/assets:', err);
+      }
+    },
     closeBundle() {
       const outDir = path.resolve(__dirname, 'HTDOCS_UPLOAD');
       const distDir = path.resolve(__dirname, 'dist');

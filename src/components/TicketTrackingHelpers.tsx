@@ -96,7 +96,7 @@ export const getTicketStatusLabel = (status: SupportTicketStatus, isBn: boolean)
 };
 
 const PUBLIC_TRACKING_BASE_URL_KEY = 'protyasha_public_tracking_base_url';
-const SAFE_TICKET_ID_REGEX = /^[a-zA-Z0-9_-]{1,128}$/;
+const SAFE_TICKET_ID_REGEX = /^[a-zA-Z0-9_.-]{1,128}$/;
 
 export const sanitizePublicBaseUrl = (raw?: string | null): string => {
   const trimmed = (raw || '').trim();

@@ -198,7 +198,36 @@ export const PublicTicketTracker: React.FC<PublicTicketTrackerProps> = ({
       );
     };
 
-    subscribeToDocId(localFallback?.id || ticketId);
+    const initTracker = async () => {
+      let targetDocId = ticketId;
+
+      try {
+        // 1. Check if document exists directly by ID
+        const directSnap = await getDoc(doc(db, 'support_tickets', ticketId));
+        if (!cancelled && directSnap.exists()) {
+          targetDocId = ticketId;
+        } else {
+          // 2. Query by ticketNumber field
+          const qNum = query(collection(db, 'support_tickets'), where('ticketNumber', '==', ticketId));
+          const qNumSnap = await getDocs(qNum);
+          if (!cancelled && !qNumSnap.empty) {
+            targetDocId = qNumSnap.docs[0].id;
+          } else {
+            // 3. Query by id field equality
+            const qId = query(collection(db, 'support_tickets'), where('id', '==', ticketId));
+            const qIdSnap = await getDocs(qId);
+            if (!cancelled && !qIdSnap.empty) {
+              targetDocId = qIdSnap.docs[0].id;
+            }
+          }
+        }
+      } catch {}
+
+      if (cancelled) return;
+      subscribeToDocId(localFallback?.id || targetDocId);
+    };
+
+    initTracker();
 
     return () => {
       cancelled = true;

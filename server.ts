@@ -126,6 +126,9 @@ if (!isProd) {
         }
     }));
     app.get('*', (req: express.Request, res: express.Response) => {
+        if (req.path.startsWith('/assets/') || /\.(js|mjs|css|map|png|jpg|jpeg|webp|svg|ico|woff2?)$/i.test(req.path)) {
+            return res.status(404).send('Asset not found');
+        }
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
         res.sendFile(path.join(staticRoot, 'index.html'));
     });

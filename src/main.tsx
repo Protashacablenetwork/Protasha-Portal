@@ -178,12 +178,18 @@ const RootRouter: React.FC = () => {
   return <App />;
 };
 
-// Ensure app-ready class is added after mount
-window.addEventListener('DOMContentLoaded', () => {
-  setTimeout(() => {
+// Ensure app-ready class is added immediately after mount (ESM scripts often run after DOMContentLoaded)
+const markAppReady = () => {
+  requestAnimationFrame(() => {
     document.body.classList.add('app-ready');
-  }, 100);
-});
+  });
+};
+
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', markAppReady, { once: true });
+} else {
+  markAppReady();
+}
 
 console.log('[App] Starting initialization...');
 const container = document.getElementById('root');
@@ -194,4 +200,5 @@ if (container) {
       <RootRouter />
     </ErrorBoundary>
   );
+  markAppReady();
 }
