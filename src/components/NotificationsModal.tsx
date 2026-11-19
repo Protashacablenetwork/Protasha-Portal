@@ -15,7 +15,10 @@ import {
   Sun,
   CloudRain,
   CloudLightning,
-  ShieldAlert
+  ShieldAlert,
+  Moon,
+  MapPin,
+  Sunset
 } from 'lucide-react';
 import { Language, NotificationItem, UserSession } from '../types';
 import { formatCurrency, translations, toBengaliNumber } from '../utils/formatters';
@@ -455,7 +458,135 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
         ) : (
           filteredNotifications.map((item) => {
             const isCashback = item.type === 'cashback';
+            const isFasting = Boolean(item.isFastingAlert || item.sehriIftarData);
             const isUnread = !item.isRead;
+
+            if (isFasting) {
+              const sData = item.sehriIftarData;
+              const slotLabel =
+                sData?.slotType === 'sehri_reminder'
+                  ? (isBn ? 'সেহরি রিমাইন্ডার' : 'Sehri Alert')
+                  : sData?.slotType === 'iftar_reminder'
+                    ? (isBn ? 'ইফতার রিমাইন্ডার' : 'Iftar Alert')
+                    : sData?.slotType === 'iftar_time'
+                      ? (isBn ? 'ইফতারের সময়' : 'Iftar Time')
+                      : (isBn ? 'সেহরি ও ইফতার সময়সূচী' : 'Sehri & Iftar');
+
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => {
+                    sounds.playTap();
+                    onSelectNotification(item);
+                  }}
+                  className={`relative rounded-2xl border overflow-hidden transition-all cursor-pointer group ${
+                    isUnread
+                      ? 'bg-gradient-to-br from-[#04362c] via-[#062b24] to-[#031f1a] border-emerald-500/45 text-white shadow-lg shadow-emerald-950/20'
+                      : 'bg-white dark:bg-slate-900 border-emerald-200/80 dark:border-emerald-900/50 text-slate-900 dark:text-white hover:border-emerald-400/60'
+                  }`}
+                >
+                  <div className="p-4 space-y-3">
+                    {/* Clean unboxed metadata row */}
+                    <div className="flex items-center justify-between gap-2 text-[11px] font-bold">
+                      <div className={`flex items-center gap-1.5 min-w-0 truncate ${
+                        isUnread ? 'text-amber-300' : 'text-emerald-700 dark:text-emerald-400'
+                      }`}>
+                        <Moon className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">{slotLabel}</span>
+                        {(sData?.districtBn || item.districtBn) && (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span className="inline-flex items-center gap-1 truncate">
+                              <MapPin className="w-3 h-3 shrink-0" />
+                              {isBn ? (sData?.districtBn || item.districtBn) : (sData?.districtEn || item.districtEn)}
+                            </span>
+                          </>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className={`text-[10px] font-semibold ${isUnread ? 'text-emerald-200/75' : 'text-slate-400'}`}>
+                          {isBn ? item.timeBn : item.timeEn}
+                        </span>
+                        {isUnread ? (
+                          <span className="text-[10px] font-black text-amber-300">
+                            {isBn ? 'নতুন' : 'NEW'}
+                          </span>
+                        ) : (
+                          <CheckCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Title */}
+                    <h4 className={`text-[15px] leading-snug tracking-tight ${
+                      isUnread ? 'font-black text-white' : 'font-bold text-slate-900 dark:text-white'
+                    }`}>
+                      {isBn ? item.titleBn : item.titleEn}
+                    </h4>
+
+                    {/* Structured Real-Time Sehri & Iftar 3-Column Strip */}
+                    {sData ? (
+                      <div className={`grid grid-cols-3 divide-x rounded-xl border ${
+                        isUnread
+                          ? 'bg-[#001f19]/80 border-emerald-500/25 divide-emerald-700/40'
+                          : 'bg-emerald-50/70 dark:bg-emerald-950/35 border-emerald-200/70 dark:border-emerald-900/60 divide-emerald-200/70 dark:divide-emerald-900/60'
+                      }`}>
+                        <div className="py-2.5 px-2 text-center">
+                          <p className={`text-[10px] font-bold ${isUnread ? 'text-emerald-200/75' : 'text-slate-500 dark:text-slate-400'}`}>
+                            {isBn ? 'সেহরি শেষ' : 'Sehri End'}
+                          </p>
+                          <p className={`text-xs sm:text-sm font-black tabular-nums mt-0.5 ${
+                            isUnread ? 'text-amber-300' : 'text-emerald-800 dark:text-amber-300'
+                          }`}>
+                            {sData.sehriEndBn}
+                          </p>
+                        </div>
+                        <div className="py-2.5 px-2 text-center">
+                          <p className={`text-[10px] font-bold ${isUnread ? 'text-emerald-200/75' : 'text-slate-500 dark:text-slate-400'}`}>
+                            {isBn ? 'ফজর শুরু' : 'Fajr'}
+                          </p>
+                          <p className={`text-xs sm:text-sm font-black tabular-nums mt-0.5 ${
+                            isUnread ? 'text-white' : 'text-slate-800 dark:text-slate-100'
+                          }`}>
+                            {sData.fajrBn}
+                          </p>
+                        </div>
+                        <div className="py-2.5 px-2 text-center">
+                          <p className={`text-[10px] font-bold ${isUnread ? 'text-emerald-200/75' : 'text-slate-500 dark:text-slate-400'}`}>
+                            {isBn ? 'আজকের ইফতার' : 'Iftar'}
+                          </p>
+                          <p className={`text-xs sm:text-sm font-black tabular-nums mt-0.5 ${
+                            isUnread ? 'text-amber-300' : 'text-amber-700 dark:text-amber-300'
+                          }`}>
+                            {sData.iftarBn}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className={`text-xs leading-relaxed line-clamp-2 whitespace-pre-line ${
+                        isUnread ? 'text-emerald-100/90 font-medium' : 'text-slate-600 dark:text-slate-300'
+                      }`}>
+                        {isBn ? (item.bodyBn || item.messageBn || '') : (item.bodyEn || item.messageEn || '')}
+                      </p>
+                    )}
+
+                    {/* Footer Action Line */}
+                    <div className="flex items-center justify-between pt-0.5 text-[11px] font-bold">
+                      <span className={isUnread ? 'text-emerald-200/75' : 'text-slate-500 dark:text-slate-400'}>
+                        {sData?.hijriDateBn || (isBn ? 'আপনার লোকেশনের রিয়েল সময়সূচী' : 'Live location schedule')}
+                      </span>
+                      <span className={`inline-flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform ${
+                        isUnread ? 'text-amber-300' : 'text-emerald-700 dark:text-emerald-400'
+                      }`}>
+                        <span>{isBn ? 'লাইভ সময়সূচী দেখুন' : 'View Live Timetable'}</span>
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
 
             return (
               <div

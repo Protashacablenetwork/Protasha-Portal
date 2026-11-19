@@ -68,7 +68,13 @@ import { AyByayPortal } from './portals/ayByay/App';
 import { BillManagerPortal } from './portals/billManager/BillManagerPortal';
 import { fetchLiveWeather, WeatherData, detectPreciseLocation, DistrictInfo, getUserPreferredDistrict, ALL_BANGLADESH_DISTRICTS, DEFAULT_HEADQUARTERS_DISTRICT } from './utils/weatherService';
 import { checkAndGenerateWeatherNotifications } from './utils/weatherNotificationService';
-import { checkAndGeneratePrayerNotifications, checkAndGenerateFastingReminders, isFastingReminderEnabled } from './utils/prayerTimeService';
+import {
+  checkAndGeneratePrayerNotifications,
+  checkAndGenerateFastingReminders,
+  isFastingReminderEnabled,
+  fetchLivePrayerTimes,
+  PrayerTimings
+} from './utils/prayerTimeService';
 import { safeStorage } from './utils/safeStorage';
 import { canAddTransactions, canModifyTransaction, isTransactionOwner, isLoggedInSession, isSupportTicketOwner } from './utils/permissions';
 import { saveStoredUser } from './utils/userStorage';
@@ -96,6 +102,39 @@ import {
   scheduleSilentCloudArchiveSync,
   syncMasterDataToCloudArchive
 } from './utils/cloudArchiveSync';
+
+// Per-device automated location/system alerts stay strictly local so multi-district users never overwrite each other in Firestore
+const isLocalAutoNotification = (n: NotificationItem): boolean => {
+  if (!n) return false;
+  if (n.isGlobal) return false;
+  const id = String(n.id || '');
+  return Boolean(
+    n.isFastingAlert ||
+    n.isPrayerAlert ||
+    n.isWeatherAlert ||
+    id.startsWith('fasting_') ||
+    id.startsWith('prayer_') ||
+    id.startsWith('weather-') ||
+    id.startsWith('app-update-') ||
+    id.startsWith('app-features-')
+  );
+};
+
+const mergeCloudAndLocalNotifications = (
+  cloudList: NotificationItem[],
+  existingList: NotificationItem[]
+): NotificationItem[] => {
+  const localOnly = existingList.filter(isLocalAutoNotification);
+  const cloudBroadcasts = cloudList.filter(n => n && !isLocalAutoNotification(n));
+  const seen = new Set<string>();
+  const merged: NotificationItem[] = [];
+  for (const item of [...localOnly, ...cloudBroadcasts]) {
+    if (!item || !item.id || seen.has(item.id)) continue;
+    seen.add(item.id);
+    merged.push(item);
+  }
+  return merged;
+};
 
 export default function App() {
   // Language
@@ -196,6 +235,8 @@ export default function App() {
       ayByay: { isActive: true, logoUrl: 'https://i.ibb.co/0jZfwH1s/file-0000000079b4821185e81949d65e68d5.png' },
       quickHisab: { isActive: true },
       staffManager: { isActive: true },
+      supportTickets: { isActive: true },
+      staffAttendance: { isActive: true },
       transactions: { isActive: true },
       ledger: { isActive: true }
     };
@@ -1013,7 +1054,8 @@ export default function App() {
       setAttendanceRecords(attendanceRows);
 
       if (notifSnap.exists() && Array.isArray(notifSnap.data()?.list)) {
-        setNotifications(cleanDemoNotifications(notifSnap.data().list));
+        const cleanedCloud = cleanDemoNotifications(notifSnap.data().list);
+        setNotifications(prev => mergeCloudAndLocalNotifications(cleanedCloud, prev));
       }
       if (serviceSnap.exists() && serviceSnap.data()?.statuses) {
         setServiceStatuses(prev => ({ ...prev, ...serviceSnap.data().statuses }));
@@ -1227,6 +1269,7 @@ export default function App() {
   const [isStaffManagerOpen, setIsStaffManagerOpen] = useState(false);
   const [isWeatherOpen, setIsWeatherOpen] = useState(false);
   const [isPrayerTimesOpen, setIsPrayerTimesOpen] = useState(false);
+  const [prayerInitialView, setPrayerInitialView] = useState<'daily' | 'ramadan'>('daily');
   const [isQuickHisabOpen, setIsQuickHisabOpen] = useState(false);
   const [isSupportTicketsOpen, setIsSupportTicketsOpen] = useState(false);
   const [isStaffAttendanceOpen, setIsStaffAttendanceOpen] = useState(false);
@@ -1250,70 +1293,8 @@ export default function App() {
   // Delete Transaction Confirmation State
   const [deleteTrx, setDeleteTrx] = useState<Transaction | null>(null);
 
-  // Automated Real-Time Weather & Prayer Times (7-9 times daily) Notification Monitoring
-  useEffect(() => {
-    let isSubscribed = true;
-
-    const runAutomatedMonitoring = async () => {
-      try {
-        const preferred = getUserPreferredDistrict();
-        let activeDistrict = preferred || currentDistrict;
-
-        // Only detect if no preferred/confirmed district exists yet
-        if (!preferred) {
-          const { district } = await detectPreciseLocation(false);
-          if (district && isSubscribed) {
-            setCurrentDistrict(district);
-            activeDistrict = district;
-          }
-        }
-        const w = await fetchLiveWeather();
-
-        if (w && isSubscribed) {
-          setWeatherData(w);
-          setNotifications(prevNotifications => {
-            // 1. Weather Notifications
-            const { updatedNotifications: weatherNotifs, newlyAdded: newlyWeather } = checkAndGenerateWeatherNotifications(w, prevNotifications);
-
-            // 2. Prayer Times & Sunrise/Sunset Notifications (7-9 daily slots for user's real district)
-            const { updatedNotifications: prayerNotifs, newlyAdded: newlyPrayer } = checkAndGeneratePrayerNotifications(activeDistrict, weatherNotifs);
-
-            const newlyAdded = newlyWeather || newlyPrayer;
-
-            if (newlyAdded) {
-              try {
-                safeStorage.setItem('protyasha_notifications', JSON.stringify(prayerNotifs));
-              } catch (e) {
-                console.warn('LocalStorage limit reached for notifications:', e);
-              }
-              safeSetDoc(doc(db, 'settings', 'broadcast_notifications'), {
-                list: prayerNotifs.slice(0, 50),
-                updatedAt: new Date().toISOString()
-              }).catch(() => {});
-
-              if (newlyAdded.type === 'alert') {
-                sounds.playSuccess();
-              }
-              return prayerNotifs;
-            }
-            return prevNotifications;
-          });
-        }
-      } catch (err) {
-        console.warn('Automated monitoring background error:', err);
-      }
-    };
-
-    // Defer initial monitoring by 2.5s so initial app launch & entry is completely instant
-    const initialTimer = setTimeout(runAutomatedMonitoring, 2500);
-    // Check periodically in background
-    const interval = setInterval(runAutomatedMonitoring, 5 * 60 * 1000);
-    return () => {
-      isSubscribed = false;
-      clearTimeout(initialTimer);
-      clearInterval(interval);
-    };
-  }, [currentDistrict.nameEn]);
+  // Cache of live fetched prayer timings per district-day so 30s fasting checks stay instant & accurate
+  const liveTimingsCacheRef = useRef<{ key: string; timings: PrayerTimings } | null>(null);
 
   // In-app toast for Sehri/Iftar reminder or permission notices
   const [appToast, setAppToast] = useState<{ title: string; body?: string; tone?: 'emerald' | 'amber' } | null>(null);
@@ -1325,33 +1306,172 @@ export default function App() {
     }, durationMs);
   }, []);
 
-  // Dedicated 30-second Sehri & Iftar 10-Min Auto-Reminder Scheduler
+  // Push a device-local notification (e.g., Sehri & Iftar timetable for user's own district) without polluting global cloud broadcasts
+  const handlePushLocalNotification = useCallback((notif: NotificationItem) => {
+    setNotifications(prev => {
+      const filtered = prev.filter(n => n.id !== notif.id);
+      const next = [notif, ...filtered].slice(0, 80);
+      try {
+        safeStorage.setItem('protyasha_notifications', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    sounds.playSuccess();
+    const firstLine = (notif.bodyBn || '').split('\n')[0] || notif.titleBn;
+    showAppToast(notif.titleBn, firstLine, 'emerald', 8000);
+  }, [showAppToast]);
+
+  // Automated Real-Time Weather, Prayer Times & Location-Based Sehri/Iftar Notification Monitoring
   useEffect(() => {
-    const checkFastingReminder = () => {
+    let isSubscribed = true;
+
+    const runAutomatedMonitoring = async () => {
+      try {
+        const preferred = getUserPreferredDistrict();
+        let activeDistrict = preferred || currentDistrict;
+
+        // Auto-detect user's real district via silent GPS or Bangladesh IP fallback if no manual district is pinned
+        if (!preferred) {
+          const { district } = await detectPreciseLocation(false);
+          if (district && isSubscribed) {
+            if (district.nameEn !== currentDistrict.nameEn) {
+              setCurrentDistrict(district);
+            }
+            activeDistrict = district;
+          }
+        }
+
+        const todayKey = `${activeDistrict.nameEn}_${new Date().toISOString().slice(0, 10)}`;
+        let liveTimings: PrayerTimings | undefined =
+          liveTimingsCacheRef.current?.key === todayKey ? liveTimingsCacheRef.current.timings : undefined;
+
+        const [w, fetchedTimings] = await Promise.all([
+          fetchLiveWeather().catch(() => null),
+          liveTimings ? Promise.resolve(liveTimings) : fetchLivePrayerTimes(activeDistrict).catch(() => null)
+        ]);
+
+        if (fetchedTimings) {
+          liveTimings = fetchedTimings;
+          liveTimingsCacheRef.current = { key: todayKey, timings: fetchedTimings };
+        }
+
+        if (!isSubscribed) return;
+        if (w) setWeatherData(w);
+
+        let toastToTrigger: NotificationItem | null = null;
+        setNotifications(prevNotifications => {
+          let working = prevNotifications;
+          let newlyAdded: NotificationItem | null = null;
+
+          // 1. Weather Notifications (user's own district)
+          if (w) {
+            const weatherRes = checkAndGenerateWeatherNotifications(w, working);
+            working = weatherRes.updatedNotifications;
+            if (weatherRes.newlyAdded) newlyAdded = weatherRes.newlyAdded;
+          }
+
+          // 2. Prayer Times & Sunrise/Sunset Notifications (user's own district)
+          const prayerRes = checkAndGeneratePrayerNotifications(activeDistrict, working);
+          working = prayerRes.updatedNotifications;
+          if (prayerRes.newlyAdded) newlyAdded = prayerRes.newlyAdded;
+
+          // 3. Daily & Pre-Time Sehri/Iftar Schedule Notifications (strictly for user's own district)
+          const fastingEnabled = isFastingReminderEnabled();
+          const fastingRes = checkAndGenerateFastingReminders(activeDistrict, working, fastingEnabled, liveTimings);
+          working = fastingRes.updatedNotifications;
+          if (fastingRes.newlyAdded) {
+            newlyAdded = fastingRes.newlyAdded;
+            toastToTrigger = fastingRes.newlyAdded;
+          }
+
+          if (newlyAdded) {
+            const trimmed = working.slice(0, 80);
+            try {
+              safeStorage.setItem('protyasha_notifications', JSON.stringify(trimmed));
+            } catch (e) {
+              console.warn('LocalStorage limit reached for notifications:', e);
+            }
+            if (newlyAdded.type === 'alert') {
+              sounds.playSuccess();
+            }
+            return trimmed;
+          }
+          return prevNotifications;
+        });
+
+        if (toastToTrigger) {
+          const item = toastToTrigger as NotificationItem;
+          const summaryLine = item.sehriIftarData
+            ? `সেহরি শেষ: ${item.sehriIftarData.sehriEndBn} · ইফতার: ${item.sehriIftarData.iftarBn}`
+            : (item.bodyBn || '').split('\n')[0];
+          showAppToast(item.titleBn, summaryLine, 'emerald', 8000);
+        }
+      } catch (err) {
+        console.warn('Automated monitoring background error:', err);
+      }
+    };
+
+    // Defer initial monitoring slightly so app launch is instant
+    const initialTimer = setTimeout(runAutomatedMonitoring, 1800);
+    // Check periodically in background
+    const interval = setInterval(runAutomatedMonitoring, 5 * 60 * 1000);
+    return () => {
+      isSubscribed = false;
+      clearTimeout(initialTimer);
+      clearInterval(interval);
+    };
+  }, [currentDistrict.nameEn, showAppToast]);
+
+  // Dedicated 30-second Sehri & Iftar Real-Time Reminder Scheduler (30m, 10m, Iftar time & Daily timetable)
+  useEffect(() => {
+    const checkFastingReminder = async () => {
       const enabled = isFastingReminderEnabled();
       if (!enabled) return;
 
       const activeDistrict = getUserPreferredDistrict() || currentDistrict;
+      const todayKey = `${activeDistrict.nameEn}_${new Date().toISOString().slice(0, 10)}`;
+      let liveTimings: PrayerTimings | undefined =
+        liveTimingsCacheRef.current?.key === todayKey ? liveTimingsCacheRef.current.timings : undefined;
+
+      if (!liveTimings) {
+        try {
+          const fetched = await fetchLivePrayerTimes(activeDistrict);
+          if (fetched) {
+            liveTimings = fetched;
+            liveTimingsCacheRef.current = { key: todayKey, timings: fetched };
+          }
+        } catch {}
+      }
+
       setNotifications(prev => {
-        const { updatedNotifications, newlyAdded } = checkAndGenerateFastingReminders(activeDistrict, prev, enabled);
+        const { updatedNotifications, newlyAdded } = checkAndGenerateFastingReminders(
+          activeDistrict,
+          prev,
+          enabled,
+          liveTimings
+        );
         if (newlyAdded) {
+          const trimmed = updatedNotifications.slice(0, 80);
           try {
-            safeStorage.setItem('protyasha_notifications', JSON.stringify(updatedNotifications));
+            safeStorage.setItem('protyasha_notifications', JSON.stringify(trimmed));
           } catch {}
           sounds.playSuccess();
-          showAppToast(newlyAdded.titleBn, newlyAdded.bodyBn.split('\n')[0], 'emerald', 10000);
-          return updatedNotifications;
+          const summaryLine = newlyAdded.sehriIftarData
+            ? `সেহরি শেষ: ${newlyAdded.sehriIftarData.sehriEndBn} · ইফতার: ${newlyAdded.sehriIftarData.iftarBn}`
+            : newlyAdded.bodyBn.split('\n')[0];
+          showAppToast(newlyAdded.titleBn, summaryLine, 'emerald', 10000);
+          return trimmed;
         }
         return prev;
       });
     };
 
-    const initialCheck = setTimeout(checkFastingReminder, 3000);
-    const interval = setInterval(checkFastingReminder, 30 * 1000);
+    const initialCheck = setTimeout(() => { void checkFastingReminder(); }, 2500);
+    const interval = setInterval(() => { void checkFastingReminder(); }, 30 * 1000);
     const handleSettingChange = (e: Event) => {
       const custom = e as CustomEvent<{ enabled: boolean }>;
       if (custom.detail?.enabled) {
-        checkFastingReminder();
+        void checkFastingReminder();
       }
     };
     window.addEventListener('fasting-reminder-setting-changed', handleSettingChange);
@@ -1532,7 +1652,25 @@ export default function App() {
         logoUrl: serviceStatuses.quickHisab?.logoUrl
       });
     }
-  }, [serviceStatuses, activePortal, activeTab, isStaffManagerOpen, isQuickHisabOpen]);
+    if (isSupportTicketsOpen && isDeactivated('supportTickets')) {
+      setIsSupportTicketsOpen(false);
+      setActiveServiceNotice({
+        name: 'সাপোর্ট টিকেট ও কমপ্লেইন',
+        title: serviceStatuses.supportTickets?.title,
+        message: serviceStatuses.supportTickets?.customMessage,
+        logoUrl: serviceStatuses.supportTickets?.logoUrl
+      });
+    }
+    if (isStaffAttendanceOpen && isDeactivated('staffAttendance')) {
+      setIsStaffAttendanceOpen(false);
+      setActiveServiceNotice({
+        name: 'স্টাফ হাজিরা ও ছুটি',
+        title: serviceStatuses.staffAttendance?.title,
+        message: serviceStatuses.staffAttendance?.customMessage,
+        logoUrl: serviceStatuses.staffAttendance?.logoUrl
+      });
+    }
+  }, [serviceStatuses, activePortal, activeTab, isStaffManagerOpen, isQuickHisabOpen, isSupportTicketsOpen, isStaffAttendanceOpen]);
 
   // -------------------------------------------------------------
   // AUTO-SYNC MAIN-PAGE STAFF SESSION (ZERO EXTRA PIN ANYWHERE)
@@ -1906,10 +2044,13 @@ export default function App() {
               return timeB - timeA;
             });
             const cleaned = cleanDemoNotifications(sorted);
-            setNotifications(cleaned);
-            try {
-              safeStorage.setItem('protyasha_notifications', JSON.stringify(cleaned));
-            } catch {}
+            setNotifications(prev => {
+              const merged = mergeCloudAndLocalNotifications(cleaned, prev);
+              try {
+                safeStorage.setItem('protyasha_notifications', JSON.stringify(merged));
+              } catch {}
+              return merged;
+            });
           }
         },
         (err) => {
@@ -2099,24 +2240,39 @@ export default function App() {
   }, [transactions, user]);
 
   const userDistrictSlug = (currentDistrict?.nameEn || 'dhaka').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const userDistrictUnderscoreSlug = (currentDistrict?.nameEn || 'dhaka').toLowerCase().replace(/[^a-z0-9]/g, '_');
 
-  // Map notifications with active user's read status & strictly isolate automated prayer & weather alerts by user's real location
+  // Map notifications with active user's read status & strictly isolate automated Sehri/Iftar, prayer & weather alerts by user's real location
   const userNotifications = notifications
     .filter(n => {
-      // Isolate location-based prayer & weather alerts by user's real/selected district
-      if (n.isPrayerAlert || n.isWeatherAlert || n.id.startsWith('prayer_') || n.id.startsWith('weather-') || n.type === 'weather') {
+      // Isolate location-based Sehri/Iftar, prayer & weather alerts by user's real/selected district
+      if (
+        n.isFastingAlert ||
+        n.isPrayerAlert ||
+        n.isWeatherAlert ||
+        n.id.startsWith('fasting_') ||
+        n.id.startsWith('prayer_') ||
+        n.id.startsWith('weather-') ||
+        n.type === 'weather'
+      ) {
         // Global alerts (sent by admin) should be visible to all users regardless of location
         if (n.isGlobal) return true;
 
-        if (n.districtEn) {
-          const notifDistrictSlug = n.districtEn.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const targetEn = n.districtEn || n.sehriIftarData?.districtEn;
+        if (targetEn) {
+          const notifDistrictSlug = targetEn.toLowerCase().replace(/[^a-z0-9]/g, '');
           return notifDistrictSlug === userDistrictSlug;
         }
-        if (n.districtBn) {
-          return n.districtBn === currentDistrict?.nameBn;
+        const targetBn = n.districtBn || n.sehriIftarData?.districtBn;
+        if (targetBn) {
+          return targetBn === currentDistrict?.nameBn;
         }
         const cleanId = n.id.toLowerCase();
-        return cleanId.includes(`_${userDistrictSlug}_`) || cleanId.includes(`-${userDistrictSlug}-`);
+        return (
+          cleanId.includes(`_${userDistrictSlug}_`) ||
+          cleanId.includes(`_${userDistrictUnderscoreSlug}_`) ||
+          cleanId.includes(`-${userDistrictSlug}-`)
+        );
       }
       return true;
     })
@@ -2189,8 +2345,10 @@ export default function App() {
   };
 
   const saveNotificationsToCloud = (list: NotificationItem[]) => {
+    // Only persist global/admin broadcasts to Firestore; per-district auto notifications stay strictly on each user's device
+    const cloudBroadcasts = list.filter(n => n && !isLocalAutoNotification(n)).slice(0, 50);
     safeSetDoc(doc(db, 'settings', 'broadcast_notifications'), {
-      list: list.slice(0, 50),
+      list: cloudBroadcasts,
       updatedAt: new Date().toISOString()
     }).catch(() => {});
   };
@@ -2967,19 +3125,15 @@ export default function App() {
                   })()}
                   totalStaffCount={staffAccounts.filter((s) => s.isActive !== false).length}
                   onOpenSupportTickets={() => {
+                    if (!checkServiceAccess('supportTickets', 'সাপোর্ট টিকেট ও কমপ্লেইন')) return;
                     sounds.playTap();
                     setIsSupportTicketsOpen(true);
                     pushHistoryStep();
                   }}
                   onOpenStaffAttendance={() => {
+                    if (!checkServiceAccess('staffAttendance', 'স্টাফ হাজিরা ও ছুটি')) return;
                     sounds.playTap();
                     setIsStaffAttendanceOpen(true);
-                    pushHistoryStep();
-                  }}
-                  onOpenAuditReport={() => {
-                    if (!checkServiceAccess('ledger', 'অডিট ও রিপোর্ট খাতা')) return;
-                    sounds.playTap();
-                    setActiveTab('ledger');
                     pushHistoryStep();
                   }}
                 />
@@ -3573,6 +3727,13 @@ export default function App() {
           }}
           onOpenPrayerTimes={() => {
             sounds.playTap();
+            setPrayerInitialView('daily');
+            setIsPrayerTimesOpen(true);
+            pushHistoryStep();
+          }}
+          onOpenRamadanSchedule={() => {
+            sounds.playTap();
+            setPrayerInitialView('ramadan');
             setIsPrayerTimesOpen(true);
             pushHistoryStep();
           }}
@@ -3721,31 +3882,54 @@ export default function App() {
             handleSendNotification(notif);
           }}
           onLocationChanged={() => {
-            detectPreciseLocation().then(({ district }) => {
-              if (district) setCurrentDistrict(district);
+            const preferred = getUserPreferredDistrict();
+            if (preferred) {
+              setCurrentDistrict(preferred);
               fetchLiveWeather(true).then(w => {
                 if (w) setWeatherData(w);
               });
-            });
+            } else {
+              detectPreciseLocation().then(({ district }) => {
+                if (district) setCurrentDistrict(district);
+                fetchLiveWeather(true).then(w => {
+                  if (w) setWeatherData(w);
+                });
+              });
+            }
           }}
         />
 
-        {/* Location-based Prayer Times & Sunrise/Sunset Modal */}
+        {/* Location-based Prayer Times, Sehri/Iftar & Sunrise/Sunset Modal */}
         <PrayerTimesModal
           isOpen={isPrayerTimesOpen}
           lang={lang}
           isAdmin={user?.role === 'admin'}
-          onClose={() => closeOverlayViaBack(() => setIsPrayerTimesOpen(false))}
+          initialViewMode={prayerInitialView}
+          onClose={() =>
+            closeOverlayViaBack(() => {
+              setIsPrayerTimesOpen(false);
+              setPrayerInitialView('daily');
+            })
+          }
           onSendNotification={(notif) => {
             handleSendNotification(notif);
           }}
+          onPushLocalNotification={handlePushLocalNotification}
           onLocationChanged={() => {
-            detectPreciseLocation().then(({ district }) => {
-              if (district) setCurrentDistrict(district);
+            const preferred = getUserPreferredDistrict();
+            if (preferred) {
+              setCurrentDistrict(preferred);
               fetchLiveWeather(true).then(w => {
                 if (w) setWeatherData(w);
               });
-            });
+            } else {
+              detectPreciseLocation().then(({ district }) => {
+                if (district) setCurrentDistrict(district);
+                fetchLiveWeather(true).then(w => {
+                  if (w) setWeatherData(w);
+                });
+              });
+            }
           }}
           onSubViewActiveChange={(isSubView) => {
             isPrayerSubViewActiveRef.current = isSubView;

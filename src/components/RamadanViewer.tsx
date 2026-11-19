@@ -1,25 +1,30 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   MapPin,
-  Calendar as CalendarIcon,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
   Moon,
   BookOpen,
-  HeartHandshake,
-  Sparkles,
   Info,
   Clock,
   CheckCircle2,
-  Compass
+  Compass,
+  Navigation,
+  BellRing,
+  BellOff,
+  Send
 } from 'lucide-react';
-import { DistrictInfo } from '../utils/weatherService';
+import { NotificationItem } from '../types';
+import { DistrictInfo, LocationSourceType } from '../utils/weatherService';
 import {
   PrayerTimings,
   BENGALI_MONTHS,
   getPerpetualFastingCalendar,
-  getActiveFastingCardData
+  getActiveFastingCardData,
+  isFastingReminderEnabled,
+  setFastingReminderEnabled,
+  buildSehriIftarScheduleNotification
 } from '../utils/prayerTimeService';
 import { findRamadanMonthInYear } from '../utils/hijriDate';
 import { toBengaliNumber } from '../utils/formatters';
@@ -39,6 +44,12 @@ interface RamadanViewerProps {
   currentTime: Date;
   activeTab: RamadanSubTab;
   onTabChange: (tab: RamadanSubTab) => void;
+  locationSource?: LocationSourceType;
+  isAutoLocating?: boolean;
+  onOpenDistrictPicker?: () => void;
+  onAutoDetectGPS?: () => void;
+  onPushLocalNotification?: (notif: NotificationItem) => void;
+  onNotifyToast?: (msg: string) => void;
 }
 
 export const RamadanViewer: React.FC<RamadanViewerProps> = ({
@@ -46,13 +57,77 @@ export const RamadanViewer: React.FC<RamadanViewerProps> = ({
   timings,
   currentTime,
   activeTab,
-  onTabChange
+  onTabChange,
+  locationSource = 'default',
+  isAutoLocating = false,
+  onOpenDistrictPicker,
+  onAutoDetectGPS,
+  onPushLocalNotification,
+  onNotifyToast
 }) => {
   const [calYear, setCalYear] = useState<number>(currentTime.getFullYear());
   const [calMonth, setCalMonth] = useState<number>(currentTime.getMonth());
   const [duaCategory, setDuaCategory] = useState<string>('সব');
   const [detailMode, setDetailMode] = useState<'masala' | 'other'>('masala');
   const [openMasalaId, setOpenMasalaId] = useState<string>(RAMADAN_MASALA_SECTIONS[0].id);
+  const [autoNotifEnabled, setAutoNotifEnabled] = useState<boolean>(() => isFastingReminderEnabled());
+
+  useEffect(() => {
+    const syncSetting = () => setAutoNotifEnabled(isFastingReminderEnabled());
+    window.addEventListener('fasting-reminder-setting-changed', syncSetting);
+    return () => window.removeEventListener('fasting-reminder-setting-changed', syncSetting);
+  }, []);
+
+  const locationSourceBn =
+    locationSource === 'gps'
+      ? 'লাইভ GPS'
+      : locationSource === 'ip'
+        ? 'অটো লোকেশন'
+        : locationSource === 'manual'
+          ? 'নির্বাচিত জেলা'
+          : 'লোকেশন ভিত্তিক';
+
+  const handleToggleAutoNotif = async () => {
+    sounds.playTap();
+    const next = !autoNotifEnabled;
+    setAutoNotifEnabled(next);
+    setFastingReminderEnabled(next);
+
+    if (next && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      try {
+        await Notification.requestPermission();
+      } catch {}
+    }
+
+    onNotifyToast?.(
+      next
+        ? `${district.nameBn} জেলার অটো সেহরি-ইফতার নোটিফিকেশন চালু হয়েছে`
+        : 'অটো সেহরি-ইফতার নোটিফিকেশন বন্ধ করা হয়েছে'
+    );
+  };
+
+  const handleSendScheduleMessageNow = () => {
+    sounds.playTap();
+    const citySlug = (district.nameEn || 'dhaka').toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const notif = buildSehriIftarScheduleNotification(district, timings, 'daily_schedule', {
+      idOverride: `fasting_manual_${citySlug}_${Date.now()}`,
+      locationSource
+    });
+
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(notif.titleBn, {
+          body: `সেহরি শেষ: ${timings.sehriEnd} · ইফতার: ${timings.maghrib} (${district.nameBn})`,
+          tag: notif.id
+        });
+      } catch {}
+    }
+
+    if (onPushLocalNotification) {
+      onPushLocalNotification(notif);
+    }
+    onNotifyToast?.(`${district.nameBn} জেলার সেহরি ও ইফতারের সময়সূচী বার্তা পাঠানো হয়েছে`);
+  };
 
   // Live District Dashboard Data (ticks every second with currentTime)
   const dashboard = useMemo(() => {
@@ -118,24 +193,58 @@ export const RamadanViewer: React.FC<RamadanViewerProps> = ({
   return (
     <div className="space-y-5 pb-28 animate-in fade-in duration-300">
       {/* ============================================================
-          TOP LIVE DISTRICT DASHBOARD (Selected District + Countdown)
+          TOP LIVE DISTRICT DASHBOARD (Location + Countdown + Auto Notif)
           ============================================================ */}
       <section className="bg-gradient-to-br from-[#003d32] via-[#003128] to-[#001d18] rounded-[28px] sm:rounded-[36px] border border-emerald-500/35 shadow-2xl overflow-hidden text-white">
         <div className="p-4 sm:p-6 space-y-4">
-          {/* Hijri & Ramadan Status Header Row (Location is controlled via top header) */}
-          <div className="min-w-0 space-y-1">
-            <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-amber-300">
-              <span>{dashboard.hijriFormattedBn}</span>
-              <span aria-hidden="true">·</span>
-              <span className="text-emerald-200/80">{todayFullDateBn}</span>
+          {/* Active Location + GPS & District Switcher Row */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-emerald-800/45">
+            <div className="min-w-0 space-y-1">
+              <div className="flex flex-wrap items-center gap-1.5 text-sm sm:text-base font-black text-white">
+                <MapPin className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>{district.nameBn} ({district.nameEn})</span>
+                <span className="text-emerald-300/60" aria-hidden="true">·</span>
+                <span className="text-xs font-bold text-emerald-300">{locationSourceBn}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-amber-300">
+                <span>{dashboard.hijriFormattedBn}</span>
+                <span aria-hidden="true">·</span>
+                <span className="text-emerald-200/80">{todayFullDateBn}</span>
+              </div>
+              <p className="text-[11.5px] font-bold text-emerald-200/85">
+                {dashboard.ramadanStatusBn}
+              </p>
             </div>
-            <p className="text-[12px] font-bold text-emerald-200/90">
-              {dashboard.ramadanStatusBn}
-            </p>
+
+            {(onAutoDetectGPS || onOpenDistrictPicker) && (
+              <div className="flex items-center gap-2 shrink-0">
+                {onAutoDetectGPS && (
+                  <button
+                    type="button"
+                    onClick={onAutoDetectGPS}
+                    disabled={isAutoLocating}
+                    className="min-h-[44px] px-3.5 py-2 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 border border-emerald-400/35 text-xs font-black text-emerald-100 flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60"
+                  >
+                    <Navigation className={`w-3.5 h-3.5 text-amber-300 ${isAutoLocating ? 'animate-spin' : ''}`} />
+                    <span>{isAutoLocating ? 'খুঁজছে...' : 'লাইভ GPS'}</span>
+                  </button>
+                )}
+                {onOpenDistrictPicker && (
+                  <button
+                    type="button"
+                    onClick={onOpenDistrictPicker}
+                    className="min-h-[44px] px-3.5 py-2 rounded-xl bg-[#00221b] hover:bg-[#002f26] border border-amber-400/35 text-xs font-black text-amber-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <MapPin className="w-3.5 h-3.5 shrink-0" />
+                    <span>জেলা পরিবর্তন</span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Live Countdown & Phase Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2 border-t border-emerald-800/40">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-1 min-w-0">
               <div className="flex items-center gap-2 text-xs font-black text-emerald-300">
                 <Moon className="w-4 h-4 text-amber-400 shrink-0" />
@@ -169,7 +278,7 @@ export const RamadanViewer: React.FC<RamadanViewerProps> = ({
         {/* Bottom Today Metrics Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-4 border-t border-emerald-800/40 divide-y sm:divide-y-0 sm:divide-x divide-emerald-800/40 bg-[#00221b]">
           <div className="p-3.5 text-center">
-            <p className="text-[11px] font-bold text-emerald-200/70">সাহরীর শেষ সময়</p>
+            <p className="text-[11px] font-bold text-emerald-200/70">সেহরির শেষ সময়</p>
             <p className="text-base font-black text-amber-300 tabular-nums mt-0.5">{dashboard.sehriEndBn}</p>
           </div>
           <div className="p-3.5 text-center border-l border-emerald-800/40 sm:border-l-0">
@@ -181,8 +290,51 @@ export const RamadanViewer: React.FC<RamadanViewerProps> = ({
             <p className="text-base font-black text-amber-300 tabular-nums mt-0.5">{dashboard.iftarBn}</p>
           </div>
           <div className="p-3.5 text-center border-l border-emerald-800/40 sm:border-l-0">
-            <p className="text-[11px] font-bold text-emerald-200/70">দিনের ব্যাপ্তি</p>
+            <p className="text-[11px] font-bold text-emerald-200/70">রোজার ব্যাপ্তি</p>
             <p className="text-sm font-black text-emerald-200 tabular-nums mt-1">{dashboard.fastDurationBn}</p>
+          </div>
+        </div>
+
+        {/* Auto Sehri & Iftar Notification Control Bar */}
+        <div className="px-4 sm:px-6 py-3.5 bg-[#001a15] border-t border-emerald-800/45 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+              autoNotifEnabled
+                ? 'bg-emerald-500/20 border-emerald-400/40 text-amber-300'
+                : 'bg-white/5 border-white/10 text-emerald-200/50'
+            }`}>
+              {autoNotifEnabled ? <BellRing className="w-5 h-5" /> : <BellOff className="w-5 h-5" />}
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs sm:text-sm font-black text-white leading-tight">
+                অটো সেহরি ও ইফতার নোটিফিকেশন ({autoNotifEnabled ? 'চালু' : 'বন্ধ'})
+              </p>
+              <p className="text-[11px] font-bold text-emerald-200/75 mt-0.5">
+                {district.nameBn} জেলার সময়সূচী ও ৩০/১০ মিনিট আগে অটো বার্তা
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleToggleAutoNotif}
+              className={`min-h-[44px] px-4 py-2 rounded-xl text-xs font-black transition-colors cursor-pointer border ${
+                autoNotifEnabled
+                  ? 'bg-emerald-600 text-white border-emerald-400 hover:bg-emerald-500'
+                  : 'bg-[#002820] text-emerald-200 border-emerald-700/50 hover:bg-[#003329]'
+              }`}
+            >
+              {autoNotifEnabled ? 'চালু আছে' : 'চালু করুন'}
+            </button>
+            <button
+              type="button"
+              onClick={handleSendScheduleMessageNow}
+              className="min-h-[44px] px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <Send className="w-3.5 h-3.5 shrink-0" />
+              <span>সময়সূচী বার্তা পাঠান</span>
+            </button>
           </div>
         </div>
       </section>

@@ -15,7 +15,8 @@ import {
   Copy,
   Check,
   FileText,
-  RefreshCw
+  RefreshCw,
+  Printer
 } from 'lucide-react';
 import { collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { db, safeSetDoc, handleFirestoreError, OperationType } from '../utils/firebase';
@@ -319,6 +320,17 @@ export const PublicTicketTracker: React.FC<PublicTicketTrackerProps> = ({
         <div className="flex items-center gap-1.5 shrink-0">
           <button
             type="button"
+            onClick={() => {
+              sounds.playSuccess();
+              window.print();
+            }}
+            className="h-9 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>{isBn ? 'PDF ডাউনলোড' : 'Download PDF'}</span>
+          </button>
+          <button
+            type="button"
             onClick={handleCopyUrl}
             className="h-9 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
           >
@@ -398,7 +410,7 @@ export const PublicTicketTracker: React.FC<PublicTicketTrackerProps> = ({
             </p>
           </div>
         ) : (
-          <>
+          <div id="printable-ticket-report" className="space-y-4">
             {/* Ticket Summary Hero Card */}
             <div className="p-4 sm:p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3.5">
               <div className="flex items-start justify-between gap-2">
@@ -621,7 +633,7 @@ export const PublicTicketTracker: React.FC<PublicTicketTrackerProps> = ({
                 </div>
               </form>
             </div>
-          </>
+          </div>
         )}
       </main>
     </div>

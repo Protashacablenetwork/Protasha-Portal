@@ -5,8 +5,7 @@ import {
   Layers,
   Calculator,
   Headphones,
-  UserCheck,
-  FileSpreadsheet
+  UserCheck
 } from 'lucide-react';
 import { Language } from '../types';
 import { sounds } from '../utils/audio';
@@ -23,7 +22,6 @@ interface PrimaryFeatureCardsProps {
   totalStaffCount?: number;
   onOpenSupportTickets?: () => void;
   onOpenStaffAttendance?: () => void;
-  onOpenAuditReport?: () => void;
 }
 
 export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
@@ -36,8 +34,7 @@ export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
   todayPresentCount = 0,
   totalStaffCount = 0,
   onOpenSupportTickets,
-  onOpenStaffAttendance,
-  onOpenAuditReport
+  onOpenStaffAttendance
 }) => {
   const isBn = lang === 'bn';
 
@@ -187,9 +184,9 @@ export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
         </div>
       </div>
 
-      {/* 3-Card Operations Hub Strip: Support Ticket, Staff Attendance, Audit Report */}
-      {(onOpenSupportTickets || onOpenStaffAttendance || onOpenAuditReport) && (
-        <div className="grid grid-cols-3 gap-2 sm:gap-3 pt-0.5">
+      {/* 2-Card Operations Hub Strip: Support Ticket, Staff Attendance */}
+      {(onOpenSupportTickets || onOpenStaffAttendance) && (
+        <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 pt-0.5">
           {/* 1. Support Ticket Tracker */}
           <button
             type="button"
@@ -252,30 +249,6 @@ export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
               </p>
               <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 truncate mt-0.5">
                 {isBn ? 'হাজিরা ও ছুটি' : 'Daily & Leaves'}
-              </p>
-            </div>
-          </button>
-
-          {/* 3. Monthly / Yearly PDF & Excel Audit */}
-          <button
-            type="button"
-            onClick={() => {
-              sounds.playTap();
-              onOpenAuditReport?.();
-            }}
-            className="group text-left p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-700 shadow-xs active:scale-[0.98] transition-all flex flex-col justify-between min-h-[88px] cursor-pointer"
-          >
-            <div className="flex items-center justify-between gap-1">
-              <div className="w-8 h-8 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200/70 dark:border-indigo-800/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
-                <FileSpreadsheet className="w-4 h-4 stroke-[2.2]" />
-              </div>
-            </div>
-            <div className="mt-2">
-              <p className="text-[11px] sm:text-xs font-extrabold text-slate-900 dark:text-white leading-tight truncate">
-                {isBn ? 'অডিট রিপোর্ট' : 'Audit Report'}
-              </p>
-              <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                {isBn ? 'PDF ও Excel' : 'PDF & Excel'}
               </p>
             </div>
           </button>

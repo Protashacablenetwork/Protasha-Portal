@@ -18,6 +18,8 @@ const AVAILABLE_SERVICES = [
   { id: 'ayByay', nameBn: 'আয়-ব্যয় হিসাব খাতা', nameEn: 'Income & Expense Manager', icon: '💰', defaultLogo: 'https://i.ibb.co/0jZfwH1s/file-0000000079b4821185e81949d65e68d5.png' },
   { id: 'quickHisab', nameBn: 'কুইক হিসাব ও লভ্যাংশ বণ্টন', nameEn: 'Quick Hisab & Profit Share', icon: '🧮', defaultLogo: '' },
   { id: 'staffManager', nameBn: 'স্টাফ কালেকশন ও কোম্পানি পাওনা', nameEn: 'Staff Collection & Dues', icon: '👥' },
+  { id: 'supportTickets', nameBn: 'সাপোর্ট টিকেট ও কমপ্লেইন', nameEn: 'Support Tickets & Complaints', icon: '🎧' },
+  { id: 'staffAttendance', nameBn: 'স্টাফ হাজিরা ও ছুটি', nameEn: 'Staff Attendance & Leave', icon: '📋' },
   { id: 'transactions', nameBn: 'সকল লেনদেন ও স্টেটমেন্ট', nameEn: 'Transactions Statement', icon: '📊' },
   { id: 'ledger', nameBn: 'অডিট ও রিপোর্ট খাতা', nameEn: 'Ledger & Reports', icon: '📁' },
 ];

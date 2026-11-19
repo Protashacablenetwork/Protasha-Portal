@@ -49,7 +49,8 @@
     visibility: hidden;
   }
   #printable-receipt, #printable-receipt *,
-  #printable-staff-report, #printable-staff-report * {
+  #printable-staff-report, #printable-staff-report *,
+  #printable-ticket-report, #printable-ticket-report * {
     visibility: visible;
   }
   #printable-receipt {
@@ -71,6 +72,17 @@
     width: 100%;
     margin: 0;
     padding: 20px;
+    background: white;
+    color: #0f172a;
+    font-family: 'Hind Siliguri', 'Plus Jakarta Sans', sans-serif;
+  }
+  #printable-ticket-report {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 24px;
     background: white;
     color: #0f172a;
     font-family: 'Hind Siliguri', 'Plus Jakarta Sans', sans-serif;

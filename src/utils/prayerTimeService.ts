@@ -1,4 +1,4 @@
-import { DistrictInfo, detectPreciseLocation, ALL_BANGLADESH_DISTRICTS } from './weatherService';
+import { DistrictInfo, detectPreciseLocation, ALL_BANGLADESH_DISTRICTS, getLocationSourceType, LocationSourceType } from './weatherService';
 import { toBengaliNumber } from './formatters';
 import { safeStorage } from './safeStorage';
 import { NotificationItem } from '../types';
@@ -318,8 +318,8 @@ export function checkAndGeneratePrayerNotifications(
       id: `prayer_tahajjud_${citySlug}_${todayStr}`,
       titleBn: `🌙 তাহাজ্জুদ ও সাহরীর শেষ সময়: ${district.nameBn}`,
       titleEn: `🌙 Tahajjud & Sehri Alert: ${district.nameEn}`,
-      bodyBn: `【${district.nameBn} সাহরী ও তাহাজ্জুদ সময়সূচি】\n• সাহরীর শেষ সময়: ${prayerTimes.tahajjud}\n• ফজরের ওয়াক্ত শুরু: ${prayerTimes.fajr}\n• ফজরের জামাত: ${prayerTimes.fajr} এর পর\n\nতাহাজ্জুদ সালাত ও সাহরীর বরকতপূর্ণ সময়। আল্লাহ আপনার দিনটি শান্তিময় ও কল্যাণময় করুন।`,
-      bodyEn: `【${district.nameEn} Schedule】\nSehri End: ${prayerTimes.tahajjud} | Fajr starts: ${prayerTimes.fajr}`
+      bodyBn: `【${district.nameBn} সাহরী ও তাহাজ্জুদ সময়সূচি】\n• সাহরীর শেষ সময়: ${prayerTimes.sehriEnd}\n• ফজরের ওয়াক্ত শুরু: ${prayerTimes.fajr}\n• আজকের ইফতার: ${prayerTimes.maghrib}\n\nতাহাজ্জুদ সালাত ও সাহরীর বরকতপূর্ণ সময়। আল্লাহ আপনার দিনটি শান্তিময় ও কল্যাণময় করুন।`,
+      bodyEn: `【${district.nameEn} Schedule】\nSehri End: ${prayerTimes.sehriEnd} | Fajr starts: ${prayerTimes.fajr} | Iftar: ${prayerTimes.maghrib}`
     };
   }
   // 2. Fajr Prayer (05:00 - 06:15)
@@ -461,13 +461,114 @@ export function setFastingReminderEnabled(enabled: boolean): void {
 }
 
 /**
- * Check if current time is within 10 minutes before Sehri End or Iftar (Maghrib),
- * and generate an automatic reminder notification if enabled in App Settings.
+ * Helper to construct a richly structured Sehri & Iftar timetable NotificationItem
+ * strictly tailored to the user's real/selected district.
  */
-export function checkAndGenerateFastingReminders(
+export function buildSehriIftarScheduleNotification(
+  district: DistrictInfo,
+  prayerTimes: PrayerTimings,
+  slotType: 'daily_schedule' | 'sehri_reminder' | 'iftar_reminder' | 'iftar_time',
+  options?: {
+    idOverride?: string;
+    minsLeft?: number;
+    now?: Date;
+    locationSource?: LocationSourceType;
+  }
+): NotificationItem {
+  const now = options?.now || new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const citySlug = (district.nameEn || 'dhaka').toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const hijri = getHijriDate(now);
+  const daysBnFull = ['রবিবার', 'সোমবার', 'মঙ্গলবার', 'বুধবার', 'বৃহস্পতিবার', 'শুক্রবার', 'শনিবার'];
+  const dateStrBn = `${daysBnFull[now.getDay()]}, ${toBengaliNumber(now.getDate())} ${BENGALI_MONTHS[now.getMonth()]} ${toBengaliNumber(now.getFullYear())}`;
+
+  const durMins = Math.max(0, Math.round((prayerTimes.raw.maghrib.getTime() - prayerTimes.raw.sehriEnd.getTime()) / 60000));
+  const durH = Math.floor(durMins / 60);
+  const durM = durMins % 60;
+  const fastDurationBn = `${toBengaliNumber(durH)} ঘণ্টা ${toBengaliNumber(durM)} মিনিট`;
+  const locSource = options?.locationSource || getLocationSourceType();
+
+  let id = options?.idOverride || `fasting_${slotType}_${citySlug}_${todayStr}`;
+  let titleBn = '';
+  let titleEn = '';
+  let bodyBn = '';
+  let bodyEn = '';
+  let type: NotificationItem['type'] = 'info';
+
+  if (slotType === 'sehri_reminder') {
+    const mins = Math.max(1, options?.minsLeft || 10);
+    type = 'alert';
+    titleBn = `সেহরির আর মাত্র ${toBengaliNumber(mins)} মিনিট বাকি — ${district.nameBn}`;
+    titleEn = `Only ${mins} min left for Sehri — ${district.nameEn}`;
+    bodyBn = `【${district.nameBn} জেলার সেহরি ও ইফতার সময়সূচী】\n• সেহরির শেষ সময়: ${prayerTimes.sehriEnd}\n• ফজর ওয়াক্ত শুরু: ${prayerTimes.fajr}\n• আজকের ইফতার (মাগরিব): ${prayerTimes.maghrib}\n\nআর মাত্র ${toBengaliNumber(mins)} মিনিট পর সেহরির সময় শেষ হবে। দ্রুত সেহরি সম্পন্ন করে রোজার নিয়ত করুন।`;
+    bodyEn = `【${district.nameEn} Sehri & Iftar Schedule】\nSehri End: ${prayerTimes.sehriEnd} (${mins} min left) | Fajr: ${prayerTimes.fajr} | Iftar: ${prayerTimes.maghrib}`;
+  } else if (slotType === 'iftar_reminder') {
+    const mins = Math.max(1, options?.minsLeft || 10);
+    type = 'alert';
+    titleBn = `ইফতারের আর মাত্র ${toBengaliNumber(mins)} মিনিট বাকি — ${district.nameBn}`;
+    titleEn = `Only ${mins} min left for Iftar — ${district.nameEn}`;
+    bodyBn = `【${district.nameBn} জেলার ইফতার পূর্ব প্রস্তুতি বার্তা】\n• আজকের ইফতার (মাগরিব): ${prayerTimes.maghrib}\n• সূর্যাস্ত: ${prayerTimes.sunset}\n• সেহরির শেষ সময় ছিল: ${prayerTimes.sehriEnd}\n\nআর মাত্র ${toBengaliNumber(mins)} মিনিট পর ইফতারের সময় হবে। ইফতার সামনে নিয়ে বেশি বেশি দোয়া ও ইস্তিগফার করুন।`;
+    bodyEn = `【${district.nameEn} Iftar Reminder】\nIftar is at ${prayerTimes.maghrib} (${mins} min left). Prepare for Iftar and make Dua.`;
+  } else if (slotType === 'iftar_time') {
+    type = 'alert';
+    titleBn = `ইফতারের সময় হয়েছে (${prayerTimes.maghrib}) — ${district.nameBn}`;
+    titleEn = `It's Iftar Time (${prayerTimes.maghrib}) — ${district.nameEn}`;
+    bodyBn = `【${district.nameBn} জেলার ইফতার বার্তা】\n• ইফতার ও মাগরিব: ${prayerTimes.maghrib}\n• ইফতারের দোয়া: আল্লাহুম্মা লাকা সুমতু ওয়া আলা রিযকিকা আফতারতু।\n\nআল্লাহ আপনার আজকের রোজা ও ইবাদত কবুল করুন।`;
+    bodyEn = `【${district.nameEn} Iftar Time】\nIftar & Maghrib starts at ${prayerTimes.maghrib}. May Allah accept your fast.`;
+  } else {
+    type = 'info';
+    titleBn = `আজকের সেহরি ও ইফতারের সময়সূচী — ${district.nameBn}`;
+    titleEn = `Today's Sehri & Iftar Timetable — ${district.nameEn}`;
+    bodyBn = `【${district.nameBn} (${district.divisionBn} বিভাগ) • ${hijri.formattedBn}】\n• সেহরির শেষ সময়: ${prayerTimes.sehriEnd}\n• ফজরের ওয়াক্ত শুরু: ${prayerTimes.fajr}\n• সূর্যোদয়: ${prayerTimes.sunrise}\n• আজকের ইফতার (মাগরিব): ${prayerTimes.maghrib}\n• রোজার ব্যাপ্তি: ${fastDurationBn}\n\nআপনার বর্তমান লোকেশন অনুযায়ী রিয়েল-টাইম সময়সূচী প্রদর্শিত হয়েছে।`;
+    bodyEn = `【${district.nameEn} • ${hijri.formattedBn}】\nSehri End: ${prayerTimes.sehriEnd} | Fajr: ${prayerTimes.fajr} | Iftar: ${prayerTimes.maghrib}`;
+  }
+
+  const formattedDate = `${toBengaliNumber(now.getDate())} ${BENGALI_MONTHS[now.getMonth()]}`;
+  const formattedTime = now.toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+  return {
+    id,
+    titleBn,
+    titleEn,
+    bodyBn,
+    bodyEn,
+    messageBn: bodyBn,
+    messageEn: bodyEn,
+    date: formattedDate,
+    timeBn: `${formattedDate}, ${toBengaliNumber(formattedTime)}`,
+    timeEn: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+    type,
+    isRead: false,
+    districtBn: district.nameBn,
+    districtEn: district.nameEn,
+    isPrayerAlert: true,
+    isFastingAlert: true,
+    sehriIftarData: {
+      districtBn: district.nameBn,
+      districtEn: district.nameEn,
+      divisionBn: district.divisionBn,
+      dateStrBn,
+      hijriDateBn: hijri.formattedBn,
+      sehriEndBn: prayerTimes.sehriEnd,
+      fajrBn: prayerTimes.fajr,
+      sunriseBn: prayerTimes.sunrise,
+      iftarBn: prayerTimes.maghrib,
+      fastDurationBn,
+      slotType,
+      locationSource: locSource
+    }
+  };
+}
+
+/**
+ * Automatically generates today's location-specific Sehri & Iftar timetable notification
+ * for the user's own district (runs once per district per day).
+ */
+export function checkAndGenerateDailySehriIftarNotification(
   district: DistrictInfo,
   currentNotifications: NotificationItem[],
-  isEnabled: boolean = isFastingReminderEnabled()
+  isEnabled: boolean = isFastingReminderEnabled(),
+  timingsOverride?: PrayerTimings
 ): { updatedNotifications: NotificationItem[]; newlyAdded: NotificationItem | null } {
   if (!isEnabled) {
     return { updatedNotifications: currentNotifications, newlyAdded: null };
@@ -476,91 +577,150 @@ export function checkAndGenerateFastingReminders(
   const now = new Date();
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const citySlug = (district.nameEn || 'dhaka').toLowerCase().replace(/[^a-z0-9]/g, '_');
-  const prayerTimes = calculateLocalPrayerTimes(district, now);
+  const dailyId = `fasting_daily_${citySlug}_${todayStr}`;
+  const storageKey = `notif_fasting_daily_${dailyId}`;
 
-  const TEN_MINUTES_MS = 10 * 60 * 1000;
+  const alreadySent = safeStorage.getItem(storageKey);
+  const existsInList = currentNotifications.some(n => n.id === dailyId);
+
+  if (alreadySent && existsInList) {
+    return { updatedNotifications: currentNotifications, newlyAdded: null };
+  }
+
+  const prayerTimes = timingsOverride || calculateLocalPrayerTimes(district, now);
+  const notifItem = buildSehriIftarScheduleNotification(district, prayerTimes, 'daily_schedule', {
+    idOverride: dailyId,
+    now
+  });
+
+  try {
+    safeStorage.setItem(storageKey, '1');
+  } catch {}
+
+  if (existsInList) {
+    return { updatedNotifications: currentNotifications, newlyAdded: null };
+  }
+
+  // Fire native browser notification if granted and this is a fresh send for today
+  if (!alreadySent && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+    try {
+      new Notification(notifItem.titleBn, {
+        body: `সেহরি শেষ: ${prayerTimes.sehriEnd} · ইফতার: ${prayerTimes.maghrib} (${district.nameBn})`,
+        tag: dailyId
+      });
+    } catch {}
+  }
+
+  return {
+    updatedNotifications: [notifItem, ...currentNotifications],
+    newlyAdded: notifItem
+  };
+}
+
+/**
+ * Checks if current time is in a Sehri or Iftar reminder window (30m before, 10m before, or exact Iftar time)
+ * OR generates the daily timetable notification, strictly tailored to the user's real district.
+ */
+export function checkAndGenerateFastingReminders(
+  district: DistrictInfo,
+  currentNotifications: NotificationItem[],
+  isEnabled: boolean = isFastingReminderEnabled(),
+  timingsOverride?: PrayerTimings
+): { updatedNotifications: NotificationItem[]; newlyAdded: NotificationItem | null } {
+  if (!isEnabled) {
+    return { updatedNotifications: currentNotifications, newlyAdded: null };
+  }
+
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const citySlug = (district.nameEn || 'dhaka').toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const prayerTimes = timingsOverride || calculateLocalPrayerTimes(district, now);
+
+  // First ensure today's daily location-based Sehri & Iftar timetable notification exists
+  const dailyResult = checkAndGenerateDailySehriIftarNotification(
+    district,
+    currentNotifications,
+    isEnabled,
+    prayerTimes
+  );
+  let workingList = dailyResult.updatedNotifications;
+  let newest: NotificationItem | null = dailyResult.newlyAdded;
+
+  const THIRTY_MIN_MS = 30 * 60 * 1000;
+  const TEN_MIN_MS = 10 * 60 * 1000;
+  const FIVE_MIN_MS = 5 * 60 * 1000;
+
   const sehriDiffMs = prayerTimes.raw.sehriEnd.getTime() - now.getTime();
   const iftarDiffMs = prayerTimes.raw.maghrib.getTime() - now.getTime();
 
   let slot: {
     id: string;
-    titleBn: string;
-    titleEn: string;
-    bodyBn: string;
-    bodyEn: string;
+    slotType: 'sehri_reminder' | 'iftar_reminder' | 'iftar_time';
+    minsLeft?: number;
   } | null = null;
 
-  if (sehriDiffMs > 0 && sehriDiffMs <= TEN_MINUTES_MS) {
-    const minsLeft = Math.max(1, Math.ceil(sehriDiffMs / 60000));
+  if (sehriDiffMs > 0 && sehriDiffMs <= TEN_MIN_MS) {
     slot = {
       id: `fasting_sehri_10m_${citySlug}_${todayStr}`,
-      titleBn: `⏰ সেহরির আর মাত্র ${toBengaliNumber(minsLeft)} মিনিট বাকি — ${district.nameBn}`,
-      titleEn: `⏰ Only ${minsLeft} min left for Sehri — ${district.nameEn}`,
-      bodyBn: `【সেহরির শেষ সতর্কবার্তা • ${district.nameBn}】\n• সেহরির শেষ সময়: ${prayerTimes.sehriEnd}\n• ফজরের ওয়াক্ত শুরু: ${prayerTimes.fajr}\n\nআর মাত্র ${toBengaliNumber(minsLeft)} মিনিট পর সেহরির সময় শেষ হবে। অনুগ্রহ করে দ্রুত সেহরি সম্পন্ন করুন এবং রোজার নিয়ত করুন।`,
-      bodyEn: `【Sehri Reminder • ${district.nameEn}】\nSehri ends at ${prayerTimes.sehriEnd} (${minsLeft} min left). Fajr starts at ${prayerTimes.fajr}.`
+      slotType: 'sehri_reminder',
+      minsLeft: Math.max(1, Math.ceil(sehriDiffMs / 60000))
     };
-  } else if (iftarDiffMs > 0 && iftarDiffMs <= TEN_MINUTES_MS) {
-    const minsLeft = Math.max(1, Math.ceil(iftarDiffMs / 60000));
+  } else if (sehriDiffMs > TEN_MIN_MS && sehriDiffMs <= THIRTY_MIN_MS) {
+    slot = {
+      id: `fasting_sehri_30m_${citySlug}_${todayStr}`,
+      slotType: 'sehri_reminder',
+      minsLeft: Math.max(11, Math.ceil(sehriDiffMs / 60000))
+    };
+  } else if (iftarDiffMs > 0 && iftarDiffMs <= TEN_MIN_MS) {
     slot = {
       id: `fasting_iftar_10m_${citySlug}_${todayStr}`,
-      titleBn: `🌙 ইফতারের আর মাত্র ${toBengaliNumber(minsLeft)} মিনিট বাকি — ${district.nameBn}`,
-      titleEn: `🌙 Only ${minsLeft} min left for Iftar — ${district.nameEn}`,
-      bodyBn: `【ইফতারের পূর্ব প্রস্তুতি বার্তা • ${district.nameBn}】\n• আজকের ইফতার (মাগরিব): ${prayerTimes.maghrib}\n\nআর মাত্র ${toBengaliNumber(minsLeft)} মিনিট পর ইফতারের সময় হবে। ইফতার সামনে নিয়ে বেশি বেশি দোয়া ও ইস্তিগফার করুন।`,
-      bodyEn: `【Iftar Reminder • ${district.nameEn}】\nIftar is at ${prayerTimes.maghrib} (${minsLeft} min left). Prepare for Iftar and make Dua.`
+      slotType: 'iftar_reminder',
+      minsLeft: Math.max(1, Math.ceil(iftarDiffMs / 60000))
+    };
+  } else if (iftarDiffMs > TEN_MIN_MS && iftarDiffMs <= THIRTY_MIN_MS) {
+    slot = {
+      id: `fasting_iftar_30m_${citySlug}_${todayStr}`,
+      slotType: 'iftar_reminder',
+      minsLeft: Math.max(11, Math.ceil(iftarDiffMs / 60000))
+    };
+  } else if (iftarDiffMs <= 0 && iftarDiffMs >= -FIVE_MIN_MS) {
+    slot = {
+      id: `fasting_iftar_now_${citySlug}_${todayStr}`,
+      slotType: 'iftar_time'
     };
   }
 
-  if (!slot) {
-    return { updatedNotifications: currentNotifications, newlyAdded: null };
-  }
+  if (slot) {
+    const safeStorageKey = `notif_fasting_${slot.id}`;
+    const alreadySent = safeStorage.getItem(safeStorageKey);
+    const existsInList = workingList.some(n => n.id === slot!.id);
 
-  const safeStorageKey = `notif_fasting_${slot.id}`;
-  const alreadySent = safeStorage.getItem(safeStorageKey);
-  const existsInList = currentNotifications.some(n => n.id === slot!.id);
+    if (!alreadySent && !existsInList) {
+      const notifItem = buildSehriIftarScheduleNotification(district, prayerTimes, slot.slotType, {
+        idOverride: slot.id,
+        minsLeft: slot.minsLeft,
+        now
+      });
 
-  if (!alreadySent && !existsInList) {
-    const formattedDate = `${toBengaliNumber(now.getDate())} ${now.toLocaleString('bn-BD', { month: 'short' })}`;
-    const formattedTime = now.toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit', hour12: true });
-
-    const notifItem: NotificationItem = {
-      id: slot.id,
-      titleBn: slot.titleBn,
-      titleEn: slot.titleEn,
-      bodyBn: slot.bodyBn,
-      bodyEn: slot.bodyEn,
-      messageBn: slot.bodyBn,
-      messageEn: slot.bodyEn,
-      date: formattedDate,
-      timeBn: `${formattedDate}, ${toBengaliNumber(formattedTime)}`,
-      timeEn: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
-      type: 'alert',
-      isRead: false,
-      districtBn: district.nameBn,
-      districtEn: district.nameEn,
-      isPrayerAlert: true
-    };
-
-    try {
-      safeStorage.setItem(safeStorageKey, '1');
-    } catch {}
-
-    // Fire native browser Notification if user granted permission
-    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
       try {
-        new Notification(slot.titleBn, {
-          body: slot.bodyBn.replace(/\n+/g, ' '),
-          tag: slot.id
-        });
+        safeStorage.setItem(safeStorageKey, '1');
       } catch {}
-    }
 
-    return {
-      updatedNotifications: [notifItem, ...currentNotifications],
-      newlyAdded: notifItem
-    };
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        try {
+          new Notification(notifItem.titleBn, {
+            body: notifItem.bodyBn.replace(/\n+/g, ' '),
+            tag: slot.id
+          });
+        } catch {}
+      }
+
+      workingList = [notifItem, ...workingList];
+      newest = notifItem;
+    }
   }
 
-  return { updatedNotifications: currentNotifications, newlyAdded: null };
+  return { updatedNotifications: workingList, newlyAdded: newest };
 }
 
 export const BENGALI_MONTHS = [

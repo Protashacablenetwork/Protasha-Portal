@@ -245,9 +245,24 @@ export function getUserPreferredDistrict(): DistrictInfo | null {
   return null;
 }
 
-export function setUserPreferredDistrict(nameBn: string) {
+export type LocationSourceType = 'gps' | 'manual' | 'ip' | 'default';
+const LOCATION_SOURCE_KEY = 'protyasha_location_source_type';
+
+export function getLocationSourceType(): LocationSourceType {
+  try {
+    const val = safeStorage.getItem(LOCATION_SOURCE_KEY) as LocationSourceType | null;
+    if (val === 'gps' || val === 'manual' || val === 'ip' || val === 'default') return val;
+    if (safeStorage.getItem(DEVICE_GPS_DISTRICT_KEY)) return 'gps';
+    if (safeStorage.getItem(PREFERRED_DISTRICT_KEY)) return 'manual';
+    if (sessionStorage.getItem(STABLE_IP_DISTRICT_KEY) || safeStorage.getItem(STABLE_IP_DISTRICT_KEY)) return 'ip';
+  } catch {}
+  return 'default';
+}
+
+export function setUserPreferredDistrict(nameBn: string, source: LocationSourceType = 'manual') {
   try {
     safeStorage.setItem(PREFERRED_DISTRICT_KEY, nameBn);
+    safeStorage.setItem(LOCATION_SOURCE_KEY, source);
     safeStorage.removeItem(CACHE_KEY); // clear cache to fetch new location immediately
   } catch {}
 }
@@ -255,14 +270,83 @@ export function setUserPreferredDistrict(nameBn: string) {
 export function clearUserPreferredDistrict() {
   try {
     safeStorage.removeItem(PREFERRED_DISTRICT_KEY);
+    safeStorage.removeItem(LOCATION_SOURCE_KEY);
     safeStorage.removeItem(CACHE_KEY);
   } catch {}
 }
 
 /**
- * Request real physical device GPS from browser.
- * Tries high accuracy first, then low accuracy network triangulation.
+ * Lightweight Bangladesh IP Geolocation fallback for users who haven't enabled GPS yet.
+ * Maps real lat/lon within Bangladesh bounds to the nearest of the 64 districts.
  */
+async function detectIpDistrictFallback(): Promise<DistrictInfo | null> {
+  if (typeof window === 'undefined') return null;
+
+  const tryParseCoords = (lat: unknown, lon: unknown): DistrictInfo | null => {
+    const latNum = Number(lat);
+    const lonNum = Number(lon);
+    if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) return null;
+    // Check if coordinates fall inside Bangladesh geographic bounds
+    if (latNum >= 20.3 && latNum <= 26.8 && lonNum >= 87.9 && lonNum <= 92.8) {
+      return findNearestDistrict(latNum, lonNum);
+    }
+    return null;
+  };
+
+  const tryMatchCityName = (city: unknown, region: unknown): DistrictInfo | null => {
+    const candidates = [String(city || ''), String(region || '')]
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean);
+    for (const c of candidates) {
+      const match = ALL_BANGLADESH_DISTRICTS.find(
+        d => d.nameEn.toLowerCase() === c || c.includes(d.nameEn.toLowerCase())
+      );
+      if (match) return match;
+    }
+    return null;
+  };
+
+  try {
+    const res = await fetch('https://ipwho.is/', { signal: AbortSignal.timeout(2500) });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success !== false) {
+        const byCoords = tryParseCoords(data.latitude, data.longitude);
+        const byCity = tryMatchCityName(data.city, data.region);
+        const matched = byCoords || byCity;
+        if (matched) {
+          try {
+            sessionStorage.setItem(STABLE_IP_DISTRICT_KEY, matched.nameBn);
+            safeStorage.setItem(STABLE_IP_DISTRICT_KEY, matched.nameBn);
+            safeStorage.setItem(LOCATION_SOURCE_KEY, 'ip');
+          } catch {}
+          return matched;
+        }
+      }
+    }
+  } catch {}
+
+  try {
+    const res = await fetch('https://get.geojs.io/v1/ip/geo.json', { signal: AbortSignal.timeout(2500) });
+    if (res.ok) {
+      const data = await res.json();
+      const byCoords = tryParseCoords(data?.latitude, data?.longitude);
+      const byCity = tryMatchCityName(data?.city, data?.region);
+      const matched = byCoords || byCity;
+      if (matched) {
+        try {
+          sessionStorage.setItem(STABLE_IP_DISTRICT_KEY, matched.nameBn);
+          safeStorage.setItem(STABLE_IP_DISTRICT_KEY, matched.nameBn);
+          safeStorage.setItem(LOCATION_SOURCE_KEY, 'ip');
+        } catch {}
+        return matched;
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
 /**
  * Request real physical device GPS from browser.
  * Tries high accuracy first, then low accuracy network triangulation with snappy timeouts.
@@ -290,10 +374,11 @@ export async function getRealDeviceGPS(): Promise<DistrictInfo | null> {
       try {
         safeStorage.setItem(DEVICE_GPS_DISTRICT_KEY, nearest.nameBn);
         safeStorage.setItem(PREFERRED_DISTRICT_KEY, nearest.nameBn);
+        safeStorage.setItem(LOCATION_SOURCE_KEY, 'gps');
       } catch {}
       return nearest;
     }
-  } catch (err) {
+  } catch {
     // Attempt 2: Cell-tower / WiFi Triangulation (Fast 2.5s fallback)
     try {
       const pos = await queryGPS(false, 2500, 300000);
@@ -302,6 +387,7 @@ export async function getRealDeviceGPS(): Promise<DistrictInfo | null> {
         try {
           safeStorage.setItem(DEVICE_GPS_DISTRICT_KEY, nearest.nameBn);
           safeStorage.setItem(PREFERRED_DISTRICT_KEY, nearest.nameBn);
+          safeStorage.setItem(LOCATION_SOURCE_KEY, 'gps');
         } catch {}
         return nearest;
       }
@@ -312,63 +398,95 @@ export async function getRealDeviceGPS(): Promise<DistrictInfo | null> {
 }
 
 /**
- * Robust & Instant Location Detector:
- * 1. Returns saved/preferred district instantly (0ms).
- * 2. If not forcing real GPS, checks previous GPS or stable IP cache (0ms).
- * 3. Never blocks on device GPS unless forceRealGPS is explicitly true (when user taps Live GPS).
- * 4. Defaults stably to Jamalpur (Protyasha Cable Network HQ) for instant startup.
+ * Robust Multi-User Location Detector:
+ * 1. If forceRealGPS is true, queries live device GPS first.
+ * 2. If user already saved/pinned a district manually, respects it instantly.
+ * 3. If geolocation permission is already 'granted', silently refreshes real GPS so users moving across districts get live times.
+ * 4. Otherwise checks cached GPS / IP district, and performs lightweight Bangladesh IP geolocation for new devices in any of the 64 districts.
+ * 5. Falls back safely to Jamalpur HQ if offline or outside Bangladesh.
  */
 export async function detectPreciseLocation(forceRealGPS = false): Promise<{
   district: DistrictInfo;
   isAutoDetected: boolean;
   isGPS: boolean;
+  source: LocationSourceType;
 }> {
-  // 1. If not explicitly requesting a fresh GPS query, use user's saved/confirmed district instantly
-  if (!forceRealGPS) {
+  // 1. Explicit live GPS refresh (when user clicks "লাইভ GPS")
+  if (forceRealGPS) {
+    const realGPSDistrict = await getRealDeviceGPS();
+    if (realGPSDistrict) {
+      return { district: realGPSDistrict, isAutoDetected: true, isGPS: true, source: 'gps' };
+    }
+    const ipFallback = await detectIpDistrictFallback();
+    if (ipFallback) {
+      return { district: ipFallback, isAutoDetected: true, isGPS: false, source: 'ip' };
+    }
     const preferred = getUserPreferredDistrict();
     if (preferred) {
-      return { district: preferred, isAutoDetected: false, isGPS: false };
+      return { district: preferred, isAutoDetected: false, isGPS: false, source: getLocationSourceType() };
     }
-
-    // Check if we previously confirmed GPS on this device
-    try {
-      const lastGps = safeStorage.getItem(DEVICE_GPS_DISTRICT_KEY);
-      if (lastGps) {
-        const match = ALL_BANGLADESH_DISTRICTS.find(d => d.nameBn === lastGps || d.nameEn.toLowerCase() === lastGps.toLowerCase());
-        if (match) {
-          return { district: match, isAutoDetected: true, isGPS: true };
-        }
-      }
-    } catch {}
-
-    // Check stable IP cache
-    try {
-      const stableIp = sessionStorage.getItem(STABLE_IP_DISTRICT_KEY) || safeStorage.getItem(STABLE_IP_DISTRICT_KEY);
-      if (stableIp) {
-        const match = ALL_BANGLADESH_DISTRICTS.find(d => d.nameBn === stableIp || d.nameEn.toLowerCase() === stableIp.toLowerCase());
-        if (match) {
-          return { district: match, isAutoDetected: true, isGPS: false };
-        }
-      }
-    } catch {}
-
-    // Instant default to Jamalpur (Protyasha Cable Network headquarters) with 0ms delay!
-    return { district: DEFAULT_HEADQUARTERS_DISTRICT, isAutoDetected: false, isGPS: false };
+    return { district: DEFAULT_HEADQUARTERS_DISTRICT, isAutoDetected: false, isGPS: false, source: 'default' };
   }
 
-  // 2. Query Real Device GPS (Only when user explicitly clicked "লাইভ GPS" button!)
-  const realGPSDistrict = await getRealDeviceGPS();
-  if (realGPSDistrict) {
-    return { district: realGPSDistrict, isAutoDetected: true, isGPS: true };
-  }
-
-  // 3. Fallback to saved preferences or default
+  // 2. Check if user manually pinned a district
+  const savedSource = getLocationSourceType();
   const preferred = getUserPreferredDistrict();
-  if (preferred) {
-    return { district: preferred, isAutoDetected: false, isGPS: false };
+  if (preferred && savedSource === 'manual') {
+    return { district: preferred, isAutoDetected: false, isGPS: false, source: 'manual' };
   }
 
-  return { district: DEFAULT_HEADQUARTERS_DISTRICT, isAutoDetected: false, isGPS: false };
+  // 3. Silently refresh GPS if browser permission is already granted (no popup!)
+  try {
+    if (typeof navigator !== 'undefined' && navigator.permissions && navigator.permissions.query) {
+      const perm = await navigator.permissions.query({ name: 'geolocation' as PermissionName });
+      if (perm.state === 'granted') {
+        const gpsDist = await getRealDeviceGPS();
+        if (gpsDist) {
+          return { district: gpsDist, isAutoDetected: true, isGPS: true, source: 'gps' };
+        }
+      }
+    }
+  } catch {}
+
+  // 4. Use previously saved GPS or preferred district
+  if (preferred) {
+    return {
+      district: preferred,
+      isAutoDetected: savedSource === 'gps' || savedSource === 'ip',
+      isGPS: savedSource === 'gps',
+      source: savedSource
+    };
+  }
+
+  try {
+    const lastGps = safeStorage.getItem(DEVICE_GPS_DISTRICT_KEY);
+    if (lastGps) {
+      const match = ALL_BANGLADESH_DISTRICTS.find(d => d.nameBn === lastGps || d.nameEn.toLowerCase() === lastGps.toLowerCase());
+      if (match) {
+        return { district: match, isAutoDetected: true, isGPS: true, source: 'gps' };
+      }
+    }
+  } catch {}
+
+  // 5. Check cached IP district
+  try {
+    const stableIp = sessionStorage.getItem(STABLE_IP_DISTRICT_KEY) || safeStorage.getItem(STABLE_IP_DISTRICT_KEY);
+    if (stableIp) {
+      const match = ALL_BANGLADESH_DISTRICTS.find(d => d.nameBn === stableIp || d.nameEn.toLowerCase() === stableIp.toLowerCase());
+      if (match) {
+        return { district: match, isAutoDetected: true, isGPS: false, source: 'ip' };
+      }
+    }
+  } catch {}
+
+  // 6. Auto-detect district via lightweight Bangladesh IP geolocation for multi-district users
+  const ipDetected = await detectIpDistrictFallback();
+  if (ipDetected) {
+    return { district: ipDetected, isAutoDetected: true, isGPS: false, source: 'ip' };
+  }
+
+  // 7. Offline / fallback default to Jamalpur HQ
+  return { district: DEFAULT_HEADQUARTERS_DISTRICT, isAutoDetected: false, isGPS: false, source: 'default' };
 }
 
 /**

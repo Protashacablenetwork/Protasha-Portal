@@ -77,8 +77,23 @@ export interface NotificationItem {
   districtBn?: string;
   districtEn?: string;
   isPrayerAlert?: boolean;
+  isFastingAlert?: boolean;
   isWeatherAlert?: boolean;
   isGlobal?: boolean;
+  sehriIftarData?: {
+    districtBn: string;
+    districtEn: string;
+    divisionBn?: string;
+    dateStrBn: string;
+    hijriDateBn: string;
+    sehriEndBn: string;
+    fajrBn: string;
+    sunriseBn: string;
+    iftarBn: string;
+    fastDurationBn: string;
+    slotType: 'daily_schedule' | 'sehri_reminder' | 'iftar_reminder' | 'iftar_time';
+    locationSource?: 'gps' | 'manual' | 'ip' | 'default';
+  };
 }
 
 export interface FooterItem {

@@ -19,7 +19,10 @@ import {
   BookOpen,
   HeartHandshake,
   Info,
-  ChevronDown
+  ChevronDown,
+  Moon,
+  BellOff,
+  Send
 } from 'lucide-react';
 import { Language, NotificationItem } from '../types';
 import { 
@@ -30,7 +33,11 @@ import {
   MonthlyPrayerDay,
   BENGALI_MONTHS,
   getActivePrayerCardData,
-  ActivePrayerCardData
+  ActivePrayerCardData,
+  getActiveFastingCardData,
+  isFastingReminderEnabled,
+  setFastingReminderEnabled,
+  buildSehriIftarScheduleNotification
 } from '../utils/prayerTimeService';
 import { getHijriDate } from '../utils/hijriDate';
 import { 
@@ -39,7 +46,9 @@ import {
   DistrictInfo, 
   setUserPreferredDistrict, 
   getUserPreferredDistrict,
-  detectPreciseLocation
+  detectPreciseLocation,
+  getLocationSourceType,
+  LocationSourceType
 } from '../utils/weatherService';
 import { toBengaliNumber } from '../utils/formatters';
 import { sounds } from '../utils/audio';
@@ -58,7 +67,9 @@ interface PrayerTimesModalProps {
   lang: Language;
   onClose: () => void;
   isAdmin?: boolean;
+  initialViewMode?: 'daily' | 'ramadan';
   onSendNotification?: (notif: NotificationItem) => void;
+  onPushLocalNotification?: (notif: NotificationItem) => void;
   onLocationChanged?: () => void;
   onSubViewActiveChange?: (isSubView: boolean) => void;
 }
@@ -78,19 +89,23 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
   lang,
   onClose,
   isAdmin = false,
+  initialViewMode = 'daily',
   onSendNotification,
+  onPushLocalNotification,
   onLocationChanged,
   onSubViewActiveChange
 }) => {
   const isBn = lang === 'bn';
   const initialDistrict = getUserPreferredDistrict() || ALL_BANGLADESH_DISTRICTS[0];
   const [district, setDistrict] = useState<DistrictInfo>(initialDistrict);
+  const [locationSource, setLocationSource] = useState<LocationSourceType>(() => getLocationSourceType());
   const [timings, setTimings] = useState<PrayerTimings>(() => calculateLocalPrayerTimes(initialDistrict));
   const [isLoading, setIsLoading] = useState(false);
   const [isAutoLocating, setIsAutoLocating] = useState(false);
+  const [fastingAutoEnabled, setFastingAutoEnabled] = useState<boolean>(() => isFastingReminderEnabled());
 
   // View Mode: 'daily', 'monthly', 'quran', 'hadith', 'niyat', 'rules', 'ramadan'
-  const [viewMode, setViewMode] = useState<PrayerModalViewMode>('daily');
+  const [viewMode, setViewMode] = useState<PrayerModalViewMode>(initialViewMode);
   const [ramadanTab, setRamadanTab] = useState<RamadanSubTab>('calendar');
   const [selectedNiyatSearch, setSelectedNiyatSearch] = useState('');
   const [selectedPrayerDetail, setSelectedPrayerDetail] = useState<PrayerCardDetail | null>(null);
@@ -138,15 +153,29 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
   }, [viewMode]);
 
   useEffect(() => {
+    const syncSetting = () => setFastingAutoEnabled(isFastingReminderEnabled());
+    window.addEventListener('fasting-reminder-setting-changed', syncSetting);
+    return () => window.removeEventListener('fasting-reminder-setting-changed', syncSetting);
+  }, []);
+
+  useEffect(() => {
     if (isOpen) {
       dailyScrollPosRef.current = 0;
+      setLocationSource(getLocationSourceType());
+      if (initialViewMode === 'ramadan') {
+        setViewMode('ramadan');
+        setRamadanTab('calendar');
+        window.history.pushState({ prayerView: 'ramadan' }, '');
+      } else {
+        setViewMode('daily');
+      }
     } else {
       setViewMode('daily');
       setRamadanTab('calendar');
       setSelectedPrayerDetail(null);
       setIsPickerOpen(false);
     }
-  }, [isOpen]);
+  }, [isOpen, initialViewMode]);
 
   const handleScroll = (e: React.UIEvent<HTMLElement>) => {
     if (viewMode === 'daily') {
@@ -169,17 +198,29 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
   };
 
   useEffect(() => {
-    if (isOpen) {
-      const saved = getUserPreferredDistrict();
-      const target = saved || district;
-      setDistrict(target);
-      refreshTimings(target);
+    if (!isOpen) return;
+    const saved = getUserPreferredDistrict();
+    if (saved) {
+      setDistrict(saved);
+      setLocationSource(getLocationSourceType());
+      refreshTimings(saved);
+    } else {
+      detectPreciseLocation(false).then(({ district: detected, source }) => {
+        setDistrict(detected);
+        setLocationSource(source);
+        refreshTimings(detected);
+      });
     }
   }, [isOpen]);
 
   // Compute Active Prayer Card Data matching user reference picture
   const activeCard: ActivePrayerCardData = useMemo(() => {
     return getActivePrayerCardData(timings, currentTime);
+  }, [timings, currentTime]);
+
+  // Compute Real-Time Sehri & Iftar Card Data (ticks every second with currentTime)
+  const fastingCard = useMemo(() => {
+    return getActiveFastingCardData(timings, currentTime);
   }, [timings, currentTime]);
 
   // Compute Hijri Date matching user reference picture
@@ -200,14 +241,59 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
     }
   };
 
+  const showLocalToast = (msg: string, duration = 3500) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(prev => (prev === msg ? '' : prev)), duration);
+  };
+
+  const handleToggleFastingAutoNotif = async () => {
+    sounds.playTap();
+    const next = !fastingAutoEnabled;
+    setFastingAutoEnabled(next);
+    setFastingReminderEnabled(next);
+    if (next && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      try {
+        await Notification.requestPermission();
+      } catch {}
+    }
+    showLocalToast(
+      next
+        ? `${district.nameBn} জেলার অটো সেহরি ও ইফতার নোটিফিকেশন চালু হয়েছে`
+        : 'অটো সেহরি ও ইফতার নোটিফিকেশন বন্ধ করা হয়েছে'
+    );
+  };
+
+  const handleSendSehriIftarNotifNow = () => {
+    sounds.playTap();
+    const citySlug = (district.nameEn || 'dhaka').toLowerCase().replace(/[^a-z0-9]/g, '_');
+    const notif = buildSehriIftarScheduleNotification(district, timings, 'daily_schedule', {
+      idOverride: `fasting_manual_${citySlug}_${Date.now()}`,
+      locationSource
+    });
+
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(notif.titleBn, {
+          body: `সেহরি শেষ: ${timings.sehriEnd} · ইফতার: ${timings.maghrib} (${district.nameBn})`,
+          tag: notif.id
+        });
+      } catch {}
+    }
+
+    if (onPushLocalNotification) {
+      onPushLocalNotification(notif);
+    }
+    showLocalToast(`${district.nameBn} জেলার সেহরি ও ইফতার সময়সূচী নোটিফিকেশন পাঠানো হয়েছে`, 4000);
+  };
+
   const handleSelectDistrict = async (d: DistrictInfo) => {
     sounds.playTap();
-    setUserPreferredDistrict(d.nameBn);
+    setUserPreferredDistrict(d.nameBn, 'manual');
     setDistrict(d);
+    setLocationSource('manual');
     handleClosePicker();
     await refreshTimings(d);
-    setToastMsg(isBn ? `${d.nameEn} (${d.nameBn}) জেলা নির্ধারিত হয়েছে` : `Selected: ${d.nameEn}`);
-    setTimeout(() => setToastMsg(''), 3000);
+    showLocalToast(isBn ? `${d.nameEn} (${d.nameBn}) জেলা নির্ধারিত হয়েছে` : `Selected: ${d.nameEn}`, 3000);
     if (onLocationChanged) onLocationChanged();
   };
 
@@ -218,21 +304,20 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
     handleClosePicker();
     setToastMsg(isBn ? 'ডিভাইসের লাইভ GPS সনাক্ত করা হচ্ছে...' : 'Detecting live GPS...');
     try {
-      const { district: detected, isGPS } = await detectPreciseLocation(true);
+      const { district: detected, isGPS, source } = await detectPreciseLocation(true);
       setDistrict(detected);
-      setUserPreferredDistrict(detected.nameBn);
+      setLocationSource(source);
+      setUserPreferredDistrict(detected.nameBn, isGPS ? 'gps' : source);
       await refreshTimings(detected);
       
       if (isGPS) {
-        setToastMsg(isBn ? `সফলভাবে ডিভাইস GPS সনাক্ত হয়েছে: ${detected.nameEn} (${detected.nameBn})` : `Live GPS detected: ${detected.nameEn}`);
+        showLocalToast(isBn ? `সফলভাবে ডিভাইস GPS সনাক্ত হয়েছে: ${detected.nameEn} (${detected.nameBn})` : `Live GPS detected: ${detected.nameEn}`, 4000);
       } else {
-        setToastMsg(isBn ? `বর্তমান জেলা: ${detected.nameEn} (${detected.nameBn})` : `Current district: ${detected.nameEn}`);
+        showLocalToast(isBn ? `বর্তমান জেলা: ${detected.nameEn} (${detected.nameBn})` : `Current district: ${detected.nameEn}`, 4000);
       }
-      setTimeout(() => setToastMsg(''), 4000);
       if (onLocationChanged) onLocationChanged();
     } catch {
-      setToastMsg(isBn ? 'GPS সনাক্ত করতে সমস্যা হয়েছে, জেলা নির্বাচন করুন' : 'GPS detection failed, please select district');
-      setTimeout(() => setToastMsg(''), 3500);
+      showLocalToast(isBn ? 'GPS সনাক্ত করতে সমস্যা হয়েছে, জেলা নির্বাচন করুন' : 'GPS detection failed, please select district', 3500);
     } finally {
       setIsLoading(false);
       setIsAutoLocating(false);
@@ -611,6 +696,12 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
               currentTime={currentTime}
               activeTab={ramadanTab}
               onTabChange={handleRamadanTabChange}
+              locationSource={locationSource}
+              isAutoLocating={isAutoLocating}
+              onOpenDistrictPicker={handleOpenPicker}
+              onAutoDetectGPS={handleAutoDetect}
+              onPushLocalNotification={onPushLocalNotification}
+              onNotifyToast={showLocalToast}
             />
           </div>
         ) : viewMode === 'detail' ? (
@@ -706,7 +797,7 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
             {/* FULL MONTH CALENDAR BUTTON (Slimmer & Thinner) */}
             <button
               onClick={() => handleSwitchView('monthly')}
-              className="w-full py-3 px-4 sm:px-6 rounded-[22px] bg-[#003d32] hover:bg-[#004d3f] border border-emerald-500/30 flex items-center justify-center gap-2.5 text-white font-black shadow-xl shadow-emerald-950/40 transition-all active:scale-[0.98] group overflow-hidden"
+              className="w-full py-3 px-4 sm:px-6 rounded-[22px] bg-[#003d32] hover:bg-[#004d3f] border border-emerald-500/30 flex items-center justify-center gap-2.5 text-white font-black shadow-xl shadow-emerald-950/40 transition-all active:scale-[0.98] group overflow-hidden cursor-pointer"
             >
               <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-white/10 flex items-center justify-center border border-white/10 group-hover:bg-white/20 transition-colors shrink-0">
                  <CalendarIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 group-hover:scale-110 transition-transform" />
@@ -715,6 +806,147 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
                 {BENGALI_MONTHS[calendarMonth]} মাসের নামাজ ক্যালেন্ডার দেখুন →
               </span>
             </button>
+
+            {/* ============================================================
+                REAL-TIME LOCATION-BASED SEHRI & IFTAR HERO CARD
+                ============================================================ */}
+            <section className="rounded-[28px] sm:rounded-[36px] bg-gradient-to-br from-[#04362c] via-[#052922] to-[#021914] border border-emerald-500/35 shadow-2xl overflow-hidden text-white">
+              <div className="p-4 sm:p-6 space-y-4">
+                {/* Header Row: Title, District & Location Controls */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2 text-xs font-black text-amber-300">
+                      <Moon className="w-4 h-4 shrink-0" />
+                      <span>আপনার লোকেশনের সেহরি ও ইফতার সময়সূচী</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs font-bold text-emerald-200/85">
+                      <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span className="text-white font-black">{district.nameBn} ({district.divisionBn} বিভাগ)</span>
+                      <span aria-hidden="true">·</span>
+                      <span>
+                        {locationSource === 'gps'
+                          ? 'লাইভ GPS'
+                          : locationSource === 'ip'
+                            ? 'অটো লোকেশন'
+                            : locationSource === 'manual'
+                              ? 'নির্বাচিত জেলা'
+                              : 'লোকেশন ভিত্তিক'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleAutoDetect}
+                      disabled={isAutoLocating}
+                      className="min-h-[44px] px-3 py-2 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 border border-emerald-400/35 text-xs font-black text-emerald-100 flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60"
+                    >
+                      <Navigation className={`w-3.5 h-3.5 text-amber-300 ${isAutoLocating ? 'animate-spin' : ''}`} />
+                      <span>{isAutoLocating ? 'খুঁজছে...' : 'লাইভ GPS'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenPicker}
+                      className="min-h-[44px] px-3 py-2 rounded-xl bg-[#00221b] hover:bg-[#002f26] border border-amber-400/35 text-xs font-black text-amber-300 flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <MapPin className="w-3.5 h-3.5 shrink-0" />
+                      <span>৬৪ জেলা</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Live Countdown + Progress Bar */}
+                <div className="rounded-2xl bg-[#001d17]/90 border border-emerald-600/30 p-3.5 sm:p-4 space-y-2.5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-black text-emerald-300">{fastingCard.phaseTitleBn}</p>
+                      <p className="text-[11.5px] font-bold text-emerald-100/75 mt-0.5">{fastingCard.countdownLabelBn}</p>
+                    </div>
+                    <div className="text-2xl sm:text-3xl font-black text-amber-300 font-mono tabular-nums tracking-tight shrink-0">
+                      {fastingCard.countdownTimeBn}
+                    </div>
+                  </div>
+                  <div className="h-2 bg-[#00120e] rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-amber-400 via-teal-400 to-emerald-400 rounded-full transition-all duration-700"
+                      style={{ width: `${Math.max(4, fastingCard.progressPercent)}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Dual Spotlight: Sehri End & Iftar */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-2xl bg-[#0a362d]/90 border border-emerald-500/30 p-4 text-center space-y-1">
+                    <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-emerald-200/85">
+                      <Moon className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                      <span>সেহরির শেষ সময়</span>
+                    </div>
+                    <p className="text-xl sm:text-2xl font-black text-amber-300 tabular-nums">{timings.sehriEnd}</p>
+                    <p className="text-[11px] font-bold text-emerald-200/70 tabular-nums">ফজর: {timings.fajr}</p>
+                  </div>
+                  <div className="rounded-2xl bg-[#0a362d]/90 border border-amber-400/35 p-4 text-center space-y-1">
+                    <div className="flex items-center justify-center gap-1.5 text-xs font-bold text-emerald-200/85">
+                      <Sunset className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                      <span>আজকের ইফতার</span>
+                    </div>
+                    <p className="text-xl sm:text-2xl font-black text-amber-300 tabular-nums">{timings.maghrib}</p>
+                    <p className="text-[11px] font-bold text-emerald-200/70 tabular-nums">রোজার ব্যাপ্তি: {fastingCard.fastDurationBn}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bottom Auto-Notification & Quick Dispatch Strip */}
+              <div className="px-4 sm:px-6 py-3.5 bg-[#001914] border-t border-emerald-800/45 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${
+                    fastingAutoEnabled
+                      ? 'bg-emerald-500/20 border-emerald-400/40 text-amber-300'
+                      : 'bg-white/5 border-white/10 text-emerald-200/50'
+                  }`}>
+                    {fastingAutoEnabled ? <BellRing className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-black text-white">
+                      অটো সেহরি-ইফতার নোটিফিকেশন ({fastingAutoEnabled ? 'চালু' : 'বন্ধ'})
+                    </p>
+                    <p className="text-[11px] font-bold text-emerald-200/75 truncate">
+                      প্রতিদিন ও ৩০/১০ মিনিট আগে আপনার জেলার অটো বার্তা
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleToggleFastingAutoNotif}
+                    className={`min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-black border transition-colors cursor-pointer ${
+                      fastingAutoEnabled
+                        ? 'bg-emerald-600 text-white border-emerald-400 hover:bg-emerald-500'
+                        : 'bg-[#002820] text-emerald-200 border-emerald-700/50 hover:bg-[#003329]'
+                    }`}
+                  >
+                    {fastingAutoEnabled ? 'অটো চালু আছে' : 'অটো চালু করুন'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSendSehriIftarNotifNow}
+                    className="min-h-[44px] px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5 shrink-0" />
+                    <span>সময়সূচী বার্তা পাঠান</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchView('ramadan')}
+                    className="min-h-[44px] px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/15 border border-white/10 text-xs font-black text-white flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <span>ক্যালেন্ডার</span>
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </section>
 
             {/* DAILY SCHEDULE (8 CARDS - PREMIUM GRID - Clicking any opens its Niyat & Details) */}
             <div className="space-y-4 pt-2">
@@ -729,7 +961,7 @@ export const PrayerTimesModal: React.FC<PrayerTimesModalProps> = ({
               </div>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
                 {[
-                  { icon: '🌙', label: 'তাহাজ্জুদ ও সাহরী', sub: 'সাহরীর শেষ সময়', time: timings.tahajjud, color: 'border-purple-800/30' },
+                  { icon: '🌙', label: 'তাহাজ্জুদ ও সাহরী', sub: 'সাহরীর শেষ সময়', time: timings.sehriEnd, color: 'border-purple-800/30' },
                   { icon: '🌌', label: 'ফজর (Fajr)', sub: 'ওয়াক্ত শুরু', time: timings.fajr, color: 'border-emerald-800/30' },
                   { icon: '🌅', label: 'সূর্যোদয় (Sunrise)', sub: `ইশরাক: ${timings.ishraq}`, time: timings.sunrise, color: 'border-amber-800/30' },
                   { icon: '☀️', label: 'চাশত (দুহা)', sub: 'পূর্বাহ্ণ সালাত', time: timings.chasht, color: 'border-amber-800/30' },
