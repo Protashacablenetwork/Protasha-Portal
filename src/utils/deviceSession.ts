@@ -34,11 +34,14 @@ export interface DeviceSessionRecord {
   updatedAt: string;
 }
 
+const STALE_SESSION_MS = 3 * 60 * 1000; // 3 minutes without heartbeat = previous device is no longer active
+
 export interface ClaimSessionResult {
   allowed: boolean;
   reason?: 'already_active_other_device' | 'offline_unverified' | 'error';
   activeDeviceLabel?: string;
   loginAt?: number;
+  canForceTakeover?: boolean;
   messageBn?: string;
   messageEn?: string;
   sessionToken?: string;
@@ -135,6 +138,7 @@ export async function claimDeviceSession(params: {
   phone: string;
   role: UserRole;
   name: string;
+  forceTakeover?: boolean;
 }): Promise<ClaimSessionResult> {
   if (params.role === 'visitor') {
     return { allowed: true };
@@ -160,12 +164,16 @@ export async function claimDeviceSession(params: {
       const nowMs = Date.now();
       const nowIso = new Date(nowMs).toISOString();
 
-      if (snap.exists()) {
+      if (snap.exists() && !params.forceTakeover) {
         const existing = snap.data() as Partial<DeviceSessionRecord>;
+        const lastSeenMs = Number(existing.lastActiveAt || existing.loginAt || 0);
+        const isStillAlive = lastSeenMs > 0 && (nowMs - lastSeenMs) <= STALE_SESSION_MS;
+
         if (
           existing.isActive === true &&
           existing.deviceId &&
-          existing.deviceId !== myDeviceId
+          existing.deviceId !== myDeviceId &&
+          isStillAlive
         ) {
           return {
             allowed: false,
@@ -197,13 +205,19 @@ export async function claimDeviceSession(params: {
 
     if (!txResult.allowed) {
       const devName = txResult.activeDeviceLabel || 'অন্য ডিভাইস';
+      const canForce = params.role === 'admin';
       return {
         allowed: false,
         reason: 'already_active_other_device',
         activeDeviceLabel: devName,
         loginAt: txResult.loginAt,
-        messageBn: `এই লগইন আইডি ইতিমধ্যে অন্য একটি ডিভাইসে (${devName}) চালু আছে। একসাথে শুধুমাত্র ১টি ডিভাইসে লগইন করা যাবে। আগের ডিভাইস থেকে লগআউট করে আবার চেষ্টা করুন।`,
-        messageEn: `This account is already logged in on another device (${devName}). Only 1 device is allowed at a time. Please log out from the previous device first.`
+        canForceTakeover: canForce,
+        messageBn: canForce
+          ? `এই অ্যাডমিন আইডি অন্য একটি ডিভাইসে (${devName}) এই মুহূর্তে চালু আছে। নিচের বাটনে চাপ দিয়ে আগের ডিভাইস লগআউট করে এখানে লগইন করতে পারবেন।`
+          : `এই লগইন আইডি ইতিমধ্যে অন্য একটি ডিভাইসে (${devName}) চালু আছে। একসাথে শুধুমাত্র ১টি ডিভাইসে লগইন করা যাবে। আগের ডিভাইস থেকে লগআউট করে আবার চেষ্টা করুন।`,
+        messageEn: canForce
+          ? `This admin account is currently active on another device (${devName}). Tap below to sign out that device and log in here.`
+          : `This account is already logged in on another device (${devName}). Only 1 device is allowed at a time. Please log out from the previous device first.`
       };
     }
 
@@ -477,8 +491,16 @@ export function startDeviceSessionGuard(
   const handleOnline = () => {
     verifyOnServer();
   };
+  const handleVisibility = () => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      sendSessionHeartbeat(user);
+    }
+  };
   if (typeof window !== 'undefined') {
     window.addEventListener('online', handleOnline);
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleVisibility);
   }
 
   const heartbeatInterval = setInterval(() => {
@@ -493,6 +515,9 @@ export function startDeviceSessionGuard(
     clearInterval(heartbeatInterval);
     if (typeof window !== 'undefined') {
       window.removeEventListener('online', handleOnline);
+    }
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', handleVisibility);
     }
   };
 }

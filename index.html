@@ -106,7 +106,7 @@
       <div id="splash-detail" class="splash-detail"></div>
       <div id="splash-actions" class="splash-actions">
         <button type="button" class="splash-btn splash-btn-primary" onclick="window.location.reload()">পুনরায় লোড করুন</button>
-        <button type="button" class="splash-btn splash-btn-secondary" onclick="try{localStorage.removeItem('protyasha_user');sessionStorage.clear();}catch(e){} window.location.href=window.location.pathname+'?r='+Date.now()">ক্যাশ ক্লিয়ার ও রিলোড</button>
+        <button type="button" class="splash-btn splash-btn-secondary" onclick="try{localStorage.removeItem('protyasha_user');sessionStorage.clear();if(typeof indexedDB!=='undefined'){indexedDB.deleteDatabase('pcn_static_runtime_cache_v4');}}catch(e){} window.location.href=window.location.pathname+'?r='+Date.now()">ক্যাশ ক্লিয়ার ও রিলোড</button>
       </div>
     </div>
     <div id="root"></div>
@@ -232,21 +232,36 @@
                     // Automatically probe prebuilt bundles (HTDOCS_UPLOAD/ or dist/ or assets/) and boot seamlessly!
                     if (!window.__PCN_STATIC_AUTOBOOT__) {
                       window.__PCN_STATIC_AUTOBOOT__ = true;
-                      var prebuiltBases = ['./HTDOCS_UPLOAD/', './dist/', './'];
-                      var pSegs = (window.location.pathname || '/').split('/').filter(Boolean);
-                      for (var d = pSegs.length - 1; d >= 1; d--) {
-                        var prefix = '/' + pSegs.slice(0, d).join('/') + '/';
-                        prebuiltBases.push(prefix + 'HTDOCS_UPLOAD/');
-                        prebuiltBases.push(prefix + 'dist/');
-                        prebuiltBases.push(prefix);
-                      }
-                      prebuiltBases.push('/HTDOCS_UPLOAD/', '/dist/', '/');
+                      var prebuiltBases = ['./HTDOCS_UPLOAD/', './dist/'];
 
                       var tryNextPrebuilt = function (idx) {
                         if (hasAppRendered()) return;
                         if (idx >= prebuiltBases.length) {
+                          // No prebuilt bundle found -> boot directly from src/ via zero-build static runtime!
+                          if (!window.__PCN_STATIC_RUNTIME_LOADED__) {
+                            window.__PCN_STATIC_RUNTIME_LOADED__ = true;
+                            if (statusEl) statusEl.textContent = 'অ্যাপ প্রস্তুত হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন...';
+                            var loadRuntime = function (rtUrl, nextUrl) {
+                              var rtScript = document.createElement('script');
+                              rtScript.src = rtUrl;
+                              rtScript.onerror = function () {
+                                if (nextUrl) {
+                                  loadRuntime(nextUrl, null);
+                                  return;
+                                }
+                                showRecovery(
+                                  'সার্ভারে static-runtime.js পাওয়া যায়নি। সম্পূর্ণ ZIP ফাইল আপলোড করে পুনরায় লোড করুন।',
+                                  detailText + ' | Missing static-runtime.js',
+                                  true
+                                );
+                              };
+                              document.head.appendChild(rtScript);
+                            };
+                            loadRuntime('./static-runtime.js', '/static-runtime.js');
+                            return;
+                          }
                           showRecovery(
-                            'এটি সোর্স কোড (src/main.tsx), যা সরাসরি স্ট্যাটিক হোস্টিংয়ে চলে না। GitHub Actions থেকে INFINITYFREE_UPLOAD.zip ডাউনলোড করে আপলোড করুন, অথবা Vercel / Netlify-এ Deploy করুন।',
+                            'অ্যাপ লোড হতে পারেনি। ইন্টারনেট চেক করে পুনরায় লোড করুন।',
                             detailText + ' | HTTP ' + r.status + (ct ? ' (' + ct.split(';')[0] + ')' : ''),
                             true
                           );
@@ -337,6 +352,17 @@
         });
 
         setTimeout(function () {
+          if (window.__PCN_STATIC_RUNTIME_LOADED__ && !hasAppRendered()) {
+            setTimeout(function () {
+              if (!hideSplashIfRendered() && !hasSpecificError) {
+                var hint2 = (typeof navigator !== 'undefined' && navigator.onLine === false)
+                  ? 'ইন্টারনেট সংযোগ বিচ্ছিন্ন রয়েছে।'
+                  : 'লোড হতে স্বাভাবিকের চেয়ে বেশি সময় লাগছে। ইন্টারনেট চেক করে পুনরায় লোড করুন।';
+                showRecovery(hint2, 'Timeout waiting for #root mount', false);
+              }
+            }, 25000);
+            return;
+          }
           if (!hideSplashIfRendered() && !hasSpecificError) {
             var hint = (typeof navigator !== 'undefined' && navigator.onLine === false)
               ? 'ইন্টারনেট সংযোগ বিচ্ছিন্ন রয়েছে।'

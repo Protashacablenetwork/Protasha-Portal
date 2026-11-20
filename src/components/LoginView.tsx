@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Lock, 
   Smartphone, 
@@ -17,7 +17,8 @@ import {
   Headphones,
   MapPin,
   Clock,
-  Phone
+  Phone,
+  Fingerprint
 } from 'lucide-react';
 import { db, staffDb, safeSetDoc } from '../utils/firebase';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
@@ -31,6 +32,13 @@ import { claimDeviceSession } from '../utils/deviceSession';
 import { normalizePhoneNumber } from '../utils/permissions';
 import { readCachedStaffAccounts } from '../utils/staffSync';
 import { useSubViewBack } from '../utils/useSubViewBack';
+import {
+  authenticateWithFingerprint,
+  checkBiometricCapability,
+  enrollFingerprintAccount,
+  getEnrolledBiometricAccount,
+  removeBiometricAccount
+} from '../utils/biometricAuth';
 
 interface LoginViewProps {
   lang: Language;
@@ -98,6 +106,43 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [bioNotice, setBioNotice] = useState('');
+  const [canForceAdminLogin, setCanForceAdminLogin] = useState(false);
+
+  // Biometric / Fingerprint States (never blocks or crashes PIN login)
+  const pinInputRef = useRef<HTMLInputElement | null>(null);
+  const [isBiometricBusy, setIsBiometricBusy] = useState(false);
+  const [biometricSupported, setBiometricSupported] = useState(false);
+  const [enableFingerprintOnLogin, setEnableFingerprintOnLogin] = useState(false);
+  const [enrolledBioAccount, setEnrolledBioAccount] = useState(() =>
+    getEnrolledBiometricAccount(safeStorage.getItem('protyasha_last_phone') || '')
+  );
+
+  useEffect(() => {
+    let active = true;
+    checkBiometricCapability()
+      .then((cap) => {
+        if (active) setBiometricSupported(cap.available);
+      })
+      .catch(() => {
+        if (active) setBiometricSupported(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    setEnrolledBioAccount(getEnrolledBiometricAccount(accountNumber));
+  }, [accountNumber]);
+
+  const focusPinFallback = () => {
+    setTimeout(() => {
+      try {
+        pinInputRef.current?.focus();
+      } catch {}
+    }, 60);
+  };
 
   // Handle Photo Upload
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -113,12 +158,14 @@ export const LoginView: React.FC<LoginViewProps> = ({
     }
   };
 
-  // Handle Login
-  const handleLoginSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const rawId = accountNumber.trim();
+  // Handle Login (supports both PIN login and biometric-verified login)
+  const performLogin = async (
+    forceAdminTakeover = false,
+    overrideCredentials?: { accountId: string; pin: string; skipEnroll?: boolean; forceEnroll?: boolean }
+  ) => {
+    const rawId = (overrideCredentials ? overrideCredentials.accountId : accountNumber).trim();
     const cleanId = rawId.toLowerCase();
-    const cleanPin = pin.trim();
+    const cleanPin = (overrideCredentials ? overrideCredentials.pin : pin).trim();
 
     if (!cleanId || cleanPin.length < 4) {
       setErrorMsg(isBn ? 'সঠিক মোবাইল নাম্বার ও কমপক্ষে ৪ ডিজিটের পিন দিন' : 'Enter valid phone and at least 4-digit PIN');
@@ -129,7 +176,27 @@ export const LoginView: React.FC<LoginViewProps> = ({
     setIsLoading(true);
     setErrorMsg('');
     setSuccessMsg('');
+    setBioNotice('');
+    setCanForceAdminLogin(false);
     if (onClearSessionNotice) onClearSessionNotice();
+
+    const maybeEnrollFingerprint = async (session: UserSession) => {
+      const shouldEnroll = Boolean(overrideCredentials?.forceEnroll) || enableFingerprintOnLogin;
+      if (overrideCredentials?.skipEnroll || !shouldEnroll) return;
+      try {
+        const res = await enrollFingerprintAccount({
+          accountId: rawId || session.phone,
+          pin: cleanPin,
+          name: session.name,
+          role: session.role
+        });
+        if (res.success) {
+          setEnrolledBioAccount(getEnrolledBiometricAccount(rawId || session.phone));
+        }
+      } catch {
+        // Never block or crash login if biometric enrollment fails or is cancelled
+      }
+    };
 
     try {
       // 1. Master Admin Check (only for explicit master admin IDs: 'admin' or '01777877207')
@@ -183,20 +250,20 @@ export const LoginView: React.FC<LoginViewProps> = ({
           id: 'admin-master',
           phone: serverAdminPhone,
           role: 'admin',
-          name: serverAdminName
+          name: serverAdminName,
+          forceTakeover: forceAdminTakeover
         });
 
         if (!lockResult.allowed) {
           setIsLoading(false);
           sounds.playTap();
+          setCanForceAdminLogin(Boolean(lockResult.canForceTakeover));
           setErrorMsg(isBn ? (lockResult.messageBn || 'অন্য ডিভাইসে লগইন করা আছে') : (lockResult.messageEn || 'Already logged in on another device'));
           return;
         }
 
         safeStorage.setItem('protyasha_last_phone', rawId);
-        setIsLoading(false);
-        sounds.playSuccess();
-        onLoginSuccess({
+        const adminSession: UserSession = {
           id: 'admin-master',
           email: 'admin@protyasha.com',
           role: 'admin',
@@ -206,7 +273,11 @@ export const LoginView: React.FC<LoginViewProps> = ({
           virtualCardNumber: '9856 0000 2932 9162',
           accountType: 'general',
           profitPreference: false
-        });
+        };
+        await maybeEnrollFingerprint(adminSession);
+        setIsLoading(false);
+        sounds.playSuccess();
+        onLoginSuccess(adminSession);
         return;
       }
 
@@ -266,14 +337,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
             return;
           }
 
-          setIsLoading(false);
-          safeStorage.setItem('protyasha_last_phone', userData.phone || rawId);
-          safeStorage.setItem('protyasha_user_phone', userData.phone || rawId);
-          if (userData.avatarUrl) {
-            safeStorage.setItem('protyasha_last_avatar', userData.avatarUrl);
-          }
-          sounds.playSuccess();
-          onLoginSuccess({
+          const userSession: UserSession = {
             id: resolvedId,
             email: `${userData.phone}@protyasha.com`,
             role: resolvedRole,
@@ -285,7 +349,16 @@ export const LoginView: React.FC<LoginViewProps> = ({
             virtualCardNumber: userData.virtualCardNumber || ('9856 ' + String(userData.phone || '').slice(-4).padStart(4, '0') + ' 2932 9162'),
             accountType: 'general',
             profitPreference: false
-          });
+          };
+          safeStorage.setItem('protyasha_last_phone', userData.phone || rawId);
+          safeStorage.setItem('protyasha_user_phone', userData.phone || rawId);
+          if (userData.avatarUrl) {
+            safeStorage.setItem('protyasha_last_avatar', userData.avatarUrl);
+          }
+          await maybeEnrollFingerprint(userSession);
+          setIsLoading(false);
+          sounds.playSuccess();
+          onLoginSuccess(userSession);
           return;
         }
       }
@@ -360,14 +433,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
             sessionStorage.setItem('protyasha_support_staff_session', JSON.stringify(staffSessionObj));
           } catch {}
 
-          setIsLoading(false);
-          safeStorage.setItem('protyasha_last_phone', staffPhone);
-          safeStorage.setItem('protyasha_user_phone', staffPhone);
-          if (matchedStaff.avatarUrl) {
-            safeStorage.setItem('protyasha_last_avatar', matchedStaff.avatarUrl);
-          }
-          sounds.playSuccess();
-          onLoginSuccess({
+          const staffUserSession: UserSession = {
             id: matchedStaff.id,
             email: `${staffPhone}@protyasha.com`,
             role: 'sub-admin',
@@ -377,7 +443,16 @@ export const LoginView: React.FC<LoginViewProps> = ({
             virtualCardNumber: '9856 ' + String(staffPhone).slice(-4).padStart(4, '0') + ' 2932 9162',
             accountType: 'general',
             profitPreference: false
-          });
+          };
+          safeStorage.setItem('protyasha_last_phone', staffPhone);
+          safeStorage.setItem('protyasha_user_phone', staffPhone);
+          if (matchedStaff.avatarUrl) {
+            safeStorage.setItem('protyasha_last_avatar', matchedStaff.avatarUrl);
+          }
+          await maybeEnrollFingerprint(staffUserSession);
+          setIsLoading(false);
+          sounds.playSuccess();
+          onLoginSuccess(staffUserSession);
           return;
         }
 
@@ -400,6 +475,81 @@ export const LoginView: React.FC<LoginViewProps> = ({
       setIsLoading(false);
       console.error('Login error:', err);
       setErrorMsg(isBn ? 'লগইন প্রক্রিয়ায় সমস্যা হয়েছে। পুনরায় চেষ্টা করুন।' : 'Login failed. Please retry.');
+    }
+  };
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await performLogin(false);
+  };
+
+  // Safe Fingerprint Login handler — never crashes on failure/cancel, smoothly falls back to PIN
+  const handleFingerprintLogin = async () => {
+    if (isLoading || isBiometricBusy) return;
+    sounds.playTap();
+    setErrorMsg('');
+    setSuccessMsg('');
+    setBioNotice('');
+    setCanForceAdminLogin(false);
+
+    const existing = getEnrolledBiometricAccount(accountNumber);
+
+    // If fingerprint is NOT enrolled yet:
+    if (!existing) {
+      // If user already entered ID + PIN, enroll and log in together cleanly
+      if (accountNumber.trim() && pin.trim().length >= 4) {
+        setEnableFingerprintOnLogin(true);
+        await performLogin(false, { accountId: accountNumber, pin, forceEnroll: true });
+        return;
+      }
+      // Otherwise guide user smoothly to enter PIN once & enable fingerprint
+      if (biometricSupported) {
+        setEnableFingerprintOnLogin(true);
+        setBioNotice(
+          isBn
+            ? 'ফিঙ্গারপ্রিন্ট চালু করতে একবার পিন নম্বর দিয়ে লগইন করুন — এরপর থেকে এক স্পর্শেই লগইন হবে।'
+            : 'Enter your PIN once to enable Fingerprint login — next time you can sign in with 1 tap.'
+        );
+      } else {
+        setBioNotice(
+          isBn
+            ? 'এই ব্রাউজার/সংযোগে ফিঙ্গারপ্রিন্ট পাওয়া যায়নি। পিন নম্বর দিয়ে সহজেই লগইন করুন।'
+            : 'Fingerprint is unavailable in this browser/connection. Please sign in with your PIN.'
+        );
+      }
+      focusPinFallback();
+      return;
+    }
+
+    setIsBiometricBusy(true);
+    try {
+      const result = await authenticateWithFingerprint(accountNumber);
+      setIsBiometricBusy(false);
+
+      if (!result.success || !result.accountId || !result.pin) {
+        setBioNotice(
+          isBn
+            ? (result.messageBn || 'ফিঙ্গারপ্রিন্ট বাতিল হয়েছে। পিন নম্বর দিয়ে লগইন করুন।')
+            : (result.messageEn || 'Fingerprint cancelled. Please sign in with your PIN.')
+        );
+        focusPinFallback();
+        return;
+      }
+
+      setAccountNumber(result.accountId);
+      await performLogin(false, {
+        accountId: result.accountId,
+        pin: result.pin,
+        skipEnroll: true
+      });
+    } catch {
+      setIsBiometricBusy(false);
+      setBioNotice(
+        isBn
+          ? 'ফিঙ্গারপ্রিন্ট কাজ করেনি। কোনো সমস্যা নেই — পিন নম্বর দিয়ে লগইন করুন।'
+          : 'Fingerprint failed. No worries — please sign in with your PIN.'
+      );
+      focusPinFallback();
     }
   };
 
@@ -525,8 +675,8 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const displayAvatar = safeStorage.getItem('protyasha_last_avatar') || adminAvatar;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-md flex items-center justify-center p-0 md:p-6 select-none overflow-y-auto">
-      <div className="w-full max-w-md md:max-w-4xl lg:max-w-5xl bg-gradient-to-br from-[#FCEAE5] via-[#FFF8F5] to-[#FDE6E0] dark:from-slate-950 dark:via-slate-900 dark:to-stone-950 md:rounded-3xl shadow-2xl flex flex-col md:flex-row overflow-hidden min-h-[100dvh] md:min-h-[620px] border border-slate-200/60 dark:border-slate-800">
+    <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-md overflow-y-auto overflow-x-hidden select-none flex flex-col md:items-center md:justify-center p-0 md:p-6">
+      <div className="w-full md:max-w-4xl lg:max-w-5xl bg-gradient-to-br from-[#FCEAE5] via-[#FFF8F5] to-[#FDE6E0] dark:from-slate-950 dark:via-slate-900 dark:to-stone-950 md:rounded-3xl shadow-2xl flex flex-col md:flex-row md:overflow-hidden min-h-[100dvh] md:min-h-[600px] md:my-auto border-0 md:border border-slate-200/60 dark:border-slate-800">
         
         {/* Left Hero Sidebar on PC/Desktop monitors */}
         <div className="hidden md:flex md:w-5/12 bg-gradient-to-br from-[#D32F2F] via-[#E52E2E] to-[#B71C1C] p-8 text-white flex-col justify-between relative overflow-hidden shrink-0">
@@ -568,7 +718,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
         {/* Right Form Area */}
         <div className="flex-1 flex flex-col min-h-0">
       {/* Top Header - No Cross Button so user cannot bypass login without deliberate visitor tap */}
-      <div className="flex items-center justify-between px-5 pt-4">
+      <div className="flex items-center justify-between px-4 sm:px-5 pt-3 sm:pt-4">
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-300">
             <ShieldCheck className="w-4 h-4 text-[#E52E2E]" />
@@ -604,39 +754,41 @@ export const LoginView: React.FC<LoginViewProps> = ({
       </div>
 
       {/* Main Content Card */}
-      <div className="px-5 py-4 flex-1 flex flex-col">
+      <div className={`px-4 sm:px-5 ${authMode === 'register' ? 'py-2.5 sm:py-3.5' : 'py-3.5 sm:py-4'} flex-1 flex flex-col justify-between`}>
+        <div>
         {/* Brand Lockup */}
-        <div className="flex items-center gap-3.5 mb-4">
-          <div className="w-14 h-14 rounded-full bg-gradient-to-tr from-[#D32F2F] via-[#E52E2E] to-[#FF9800] p-1 shadow-lg shadow-rose-500/30 flex items-center justify-center overflow-hidden">
+        <div className={`flex items-center gap-3 ${authMode === 'register' ? 'mb-2.5' : 'mb-3.5'}`}>
+          <div className={`${authMode === 'register' ? 'w-11 h-11' : 'w-13 h-13'} rounded-full bg-gradient-to-tr from-[#D32F2F] via-[#E52E2E] to-[#FF9800] p-1 shadow-lg shadow-rose-500/30 flex items-center justify-center overflow-hidden shrink-0 transition-all`}>
             {displayAvatar ? (
               <img src={displayAvatar} alt="Logo" className="w-full h-full object-cover rounded-full" />
             ) : (
               <div className="w-full h-full rounded-full bg-white dark:bg-slate-900 flex items-center justify-center">
-                <span className="text-[#E52E2E] font-black text-2xl">
+                <span className="text-[#E52E2E] font-black text-xl">
                   {isBn ? 'প্র' : 'P'}
                 </span>
               </div>
             )}
           </div>
-          <div>
-            <h1 className="text-xl sm:text-2xl font-black tracking-tight text-[#E52E2E] leading-tight">
+          <div className="min-w-0">
+            <h1 className={`${authMode === 'register' ? 'text-lg sm:text-xl' : 'text-xl sm:text-2xl'} font-black tracking-tight text-[#E52E2E] leading-tight truncate`}>
               {isBn ? 'প্রত্যাশা ক্যাবল নেটওয়ার্ক' : 'Protasha Cable Network'}
             </h1>
-            <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mt-1">
+            <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mt-0.5">
               {isBn ? 'স্মার্ট নেটওয়ার্ক ও হিসাব খাতা' : 'Smart Network & Ledger'}
             </p>
           </div>
         </div>
 
         {/* Tab Switcher: [লগ ইন] vs [নতুন একাউন্ট] */}
-        <div className="grid grid-cols-2 p-1 rounded-2xl bg-slate-200/70 dark:bg-slate-800/80 mb-4 border border-slate-300/50 dark:border-slate-700">
+        <div className={`grid grid-cols-2 p-1 rounded-2xl bg-slate-200/70 dark:bg-slate-800/80 ${authMode === 'register' ? 'mb-2.5' : 'mb-3.5'} border border-slate-300/50 dark:border-slate-700`}>
           <button
             onClick={() => {
               sounds.playTap();
               setAuthMode('login');
               setErrorMsg('');
+              setCanForceAdminLogin(false);
             }}
-            className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
+            className={`flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold transition-all ${
               authMode === 'login'
                 ? 'bg-white dark:bg-slate-900 text-[#E52E2E] shadow-sm'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
@@ -651,8 +803,9 @@ export const LoginView: React.FC<LoginViewProps> = ({
               sounds.playTap();
               setAuthMode('register');
               setErrorMsg('');
+              setCanForceAdminLogin(false);
             }}
-            className={`flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold transition-all ${
+            className={`flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold transition-all ${
               authMode === 'register'
                 ? 'bg-white dark:bg-slate-900 text-[#E52E2E] shadow-sm'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
@@ -665,17 +818,35 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
         {/* Feedback Messages */}
         {sessionNotice && !errorMsg && (
-          <div className="mb-3 p-2.5 rounded-xl text-xs font-semibold text-amber-800 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 text-center">
+          <div className="mb-2.5 p-2.5 rounded-xl text-xs font-semibold text-amber-800 bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900 text-center">
             {sessionNotice}
           </div>
         )}
         {errorMsg && (
-          <div className="mb-3 p-2.5 rounded-xl text-xs font-semibold text-rose-700 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-center animate-shake">
-            {errorMsg}
+          <div className="mb-2.5 p-2.5 rounded-xl text-xs font-semibold text-rose-700 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-center animate-shake">
+            <p>{errorMsg}</p>
+            {canForceAdminLogin && authMode === 'login' && (
+              <button
+                type="button"
+                disabled={isLoading}
+                onClick={() => performLogin(true)}
+                className="mt-2 w-full py-2 px-3 rounded-xl bg-[#E52E2E] hover:bg-rose-700 text-white text-xs font-bold shadow-sm active:scale-[0.98] transition-all cursor-pointer"
+              >
+                {isLoading
+                  ? (isBn ? 'লগইন হচ্ছে...' : 'Signing in...')
+                  : (isBn ? 'আগের ডিভাইস লগআউট করে এখানে লগইন করুন' : 'Sign out other device & Log in here')}
+              </button>
+            )}
+          </div>
+        )}
+        {bioNotice && !errorMsg && (
+          <div className="mb-2.5 p-2.5 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 bg-white/90 dark:bg-slate-800/90 border border-rose-200 dark:border-slate-700 text-center flex items-center justify-center gap-2">
+            <Fingerprint className="w-4 h-4 text-[#E52E2E] shrink-0" />
+            <span>{bioNotice}</span>
           </div>
         )}
         {successMsg && (
-          <div className="mb-3 p-2.5 rounded-xl text-xs font-semibold text-emerald-700 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900 text-center flex items-center justify-center gap-1.5">
+          <div className="mb-2.5 p-2.5 rounded-xl text-xs font-semibold text-emerald-700 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900 text-center flex items-center justify-center gap-1.5">
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
             <span>{successMsg}</span>
           </div>
@@ -723,6 +894,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   <Lock className="w-4 h-4 text-slate-400" />
                 </div>
                 <input
+                  ref={pinInputRef}
                   type={showPin ? 'text' : 'password'}
                   inputMode="numeric"
                   pattern="[0-9]*"
@@ -737,6 +909,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   onChange={(e) => {
                     const val = e.target.value.replace(/[^0-9]/g, '');
                     setPin(val);
+                    if (bioNotice) setBioNotice('');
                   }}
                   placeholder="•••••"
                   required
@@ -752,28 +925,85 @@ export const LoginView: React.FC<LoginViewProps> = ({
               </div>
             </div>
 
-            {/* Login Submit Button */}
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full h-12 rounded-2xl font-bold text-sm flex items-center justify-center transition-all bg-gradient-to-r from-[#D32F2F] to-[#E52E2E] text-white shadow-md shadow-rose-600/30 hover:opacity-95 active:scale-[0.98] mt-3"
-            >
-              {isLoading ? (isBn ? 'যাচাই করা হচ্ছে...' : 'Verifying...') : (isBn ? 'লগইন করুন' : 'Log In')}
-            </button>
+            {/* Primary PIN Login + Side-by-Side Fingerprint Button (Nagad MFS Style) */}
+            <div className="flex items-stretch gap-2.5 mt-3">
+              <button
+                type="submit"
+                disabled={isLoading || isBiometricBusy}
+                className="flex-1 h-12 rounded-2xl font-bold text-sm flex items-center justify-center transition-all bg-gradient-to-r from-[#D32F2F] to-[#E52E2E] text-white shadow-md shadow-rose-600/30 hover:opacity-95 active:scale-[0.98] disabled:opacity-60 cursor-pointer"
+              >
+                {isLoading ? (isBn ? 'যাচাই করা হচ্ছে...' : 'Verifying...') : (isBn ? 'লগইন করুন' : 'Log In')}
+              </button>
+
+              <button
+                type="button"
+                disabled={isLoading || isBiometricBusy}
+                onClick={handleFingerprintLogin}
+                aria-label={isBn ? 'ফিঙ্গারপ্রিন্ট দিয়ে লগইন' : 'Login with Fingerprint'}
+                title={isBn ? 'ফিঙ্গারপ্রিন্ট দিয়ে লগইন' : 'Login with Fingerprint'}
+                className="w-12 h-12 shrink-0 rounded-2xl bg-[#E52E2E] hover:bg-rose-700 text-white shadow-md shadow-rose-600/30 flex items-center justify-center active:scale-95 transition-all disabled:opacity-60 cursor-pointer"
+              >
+                <Fingerprint className={`w-6 h-6 ${isBiometricBusy ? 'animate-pulse' : ''}`} />
+              </button>
+            </div>
+
+            {/* Secondary Fingerprint Quick Action / Enrollment Toggle */}
+            <div className="flex items-center justify-between gap-2 pt-0.5">
+              {enrolledBioAccount ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={isLoading || isBiometricBusy}
+                    onClick={handleFingerprintLogin}
+                    className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#E52E2E] hover:underline active:opacity-80 cursor-pointer"
+                  >
+                    <Fingerprint className="w-3.5 h-3.5" />
+                    <span>
+                      {isBiometricBusy
+                        ? (isBn ? 'ফিঙ্গারপ্রিন্ট যাচাই হচ্ছে...' : 'Verifying fingerprint...')
+                        : (isBn ? 'ফিঙ্গারপ্রিন্ট দিয়ে লগইন (Login with Fingerprint)' : 'Login with Fingerprint')}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      removeBiometricAccount(enrolledBioAccount.accountId);
+                      setEnrolledBioAccount(null);
+                      setBioNotice(isBn ? 'ফিঙ্গারপ্রিন্ট সরানো হয়েছে। পিন দিয়ে লগইন করুন।' : 'Fingerprint removed. Sign in with PIN.');
+                    }}
+                    className="text-[11px] font-semibold text-slate-400 hover:text-rose-600 cursor-pointer"
+                  >
+                    {isBn ? 'বন্ধ করুন' : 'Remove'}
+                  </button>
+                </>
+              ) : (
+                <label className="inline-flex items-center gap-2 text-[11px] font-semibold text-slate-600 dark:text-slate-400 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={enableFingerprintOnLogin}
+                    onChange={(e) => setEnableFingerprintOnLogin(e.target.checked)}
+                    className="w-3.5 h-3.5 rounded accent-[#E52E2E] cursor-pointer"
+                  />
+                  <span>
+                    {isBn ? 'লগইনের পর ফিঙ্গারপ্রিন্ট চালু করুন (Login with Fingerprint)' : 'Enable Login with Fingerprint after PIN sign in'}
+                  </span>
+                </label>
+              )}
+            </div>
           </form>
         ) : (
           /* MODE 2: REGISTRATION FORM */
-          <form onSubmit={handleRegisterSubmit} className="space-y-2.5">
+          <form onSubmit={handleRegisterSubmit} className="space-y-2">
             {/* Photo Upload with Live Preview */}
-            <div className="flex items-center gap-3 p-2 bg-white/70 dark:bg-slate-800/70 rounded-2xl border border-slate-200 dark:border-slate-700">
-              <div className="relative w-14 h-14 rounded-full bg-slate-100 dark:bg-slate-700 border-2 border-rose-300 flex items-center justify-center overflow-hidden shrink-0 shadow-xs">
+            <div className="flex items-center gap-2.5 p-1.5 px-2.5 bg-white/70 dark:bg-slate-800/70 rounded-xl border border-slate-200 dark:border-slate-700">
+              <div className="relative w-11 h-11 rounded-full bg-slate-100 dark:bg-slate-700 border-2 border-rose-300 flex items-center justify-center overflow-hidden shrink-0 shadow-xs">
                 {regAvatar ? (
                   <img src={regAvatar} alt="Profile" className="w-full h-full object-cover" />
                 ) : (
-                  <User className="w-6 h-6 text-slate-400" />
+                  <User className="w-5 h-5 text-slate-400" />
                 )}
                 <label className="absolute inset-0 bg-black/30 hover:bg-black/40 flex items-center justify-center cursor-pointer transition-colors">
-                  <Camera className="w-4 h-4 text-white drop-shadow-xs" />
+                  <Camera className="w-3.5 h-3.5 text-white drop-shadow-xs" />
                   <input
                     type="file"
                     accept="image/*"
@@ -782,11 +1012,11 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   />
                 </label>
               </div>
-              <div className="flex-1">
-                <span className="block text-xs font-bold text-slate-800 dark:text-slate-200">
+              <div className="flex-1 min-w-0">
+                <span className="block text-xs font-bold text-slate-800 dark:text-slate-200 leading-tight">
                   {isBn ? 'প্রোফাইল ছবি' : 'Profile Photo'}
                 </span>
-                <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
                   {regAvatar ? (isBn ? '✓ ছবি সিলেক্ট হয়েছে' : '✓ Photo selected') : (isBn ? 'ক্যামেরা বা গ্যালারি থেকে ছবি দিন' : 'Upload photo from device')}
                 </p>
               </div>
@@ -807,7 +1037,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 onChange={(e) => setRegName(e.target.value)}
                 placeholder={isBn ? 'যেমন: মো: সুমন হোসেন' : 'e.g. John Doe'}
                 required
-                className="w-full h-11 px-3 text-xs font-semibold bg-white/95 dark:bg-slate-800/95 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs focus:outline-none focus:border-[#E52E2E]"
+                className="w-full h-10 px-3 text-xs font-semibold bg-white/95 dark:bg-slate-800/95 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs focus:outline-none focus:border-[#E52E2E]"
               />
             </div>
 
@@ -830,7 +1060,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 onChange={(e) => setRegPhone(e.target.value)}
                 placeholder="01XXXXXXXXX"
                 required
-                className="w-full h-11 px-3 text-xs font-semibold bg-white/95 dark:bg-slate-800/95 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs focus:outline-none focus:border-[#E52E2E]"
+                className="w-full h-10 px-3 text-xs font-semibold bg-white/95 dark:bg-slate-800/95 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs focus:outline-none focus:border-[#E52E2E]"
               />
             </div>
 
@@ -842,7 +1072,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 </label>
                 <div className="relative">
                   <input
-                    type="password"
+                    type={showRegPin ? 'text' : 'password'}
                     inputMode="numeric"
                     pattern="[0-9]*"
                     maxLength={6}
@@ -859,7 +1089,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                     }}
                     placeholder="••••"
                     required
-                    className="w-full h-11 px-3 text-center tracking-widest text-sm font-bold bg-white/95 dark:bg-slate-800/95 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs focus:outline-none focus:border-[#E52E2E]"
+                    className="w-full h-10 pl-3 pr-8 text-center tracking-widest text-sm font-bold bg-white/95 dark:bg-slate-800/95 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs focus:outline-none focus:border-[#E52E2E]"
                   />
                   <button
                     type="button"
@@ -876,7 +1106,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   {isBn ? 'পিন নিশ্চিত করুন' : 'Confirm PIN'} *
                 </label>
                 <input
-                  type="password"
+                  type={showRegPin ? 'text' : 'password'}
                   inputMode="numeric"
                   pattern="[0-9]*"
                   maxLength={6}
@@ -893,7 +1123,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   }}
                   placeholder="••••"
                   required
-                  className="w-full h-11 px-3 text-center tracking-widest text-sm font-bold bg-white/95 dark:bg-slate-800/95 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs focus:outline-none focus:border-[#E52E2E]"
+                  className="w-full h-10 px-3 text-center tracking-widest text-sm font-bold bg-white/95 dark:bg-slate-800/95 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs focus:outline-none focus:border-[#E52E2E]"
                 />
               </div>
             </div>
@@ -902,15 +1132,16 @@ export const LoginView: React.FC<LoginViewProps> = ({
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full h-12 rounded-2xl font-bold text-sm flex items-center justify-center transition-all bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-600/30 hover:opacity-95 active:scale-[0.98] mt-2"
+              className="w-full h-11 rounded-2xl font-bold text-sm flex items-center justify-center transition-all bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-600/30 hover:opacity-95 active:scale-[0.98] mt-1.5"
             >
               {isLoading ? (isBn ? 'অ্যাকাউন্ট তৈরি হচ্ছে...' : 'Creating...') : (isBn ? 'অ্যাকাউন্ট তৈরি করুন' : 'Create Account')}
             </button>
           </form>
         )}
+        </div>
 
         {/* ================= VISITOR MODE (লগইন ছাড়া দেখুন) ================= */}
-        <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-800">
+        <div className={`${authMode === 'register' ? 'mt-2.5 pt-2' : 'mt-3.5 pt-3'} border-t border-slate-200 dark:border-slate-800`}>
           <button
             type="button"
             onClick={handleVisitorLogin}
@@ -923,7 +1154,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
       </div>
 
       {/* Footer 3 Items */}
-      <div className="px-5 py-3 flex items-center justify-around border-t border-slate-200/60 dark:border-slate-800/80 bg-white/40 dark:bg-slate-900/40 backdrop-blur-xs">
+      <div className={`px-4 sm:px-5 ${authMode === 'register' ? 'py-2' : 'py-2.5'} flex items-center justify-around border-t border-slate-200/60 dark:border-slate-800/80 bg-white/40 dark:bg-slate-900/40 backdrop-blur-xs shrink-0`}>
         <button
           type="button"
           onClick={() => {
