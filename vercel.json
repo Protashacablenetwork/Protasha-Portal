@@ -1,0 +1,39 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "headers": [
+    {
+      "source": "/(index.html|version.json)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, no-cache, must-revalidate, max-age=0"
+        }
+      ]
+    },
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate, max-age=0"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/(.*)/assets/:path*",
+      "destination": "/assets/:path*"
+    },
+    {
+      "source": "/(.*)/version.json",
+      "destination": "/version.json"
+    },
+    {
+      "source": "/((?!assets/|version\\.json|favicon\\.ico|ay-byay\\.html|bill-manager-pro\\.html).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="bn">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>প্রত্যাশা ক্যাবল নেটওয়ার্ক</title>
+    <script>
+      (function () {
+        try {
+          var path = window.location.pathname || '/';
+          var search = window.location.search || '';
+          var hash = window.location.hash || '';
+          var trackMatch = path.match(/^(.*)\/track\/([^/?#]+)\/?$/i);
+          if (trackMatch) {
+            var base = trackMatch[1] || '';
+            var ticketId = decodeURIComponent(trackMatch[2]);
+            var target = (base ? base + '/' : '/') + '?track=' + encodeURIComponent(ticketId) + hash;
+            window.location.replace(target);
+            return;
+          }
+          // Preserve repo/subfolder root on GitHub Pages or static hosts without URL rewriting
+          var parts = path.split('/').filter(Boolean);
+          var fallbackBase = parts.length > 1 ? '/' + parts[0] + '/' : '/';
+          window.location.replace(fallbackBase + search + hash);
+        } catch (e) {
+          window.location.replace('./');
+        }
+      })();
+    </script>
+  </head>
+  <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: #f8fafc; color: #334155;">
+    <div style="text-align: center; padding: 24px;">
+      <p style="font-weight: 600; margin-bottom: 12px;">অ্যাপে রিডাইরেক্ট করা হচ্ছে...</p>
+      <a href="./" style="display: inline-block; padding: 10px 18px; border-radius: 10px; background: #E52E2E; color: #fff; text-decoration: none; font-weight: 700;">হোম পেজে যান</a>
+    </div>
+  </body>
+</html>

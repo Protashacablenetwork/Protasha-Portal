@@ -1,1 +1,4 @@
+/track/assets/* /assets/:splat 200
+/track/*/assets/* /assets/:splat 200
+/track/version.json /version.json 200
 /* /index.html 200

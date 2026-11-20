@@ -1,0 +1,41 @@
+# Nginx configuration example for deploying the built `dist/` folder
+# Place the contents of `dist/` inside your web root (e.g. /var/www/protasha)
+
+server {
+    listen 80;
+    server_name _;
+
+    root /var/www/protasha;
+    index index.html;
+
+    # Ensure modern JS/CSS/JSON MIME types
+    include /etc/nginx/mime.types;
+    types {
+        application/javascript mjs;
+    }
+
+    # Never cache entry HTML or version manifest
+    location ~* ^/(index\.html|version\.json)$ {
+        add_header Cache-Control "no-store, no-cache, must-revalidate, max-age=0" always;
+    }
+
+    # Rewrite nested SPA asset requests (e.g. /track/assets/app.js -> /assets/app.js)
+    location ~* ^/.+/assets/(.+)$ {
+        rewrite ^/.+/assets/(.+)$ /assets/$1 last;
+    }
+
+    location ~* ^/.+/version\.json$ {
+        rewrite ^/.+/version\.json$ /version.json last;
+    }
+
+    # Serve static assets directly (404 if missing — never return index.html for missing JS/CSS)
+    location /assets/ {
+        add_header Cache-Control "no-cache, must-revalidate, max-age=0" always;
+        try_files $uri =404;
+    }
+
+    # SPA fallback for all other routes
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

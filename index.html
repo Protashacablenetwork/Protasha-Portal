@@ -192,14 +192,24 @@
               return;
             }
 
-            // Self-healing fallback: if relative ./assets/... failed on a nested route, try /assets/... once
-            if (cleanSrc && cleanSrc.indexOf('./assets/') === 0 && !window.__PCN_ROOT_RETRY__) {
-              window.__PCN_ROOT_RETRY__ = true;
-              var fallbackSrc = '/' + cleanSrc.slice(2);
+            // Self-healing fallback: if relative ./assets/... failed on a nested route, walk up parent folders (supports both root / and subfolder /app/)
+            if (cleanSrc && cleanSrc.indexOf('./assets/') === 0 && !window.__PCN_FALLBACK_INIT__) {
+              window.__PCN_FALLBACK_INIT__ = true;
+              var assetSuffix = cleanSrc.slice(2);
+              var segs = (window.location.pathname || '/').split('/').filter(Boolean);
+              var q = [];
+              for (var depth = segs.length - 1; depth >= 1; depth--) {
+                q.push('/' + segs.slice(0, depth).join('/') + '/' + assetSuffix);
+              }
+              q.push('/' + assetSuffix);
+              window.__PCN_FALLBACK_QUEUE__ = q;
+            }
+            if (window.__PCN_FALLBACK_QUEUE__ && window.__PCN_FALLBACK_QUEUE__.length > 0) {
+              var nextSrc = window.__PCN_FALLBACK_QUEUE__.shift();
               var retryScript = document.createElement('script');
               retryScript.type = 'module';
               retryScript.crossOrigin = 'anonymous';
-              retryScript.src = fallbackSrc;
+              retryScript.src = nextSrc;
               document.head.appendChild(retryScript);
               return;
             }
@@ -218,8 +228,63 @@
                   }
 
                   if (cleanSrc.indexOf('.tsx') !== -1 && (!r.ok || !isJs)) {
+                    // Static host detected (raw Download ZIP uploaded directly without running npm run build).
+                    // Automatically probe prebuilt bundles (HTDOCS_UPLOAD/ or dist/ or assets/) and boot seamlessly!
+                    if (!window.__PCN_STATIC_AUTOBOOT__) {
+                      window.__PCN_STATIC_AUTOBOOT__ = true;
+                      var prebuiltBases = ['./HTDOCS_UPLOAD/', './dist/', './'];
+                      var pSegs = (window.location.pathname || '/').split('/').filter(Boolean);
+                      for (var d = pSegs.length - 1; d >= 1; d--) {
+                        var prefix = '/' + pSegs.slice(0, d).join('/') + '/';
+                        prebuiltBases.push(prefix + 'HTDOCS_UPLOAD/');
+                        prebuiltBases.push(prefix + 'dist/');
+                        prebuiltBases.push(prefix);
+                      }
+                      prebuiltBases.push('/HTDOCS_UPLOAD/', '/dist/', '/');
+
+                      var tryNextPrebuilt = function (idx) {
+                        if (hasAppRendered()) return;
+                        if (idx >= prebuiltBases.length) {
+                          showRecovery(
+                            'এটি সোর্স কোড (src/main.tsx), যা সরাসরি স্ট্যাটিক হোস্টিংয়ে চলে না। GitHub Actions থেকে INFINITYFREE_UPLOAD.zip ডাউনলোড করে আপলোড করুন, অথবা Vercel / Netlify-এ Deploy করুন।',
+                            detailText + ' | HTTP ' + r.status + (ct ? ' (' + ct.split(';')[0] + ')' : ''),
+                            true
+                          );
+                          return;
+                        }
+                        var base = prebuiltBases[idx];
+                        var jsUrl = base + 'assets/app.js';
+                        var cssUrl = base + 'assets/app.css';
+                        fetch(jsUrl, { method: 'GET', cache: 'no-store' })
+                          .then(function (jr) {
+                            var jct = ((jr.headers && jr.headers.get('content-type')) || '').toLowerCase();
+                            var looksJs = jct.indexOf('javascript') !== -1 || jct.indexOf('ecmascript') !== -1;
+                            if (!jr.ok || jct.indexOf('text/html') !== -1 || !looksJs) {
+                              tryNextPrebuilt(idx + 1);
+                              return;
+                            }
+                            window.__PCN_ASSET_BASE__ = base;
+                            var link = document.createElement('link');
+                            link.rel = 'stylesheet';
+                            link.crossOrigin = 'anonymous';
+                            link.href = cssUrl;
+                            document.head.appendChild(link);
+
+                            var mod = document.createElement('script');
+                            mod.type = 'module';
+                            mod.crossOrigin = 'anonymous';
+                            mod.src = jsUrl;
+                            document.head.appendChild(mod);
+                          })
+                          .catch(function () {
+                            tryNextPrebuilt(idx + 1);
+                          });
+                      };
+                      tryNextPrebuilt(0);
+                      return;
+                    }
                     showRecovery(
-                      'সোর্স ফাইল (src/main.tsx) সরাসরি স্ট্যাটিক হোস্টিংয়ে চলে না। npm run build করে তৈরি হওয়া dist ফোল্ডারের ফাইল আপলোড করুন, অথবা লাইভ অ্যাপ লিংক ব্যবহার করুন।',
+                      'অ্যাপের বিল্ড ফাইল (HTDOCS_UPLOAD বা dist) সার্ভারে পাওয়া যায়নি। সম্পূর্ণ ZIP ফাইল আপলোড করুন।',
                       detailText + ' | HTTP ' + r.status + (ct ? ' (' + ct.split(';')[0] + ')' : ''),
                       true
                     );

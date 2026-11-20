@@ -84,7 +84,14 @@ function normalizeVersionInfo(raw: any): AppVersionInfo | null {
 
 async function fetchServerManifest(): Promise<AppVersionInfo | null> {
   const ts = Date.now();
-  const candidates = [`/api/app-version?t=${ts}`, `./version.json?t=${ts}`];
+  const assetBase = typeof window !== 'undefined' ? (window as any).__PCN_ASSET_BASE__ : '';
+  const candidates = [
+    ...(assetBase ? [`${assetBase}version.json?t=${ts}`] : []),
+    `./version.json?t=${ts}`,
+    `./HTDOCS_UPLOAD/version.json?t=${ts}`,
+    `/version.json?t=${ts}`,
+    `/api/app-version?t=${ts}`
+  ];
 
   for (const url of candidates) {
     try {
