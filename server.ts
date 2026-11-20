@@ -1,3 +1,4 @@
+import http from 'http';
 import express from 'express';
 import cors from 'cors';
 import compression from 'compression';
@@ -10,11 +11,23 @@ dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
+const httpServer = http.createServer(app);
 const port = process.env.PORT || 3000;
-const hasBuiltHtml = (dir: string) => fs.existsSync(path.join(__dirname, dir, 'index.html'));
-const resolvedBuildDir = hasBuiltHtml('HTDOCS_UPLOAD')
-    ? 'HTDOCS_UPLOAD'
-    : (hasBuiltHtml('dist') ? 'dist' : (hasBuiltHtml('docs') ? 'docs' : null));
+const hasValidBuild = (dir: string) => {
+    const htmlPath = path.join(__dirname, dir, 'index.html');
+    if (!fs.existsSync(htmlPath)) return false;
+    try {
+        const html = fs.readFileSync(htmlPath, 'utf-8');
+        const assetRefs = [...html.matchAll(/(?:src|href)=["']\.?\/(assets\/[^"']+)["']/g)].map((m) => m[1]);
+        if (assetRefs.length === 0) return false;
+        return assetRefs.every((rel) => fs.existsSync(path.join(__dirname, dir, rel)));
+    } catch {
+        return false;
+    }
+};
+const resolvedBuildDir = hasValidBuild('dist')
+    ? 'dist'
+    : (hasValidBuild('HTDOCS_UPLOAD') ? 'HTDOCS_UPLOAD' : (hasValidBuild('docs') ? 'docs' : null));
 const isExplicitDev = process.env.NODE_ENV === 'development' || process.env.npm_lifecycle_event === 'dev' || process.env.DISABLE_HMR === 'true';
 const isProd = !isExplicitDev && resolvedBuildDir !== null;
 const buildDir = resolvedBuildDir || 'dist';
@@ -98,11 +111,11 @@ app.get('/api/app-version', (_req: express.Request, res: express.Response) => {
     }
 
     return res.json({
-        version: '2.5.0',
-        buildNumber: 250,
-        releaseDate: '2026-11-14',
-        titleBn: 'নিরাপত্তা ও স্মার্ট ফিচার আপডেট',
-        titleEn: 'Security & Smart Features Update',
+        version: '2.6.0',
+        buildNumber: 260,
+        releaseDate: '2026-11-20',
+        titleBn: 'স্পিড, কোড-স্প্লিটিং ও আধুনিক প্রযুক্তি আপডেট',
+        titleEn: 'Performance, Code-Splitting & Modern Tech Update',
         featuresBn: [],
         featuresEn: []
     });
@@ -118,13 +131,31 @@ if (!isProd) {
     app.use(vite.middlewares);
 } else {
     const staticRoot = path.join(__dirname, buildDir);
-    app.use(express.static(staticRoot, {
-        setHeaders: (res, filePath) => {
-            if (filePath.endsWith('index.html') || filePath.endsWith('version.json')) {
-                res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-            }
+    const applyStaticHeaders = (res: express.Response, filePath: string) => {
+        if (filePath.endsWith('index.html') || filePath.endsWith('version.json')) {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        } else if (filePath.endsWith('.js') || filePath.endsWith('.mjs')) {
+            res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+        } else if (filePath.endsWith('.css')) {
+            res.setHeader('Content-Type', 'text/css; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-cache, must-revalidate');
         }
+    };
+    app.use(express.static(staticRoot, {
+        setHeaders: (res, filePath) => applyStaticHeaders(res, filePath)
     }));
+    // Handle relative ./assets/... requests originating from nested SPA routes (e.g. /foo/assets/app.js)
+    app.get(/\/assets\/(.+)$/, (req: express.Request, res: express.Response) => {
+        const relAsset = req.params[0] || '';
+        const safeRel = path.normalize(relAsset).replace(/^(\.\.(\/|\\|$))+/, '');
+        const candidate = path.join(staticRoot, 'assets', safeRel);
+        if (candidate.startsWith(path.join(staticRoot, 'assets')) && fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+            applyStaticHeaders(res, candidate);
+            return res.sendFile(candidate);
+        }
+        return res.status(404).send('Asset not found');
+    });
     app.get('*', (req: express.Request, res: express.Response) => {
         if (req.path.startsWith('/assets/') || /\.(js|mjs|css|map|png|jpg|jpeg|webp|svg|ico|woff2?)$/i.test(req.path)) {
             return res.status(404).send('Asset not found');
@@ -134,6 +165,7 @@ if (!isProd) {
     });
 }
 
-app.listen(Number(port), '0.0.0.0', () => {
+httpServer.listen(Number(port), '0.0.0.0', () => {
     console.log(`Server running on port ${port}`);
 });
+

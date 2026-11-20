@@ -51,6 +51,48 @@
         color: #1e293b;
       }
       .dark .splash-text { color: #f1f5f9; }
+      .splash-sub {
+        font-family: 'Hind Siliguri', sans-serif;
+        font-size: 0.875rem;
+        color: #64748b;
+        margin-top: 8px;
+        text-align: center;
+        padding: 0 24px;
+      }
+      .dark .splash-sub { color: #94a3b8; }
+      .splash-actions {
+        display: none;
+        margin-top: 20px;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      .splash-actions.visible { display: flex; }
+      .splash-btn {
+        font-family: 'Hind Siliguri', sans-serif;
+        font-weight: 700;
+        font-size: 0.875rem;
+        padding: 10px 20px;
+        border-radius: 12px;
+        border: none;
+        cursor: pointer;
+      }
+      .splash-btn-primary { background: #E52E2E; color: #ffffff; }
+      .splash-btn-secondary { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
+      .splash-detail {
+        display: none;
+        margin-top: 10px;
+        max-width: 90vw;
+        padding: 6px 10px;
+        border-radius: 8px;
+        background: #f1f5f9;
+        color: #475569;
+        font-family: monospace;
+        font-size: 11px;
+        word-break: break-all;
+        text-align: center;
+      }
+      .splash-detail.visible { display: block; }
       body.app-ready #app-splash { opacity: 0; visibility: hidden; pointer-events: none; }
     </style>
   </head>
@@ -60,23 +102,184 @@
         <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>
       </div>
       <div class="splash-text">প্রত্যাশা ক্যাবল নেটওয়ার্ক</div>
+      <div id="splash-status" class="splash-sub">অ্যাপ লোড হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন...</div>
+      <div id="splash-detail" class="splash-detail"></div>
+      <div id="splash-actions" class="splash-actions">
+        <button type="button" class="splash-btn splash-btn-primary" onclick="window.location.reload()">পুনরায় লোড করুন</button>
+        <button type="button" class="splash-btn splash-btn-secondary" onclick="try{localStorage.removeItem('protyasha_user');sessionStorage.clear();}catch(e){} window.location.href=window.location.pathname+'?r='+Date.now()">ক্যাশ ক্লিয়ার ও রিলোড</button>
+      </div>
     </div>
     <div id="root"></div>
     <script>
-      // Force hide splash screen after a maximum of 6 seconds if app initialization stalls
-      window.addEventListener('load', () => {
-        console.log('Window loaded. Setting safety timer...');
-        setTimeout(() => {
-          document.body.classList.add('app-ready');
-          console.log('Splash screen forced hidden via window load timer.');
-        }, 4000);
-      });
+      (function () {
+        var rootEl = document.getElementById('root');
+        var statusEl = document.getElementById('splash-status');
+        var detailEl = document.getElementById('splash-detail');
+        var actionsEl = document.getElementById('splash-actions');
 
-      // Fallback: hide splash screen after 3 seconds if app doesn't ready
-      setTimeout(() => {
-        document.body.classList.add('app-ready');
-        console.warn('Splash screen fallback triggered after 3 seconds.');
-      }, 3000);
+        var hasSpecificError = false;
+        var scriptRetryCount = 0;
+
+        function hasAppRendered() {
+          return !!(rootEl && rootEl.childElementCount > 0);
+        }
+
+        function hideSplashIfRendered() {
+          if (hasAppRendered()) {
+            document.body.classList.add('app-ready');
+            return true;
+          }
+          return false;
+        }
+
+        function showRecovery(msg, detail, isSpecific) {
+          if (hasAppRendered()) return;
+          if (isSpecific) hasSpecificError = true;
+          if (statusEl) statusEl.textContent = msg;
+          if (detailEl && detail) {
+            detailEl.textContent = detail;
+            detailEl.classList.add('visible');
+          }
+          if (actionsEl) actionsEl.classList.add('visible');
+        }
+
+        function scheduleScriptRetry(srcUrl) {
+          if (hasAppRendered() || scriptRetryCount >= 3) return false;
+          scriptRetryCount += 1;
+          if (statusEl) {
+            statusEl.textContent = 'সার্ভার সংযোগ স্থাপন হচ্ছে... (চেষ্টা ' + scriptRetryCount + '/3)';
+          }
+          setTimeout(function () {
+            if (hasAppRendered()) return;
+            var sep = srcUrl.indexOf('?') === -1 ? '?' : '&';
+            var s = document.createElement('script');
+            s.type = 'module';
+            if (srcUrl.indexOf('/assets/') !== -1 || srcUrl.indexOf('./assets/') === 0) {
+              s.crossOrigin = 'anonymous';
+            }
+            s.src = srcUrl + sep + 'retry=' + Date.now();
+            document.head.appendChild(s);
+          }, 2000);
+          return true;
+        }
+
+        if (rootEl && typeof MutationObserver !== 'undefined') {
+          var obs = new MutationObserver(function () {
+            if (hideSplashIfRendered()) obs.disconnect();
+          });
+          obs.observe(rootEl, { childList: true });
+        }
+
+        window.addEventListener('error', function (ev) {
+          if (hasAppRendered()) return;
+          var target = ev && ev.target;
+          var tag = target && target.tagName ? String(target.tagName).toUpperCase() : '';
+          // Ignore non-fatal font/stylesheet/image load failures so Google Fonts never blocks boot
+          if (tag === 'LINK' || tag === 'IMG') return;
+          if (tag === 'SCRIPT') {
+            var rawSrc = target.getAttribute ? (target.getAttribute('src') || target.src || '') : '';
+            var cleanSrc = rawSrc.split('?')[0];
+            // Ignore optional helper scripts (like preview iframe scripts)
+            if (cleanSrc && cleanSrc.indexOf('_aistudio') !== -1) return;
+
+            // If opened directly via file:// protocol, ES module scripts are blocked by browser CORS
+            if (window.location && window.location.protocol === 'file:') {
+              showRecovery(
+                'লোকাল ফাইল (file://) থেকে সরাসরি ওপেন করলে অ্যাপ চালু হয় না। লাইভ ওয়েব লিংক বা সার্ভার থেকে ওপেন করুন।',
+                'PROTOCOL: file:// (' + (cleanSrc || 'unknown') + ')',
+                true
+              );
+              return;
+            }
+
+            // Self-healing fallback: if relative ./assets/... failed on a nested route, try /assets/... once
+            if (cleanSrc && cleanSrc.indexOf('./assets/') === 0 && !window.__PCN_ROOT_RETRY__) {
+              window.__PCN_ROOT_RETRY__ = true;
+              var fallbackSrc = '/' + cleanSrc.slice(2);
+              var retryScript = document.createElement('script');
+              retryScript.type = 'module';
+              retryScript.crossOrigin = 'anonymous';
+              retryScript.src = fallbackSrc;
+              document.head.appendChild(retryScript);
+              return;
+            }
+
+            var detailText = 'SCRIPT: ' + (cleanSrc || 'unknown');
+
+            if (cleanSrc && typeof fetch === 'function') {
+              fetch(cleanSrc, { method: 'GET', cache: 'no-store' })
+                .then(function (r) {
+                  var ct = ((r.headers && r.headers.get('content-type')) || '').toLowerCase();
+                  var isJs = ct.indexOf('javascript') !== -1 || ct.indexOf('ecmascript') !== -1;
+
+                  // Transient restart / Vite dep optimize (502/503/504) or server already healthy (200 JS)
+                  if (r.status === 502 || r.status === 503 || r.status === 504 || (r.ok && isJs)) {
+                    if (scheduleScriptRetry(cleanSrc)) return;
+                  }
+
+                  if (cleanSrc.indexOf('.tsx') !== -1 && (!r.ok || !isJs)) {
+                    showRecovery(
+                      'সোর্স ফাইল (src/main.tsx) সরাসরি স্ট্যাটিক হোস্টিংয়ে চলে না। npm run build করে তৈরি হওয়া dist ফোল্ডারের ফাইল আপলোড করুন, অথবা লাইভ অ্যাপ লিংক ব্যবহার করুন।',
+                      detailText + ' | HTTP ' + r.status + (ct ? ' (' + ct.split(';')[0] + ')' : ''),
+                      true
+                    );
+                    return;
+                  }
+
+                  if (!r.ok || ct.indexOf('text/html') !== -1) {
+                    showRecovery(
+                      'সার্ভারে assets/app.js ফাইলটি পাওয়া যায়নি। হোস্টিংয়ে সম্পূর্ণ dist বা HTDOCS_UPLOAD ফোল্ডারের সাথে assets ফোল্ডারটিও আপলোড করুন।',
+                      detailText + ' | HTTP ' + r.status + (ct ? ' (' + ct.split(';')[0] + ')' : ''),
+                      true
+                    );
+                    return;
+                  }
+
+                  showRecovery(
+                    'অ্যাপের মূল স্ক্রিপ্ট লোড হতে পারেনি। ইন্টারনেট চেক করে পুনরায় লোড করুন।',
+                    detailText + ' | HTTP ' + r.status + (ct ? ' (' + ct.split(';')[0] + ')' : ''),
+                    true
+                  );
+                })
+                .catch(function () {
+                  if (scheduleScriptRetry(cleanSrc)) return;
+                  showRecovery(
+                    'অ্যাপের মূল স্ক্রিপ্ট লোড হতে পারেনি। ইন্টারনেট চেক করে পুনরায় লোড করুন।',
+                    detailText + ' | Network error',
+                    true
+                  );
+                });
+            } else {
+              showRecovery(
+                'অ্যাপের মূল স্ক্রিপ্ট লোড হতে পারেনি। ইন্টারনেট চেক করে পুনরায় লোড করুন।',
+                detailText,
+                true
+              );
+            }
+            return;
+          }
+          if (ev && ev.message) {
+            var loc = ev.filename ? (' (' + ev.filename + ':' + (ev.lineno || 0) + ')') : '';
+            showRecovery('লোডিং ত্রুটি ঘটেছে। নিচের বাটনে চাপুন।', String(ev.message) + loc, true);
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function (ev) {
+          if (hasAppRendered()) return;
+          var reason = ev && ev.reason ? (ev.reason.message || String(ev.reason)) : '';
+          if (reason && reason.toLowerCase().indexOf('websocket') !== -1) return;
+          showRecovery('লোডিং সমস্যা হয়েছে। পুনরায় চেষ্টা করুন।', reason || 'Promise rejection', true);
+        });
+
+        setTimeout(function () {
+          if (!hideSplashIfRendered() && !hasSpecificError) {
+            var hint = (typeof navigator !== 'undefined' && navigator.onLine === false)
+              ? 'ইন্টারনেট সংযোগ বিচ্ছিন্ন রয়েছে।'
+              : 'লোড হতে স্বাভাবিকের চেয়ে বেশি সময় লাগছে। ইন্টারনেট চেক করে পুনরায় লোড করুন।';
+            showRecovery(hint, 'Timeout waiting for #root mount', false);
+          }
+        }, 25000);
+      })();
     </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -25,6 +25,7 @@ import {
 } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import { canModifyTransaction, isSubAdmin as checkIsSubAdmin } from '../utils/permissions';
+import { showToast } from '../utils/uiFeedback';
 
 interface TransactionDetailPageProps {
   transaction: Transaction;
@@ -94,7 +95,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({
     if (transaction.phone) {
       window.location.href = `tel:${transaction.phone}`;
     } else {
-      alert(lang === 'bn' ? 'ফোন নম্বর সংযুক্ত নেই' : 'No phone number linked');
+      showToast(lang === 'bn' ? 'ফোন নম্বর সংযুক্ত নেই' : 'No phone number linked', 'warning');
     }
   };
 
@@ -107,7 +108,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({
       window.location.href = `sms:${transaction.phone}?body=${message}`;
     } else {
       navigator.clipboard?.writeText(decodeURIComponent(message));
-      alert(lang === 'bn' ? 'এসএমএস টেক্সট ক্লিপবোর্ডে কপি হয়েছে' : 'SMS text copied');
+      showToast(lang === 'bn' ? 'এসএমএস টেক্সট ক্লিপবোর্ডে কপি হয়েছে' : 'SMS text copied', 'success');
     }
   };
 

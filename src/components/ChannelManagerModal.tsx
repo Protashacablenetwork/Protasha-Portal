@@ -4,6 +4,7 @@ import { Language, PaymentChannel } from '../types';
 import { sounds } from '../utils/audio';
 import { SmartChannelIcon, getChannelGradient } from './SmartChannelIcon';
 import { compressImage } from '../utils/imageCompressor';
+import { showConfirm } from '../utils/uiFeedback';
 
 interface ChannelManagerModalProps {
   isOpen: boolean;
@@ -103,9 +104,15 @@ export const ChannelManagerModal: React.FC<ChannelManagerModalProps> = ({
     setImageUrl('');
   };
 
-  const handleDeleteChannel = (id: string) => {
+  const handleDeleteChannel = async (id: string) => {
     sounds.playTap();
-    if (confirm(lang === 'bn' ? 'এই পেমেন্ট চ্যানেলটি মুছে ফেলতে চান?' : 'Delete this channel?')) {
+    const confirmed = await showConfirm({
+      message: lang === 'bn' ? 'এই পেমেন্ট চ্যানেলটি মুছে ফেলতে চান?' : 'Delete this channel?',
+      confirmLabel: lang === 'bn' ? 'মুছে ফেলুন' : 'Delete',
+      cancelLabel: lang === 'bn' ? 'বাতিল' : 'Cancel',
+      danger: true
+    });
+    if (confirmed) {
       const updated = channelList.filter(c => c.id !== id);
       setChannelList(updated);
       onSaveChannels(updated);

@@ -1,5 +1,6 @@
 {
   "projectId": "gen-lang-client-0866907753",
+  "firestoreDatabaseId": "staff-collection-db",
   "appId": "1:1003306673691:web:23db6ebdc319e6a6df3abe",
   "apiKey": "AIzaSyAPqy-Vy7r3QKvN7qeBG4pcnQakNR-gfuk",
   "authDomain": "gen-lang-client-0866907753.firebaseapp.com",

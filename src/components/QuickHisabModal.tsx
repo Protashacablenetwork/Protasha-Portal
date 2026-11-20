@@ -37,6 +37,7 @@ import { db, staffDb, safeSetDoc, safeDeleteDoc, handleFirestoreError, Operation
 import { collection, doc, getDoc, getDocs, onSnapshot } from 'firebase/firestore';
 import { safeStorage } from '../utils/safeStorage';
 import { useSubViewBack } from '../utils/useSubViewBack';
+import { showConfirm } from '../utils/uiFeedback';
 
 interface QuickHisabModalProps {
   isOpen: boolean;
@@ -605,10 +606,16 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
   };
 
   // Delete owner
-  const handleDeleteOwner = (id: string | number) => {
+  const handleDeleteOwner = async (id: string | number) => {
     if (!isAdmin) return;
     sounds.playTap();
-    if (confirm(isBn ? 'এই মালিককে তালিকা থেকে মুছে ফেলতে চান?' : 'Delete this owner from the list?')) {
+    const confirmed = await showConfirm({
+      message: isBn ? 'এই মালিককে তালিকা থেকে মুছে ফেলতে চান?' : 'Delete this owner from the list?',
+      confirmLabel: isBn ? 'মুছে ফেলুন' : 'Delete',
+      cancelLabel: isBn ? 'বাতিল' : 'Cancel',
+      danger: true
+    });
+    if (confirmed) {
       const updated = owners.filter(o => o.id !== id);
       saveUpdatedOwners(updated);
       safeDeleteDoc(doc(db, 'quick_hisab_owners', String(id))).catch(() => {});
@@ -657,10 +664,16 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
   };
 
   // Reset to default 13 owners (12 full + 1 half)
-  const handleResetToDefault = () => {
+  const handleResetToDefault = async () => {
     if (!isAdmin) return;
     sounds.playTap();
-    if (confirm(isBn ? 'মালিকানা তালিকা ডিফল্ট ১৩ জনে (১২ পূর্ণ + ১ অর্ধেক) রিসেট করতে চান?' : 'Reset to default 13 owners?')) {
+    const confirmed = await showConfirm({
+      message: isBn ? 'মালিকানা তালিকা ডিফল্ট ১৩ জনে (১২ পূর্ণ + ১ অর্ধেক) রিসেট করতে চান?' : 'Reset to default 13 owners?',
+      confirmLabel: isBn ? 'রিসেট করুন' : 'Reset',
+      cancelLabel: isBn ? 'বাতিল' : 'Cancel',
+      danger: true
+    });
+    if (confirmed) {
       saveUpdatedOwners(initialQuickHisabOwners);
     }
   };

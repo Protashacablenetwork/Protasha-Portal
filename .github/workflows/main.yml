@@ -1,1 +1,37 @@
+name: Build InfinityFree Upload ZIP
 
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build production dist
+        run: npm run build
+
+      - name: Package INFINITYFREE_UPLOAD.zip
+        run: |
+          cd dist
+          zip -r ../INFINITYFREE_UPLOAD.zip . -x "*.DS_Store"
+
+      - name: Upload INFINITYFREE_UPLOAD.zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: INFINITYFREE_UPLOAD
+          path: INFINITYFREE_UPLOAD.zip
+          retention-days: 30

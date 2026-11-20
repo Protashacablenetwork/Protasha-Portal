@@ -36,6 +36,7 @@ import {
 } from '../utils/deviceSession';
 import { syncSubAdminUserToStaffDirectory } from '../utils/staffSync';
 import { useSubViewBack } from '../utils/useSubViewBack';
+import { showConfirm } from '../utils/uiFeedback';
 
 interface UserManagementModalProps {
   isOpen: boolean;
@@ -437,11 +438,14 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
   // Delete User from Server
   const handleDeleteUser = async (id: string, name: string) => {
-    const confirmDelete = window.confirm(
-      isBn 
-        ? `আপনি কি নিশ্চিত যে "${name}" ব্যবহারকারীকে স্থায়ীভাবে মুছে ফেলতে চান?` 
-        : `Are you sure you want to delete user "${name}"?`
-    );
+    const confirmDelete = await showConfirm({
+      message: isBn
+        ? `আপনি কি নিশ্চিত যে "${name}" ব্যবহারকারীকে স্থায়ীভাবে মুছে ফেলতে চান?`
+        : `Are you sure you want to delete user "${name}"?`,
+      confirmLabel: isBn ? 'মুছে ফেলুন' : 'Delete',
+      cancelLabel: isBn ? 'বাতিল' : 'Cancel',
+      danger: true
+    });
     if (!confirmDelete) return;
 
     const targetUser = users.find(u => u.id === id);
@@ -468,11 +472,14 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   };
 
   const handleForceUnlockDevice = async (targetUser: AppUser, deviceLabel: string) => {
-    const confirmed = window.confirm(
-      isBn
+    const confirmed = await showConfirm({
+      message: isBn
         ? `"${targetUser.name}"-এর বর্তমান ডিভাইস (${deviceLabel}) থেকে লগআউট করে ডিভাইস লক আনলক করতে চান?`
-        : `Force logout "${targetUser.name}" from (${deviceLabel}) and unlock device?`
-    );
+        : `Force logout "${targetUser.name}" from (${deviceLabel}) and unlock device?`,
+      confirmLabel: isBn ? 'আনলক করুন' : 'Unlock',
+      cancelLabel: isBn ? 'বাতিল' : 'Cancel',
+      danger: true
+    });
     if (!confirmed) return;
 
     sounds.playTap();

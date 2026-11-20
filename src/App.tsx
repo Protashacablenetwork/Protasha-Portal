@@ -33,7 +33,7 @@ import { ArrowLeft, ExternalLink, Trash2, Zap } from 'lucide-react';
 // Components
 import { Header } from './components/Header';
 import { BalanceCard } from './components/BalanceCard';
-import { PrimaryFeatureCards } from './components/PrimaryFeatureCards';
+import { PrimaryFeatureCards, OperationsHubCards } from './components/PrimaryFeatureCards';
 import { PromoCarousel } from './components/PromoCarousel';
 import { QuickChannels } from './components/QuickChannels';
 import { TransactionList } from './components/TransactionList';
@@ -42,30 +42,73 @@ import { ReceiptModal } from './components/ReceiptModal';
 import { EntryModal } from './components/EntryModal';
 import { NotificationsModal } from './components/NotificationsModal';
 import { NotificationDetailModal } from './components/NotificationDetailModal';
-import { ProfileView } from './components/ProfileView';
 import { LoginView } from './components/LoginView';
 import { BottomNav, TabId } from './components/BottomNav';
-import { RecycleBinModal } from './components/RecycleBinModal';
-import { AuditLogModal } from './components/AuditLogModal';
-import { FooterSettingsModal } from './components/FooterSettingsModal';
-import { ChangePinModal } from './components/ChangePinModal';
-import { ReportModal } from './components/ReportModal';
-import { BannerManagerModal } from './components/BannerManagerModal';
-import { ChannelManagerModal } from './components/ChannelManagerModal';
-import { UserManagementModal } from './components/UserManagementModal';
-import { WeatherModal } from './components/WeatherModal';
-import { PrayerTimesModal } from './components/PrayerTimesModal';
-import { StaffManagerModal } from './components/StaffManagerModal';
 import { ServiceNoticeModal } from './components/ServiceNoticeModal';
-import { ServiceManagerModal } from './components/ServiceManagerModal';
-import { QuickHisabModal } from './components/QuickHisabModal';
-import { DriveBackupModal } from './components/DriveBackupModal';
-import { SupportTicketModal } from './components/SupportTicketModal';
-import { PublicTicketTracker } from './components/PublicTicketTracker';
 import { clearTrackFromCurrentUrl, extractTrackTicketIdFromLocation } from './components/TicketTrackingHelpers';
-import { StaffAttendanceModal } from './components/StaffAttendanceModal';
-import { AyByayPortal } from './portals/ayByay/App';
-import { BillManagerPortal } from './portals/billManager/BillManagerPortal';
+import { showConfirm, showToast } from './utils/uiFeedback';
+
+// On-demand lazy chunks for heavy views, modals, and sub-portals (fast mobile boot)
+const ProfileView = React.lazy(() =>
+  import('./components/ProfileView').then((m) => ({ default: m.ProfileView }))
+);
+const RecycleBinModal = React.lazy(() =>
+  import('./components/RecycleBinModal').then((m) => ({ default: m.RecycleBinModal }))
+);
+const AuditLogModal = React.lazy(() =>
+  import('./components/AuditLogModal').then((m) => ({ default: m.AuditLogModal }))
+);
+const FooterSettingsModal = React.lazy(() =>
+  import('./components/FooterSettingsModal').then((m) => ({ default: m.FooterSettingsModal }))
+);
+const ChangePinModal = React.lazy(() =>
+  import('./components/ChangePinModal').then((m) => ({ default: m.ChangePinModal }))
+);
+const ReportModal = React.lazy(() =>
+  import('./components/ReportModal').then((m) => ({ default: m.ReportModal }))
+);
+const BannerManagerModal = React.lazy(() =>
+  import('./components/BannerManagerModal').then((m) => ({ default: m.BannerManagerModal }))
+);
+const ChannelManagerModal = React.lazy(() =>
+  import('./components/ChannelManagerModal').then((m) => ({ default: m.ChannelManagerModal }))
+);
+const UserManagementModal = React.lazy(() =>
+  import('./components/UserManagementModal').then((m) => ({ default: m.UserManagementModal }))
+);
+const WeatherModal = React.lazy(() =>
+  import('./components/WeatherModal').then((m) => ({ default: m.WeatherModal }))
+);
+const PrayerTimesModal = React.lazy(() =>
+  import('./components/PrayerTimesModal').then((m) => ({ default: m.PrayerTimesModal }))
+);
+const StaffManagerModal = React.lazy(() =>
+  import('./components/StaffManagerModal').then((m) => ({ default: m.StaffManagerModal }))
+);
+const ServiceManagerModal = React.lazy(() =>
+  import('./components/ServiceManagerModal').then((m) => ({ default: m.ServiceManagerModal }))
+);
+const QuickHisabModal = React.lazy(() =>
+  import('./components/QuickHisabModal').then((m) => ({ default: m.QuickHisabModal }))
+);
+const DriveBackupModal = React.lazy(() =>
+  import('./components/DriveBackupModal').then((m) => ({ default: m.DriveBackupModal }))
+);
+const SupportTicketModal = React.lazy(() =>
+  import('./components/SupportTicketModal').then((m) => ({ default: m.SupportTicketModal }))
+);
+const PublicTicketTracker = React.lazy(() =>
+  import('./components/PublicTicketTracker').then((m) => ({ default: m.PublicTicketTracker }))
+);
+const StaffAttendanceModal = React.lazy(() =>
+  import('./components/StaffAttendanceModal').then((m) => ({ default: m.StaffAttendanceModal }))
+);
+const AyByayPortal = React.lazy(() =>
+  import('./portals/ayByay/App').then((m) => ({ default: m.AyByayPortal }))
+);
+const BillManagerPortal = React.lazy(() =>
+  import('./portals/billManager/BillManagerPortal').then((m) => ({ default: m.BillManagerPortal }))
+);
 import { fetchLiveWeather, WeatherData, detectPreciseLocation, DistrictInfo, getUserPreferredDistrict, ALL_BANGLADESH_DISTRICTS, DEFAULT_HEADQUARTERS_DISTRICT } from './utils/weatherService';
 import { checkAndGenerateWeatherNotifications } from './utils/weatherNotificationService';
 import {
@@ -2617,9 +2660,18 @@ export default function App() {
     logAction('Restored Transaction', 'লেনদেন পুনরুদ্ধার', `ID: ${id}`);
   };
 
-  const handlePermanentDelete = (id: string) => {
+  const handlePermanentDelete = async (id: string) => {
     sounds.playTap();
-    if (confirm(lang === 'bn' ? 'স্থায়ীভাবে মুছে ফেলতে চান?' : 'Delete permanently?')) {
+    const ok = await showConfirm(
+      lang === 'bn' ? 'এই লেনদেনটি স্থায়ীভাবে মুছে ফেলতে চান?' : 'Delete permanently?',
+      {
+        title: lang === 'bn' ? 'স্থায়ীভাবে মুছুন' : 'Permanent Delete',
+        confirmLabel: lang === 'bn' ? 'মুছে ফেলুন' : 'Delete',
+        cancelLabel: lang === 'bn' ? 'বাতিল' : 'Cancel',
+        destructive: true
+      }
+    );
+    if (ok) {
       const updatedTransactions = transactions.filter(t => t.id !== id);
       setTransactions(updatedTransactions);
       try {
@@ -3006,11 +3058,20 @@ export default function App() {
 
   if (publicTrackTicketId) {
     return (
-      <PublicTicketTracker
-        ticketId={publicTrackTicketId}
-        lang={lang}
-        onExitToApp={handleExitPublicTracker}
-      />
+      <React.Suspense
+        fallback={
+          <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center gap-3 p-6">
+            <div className="w-10 h-10 rounded-full border-4 border-rose-500/25 border-t-[#E52E2E] animate-spin" />
+            <p className="text-sm font-bold text-slate-600 dark:text-slate-300">ট্র্যাকিং তথ্য লোড হচ্ছে...</p>
+          </div>
+        }
+      >
+        <PublicTicketTracker
+          ticketId={publicTrackTicketId}
+          lang={lang}
+          onExitToApp={handleExitPublicTracker}
+        />
+      </React.Suspense>
     );
   }
 
@@ -3107,35 +3168,6 @@ export default function App() {
                     setIsQuickHisabOpen(true);
                     pushHistoryStep();
                   }}
-                  openTicketsCount={
-                    supportTickets.filter((t) => {
-                      if (t.status === 'resolved') return false;
-                      if (isStaffOrAdminUser(user, staffAccounts)) return true;
-                      return isSupportTicketOwner(t, user);
-                    }).length
-                  }
-                  todayPresentCount={(() => {
-                    const d = new Date();
-                    const todayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                    return attendanceRecords.filter(
-                      (r) =>
-                        r.date === todayKey &&
-                        (r.status === 'present' || r.status === 'late' || r.status === 'half_day')
-                    ).length;
-                  })()}
-                  totalStaffCount={staffAccounts.filter((s) => s.isActive !== false).length}
-                  onOpenSupportTickets={() => {
-                    if (!checkServiceAccess('supportTickets', 'সাপোর্ট টিকেট ও কমপ্লেইন')) return;
-                    sounds.playTap();
-                    setIsSupportTicketsOpen(true);
-                    pushHistoryStep();
-                  }}
-                  onOpenStaffAttendance={() => {
-                    if (!checkServiceAccess('staffAttendance', 'স্টাফ হাজিরা ও ছুটি')) return;
-                    sounds.playTap();
-                    setIsStaffAttendanceOpen(true);
-                    pushHistoryStep();
-                  }}
                 />
 
                 {/* Main Page Promotional Ads Carousel (Admin Controllable 5-7 ads) */}
@@ -3206,6 +3238,41 @@ export default function App() {
                     }
                   }}
                   onSaveBanners={handleSaveBanners}
+                />
+
+                {/* Operations Hub Strip: সাপোর্ট টিকেট ও স্টাফ হাজিরা (মেইন পেইজ বিজ্ঞাপনের নিচে) */}
+                <OperationsHubCards
+                  lang={lang}
+                  serviceStatuses={serviceStatuses}
+                  openTicketsCount={
+                    supportTickets.filter((t) => {
+                      if (t.status === 'resolved') return false;
+                      if (isStaffOrAdminUser(user, staffAccounts)) return true;
+                      return isSupportTicketOwner(t, user);
+                    }).length
+                  }
+                  todayPresentCount={(() => {
+                    const d = new Date();
+                    const todayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                    return attendanceRecords.filter(
+                      (r) =>
+                        r.date === todayKey &&
+                        (r.status === 'present' || r.status === 'late' || r.status === 'half_day')
+                    ).length;
+                  })()}
+                  totalStaffCount={staffAccounts.filter((s) => s.isActive !== false).length}
+                  onOpenSupportTickets={() => {
+                    if (!checkServiceAccess('supportTickets', 'সাপোর্ট টিকেট ও কমপ্লেইন')) return;
+                    sounds.playTap();
+                    setIsSupportTicketsOpen(true);
+                    pushHistoryStep();
+                  }}
+                  onOpenStaffAttendance={() => {
+                    if (!checkServiceAccess('staffAttendance', 'স্টাফ হাজিরা ও ছুটি')) return;
+                    sounds.playTap();
+                    setIsStaffAttendanceOpen(true);
+                    pushHistoryStep();
+                  }}
                 />
 
                 {/* Payment Channels & Control Panel (বিকাশ, নগদ, ব্যাংক, রকেট, ক্যাশ + স্টাফ কালেকশন / কোম্পানি পাওনা) */}
@@ -3317,38 +3384,55 @@ export default function App() {
 
             {activeTab === 'ledger' && (
               <div className="flex-1 w-full pb-20">
-                <ReportModal
-                  isOpen={true}
-                  transactions={transactions}
-                  channels={channels}
-                  lang={lang}
-                  user={user}
-                  isTabMode={true}
-                  currentMonthIndex={currentMonthIndex}
-                  currentYear={currentYear}
-                  onPrevMonth={() => {
-                    if (currentMonthIndex === 0) {
-                      setCurrentMonthIndex(11);
-                      setCurrentYear((y) => y - 1);
-                    } else {
-                      setCurrentMonthIndex((m) => m - 1);
-                    }
-                  }}
-                  onNextMonth={() => {
-                    if (currentMonthIndex === 11) {
-                      setCurrentMonthIndex(0);
-                      setCurrentYear((y) => y + 1);
-                    } else {
-                      setCurrentMonthIndex((m) => m + 1);
-                    }
-                  }}
-                  onClose={() => setActiveTab('home')}
-                />
+                <React.Suspense
+                  fallback={
+                    <div className="py-20 flex flex-col items-center justify-center gap-2 text-slate-500">
+                      <div className="w-8 h-8 rounded-full border-3 border-rose-500/25 border-t-[#E52E2E] animate-spin" />
+                      <span className="text-xs font-bold">{lang === 'bn' ? 'হিসাব খাতা লোড হচ্ছে...' : 'Loading ledger...'}</span>
+                    </div>
+                  }
+                >
+                  <ReportModal
+                    isOpen={true}
+                    transactions={transactions}
+                    channels={channels}
+                    lang={lang}
+                    user={user}
+                    isTabMode={true}
+                    currentMonthIndex={currentMonthIndex}
+                    currentYear={currentYear}
+                    onPrevMonth={() => {
+                      if (currentMonthIndex === 0) {
+                        setCurrentMonthIndex(11);
+                        setCurrentYear((y) => y - 1);
+                      } else {
+                        setCurrentMonthIndex((m) => m - 1);
+                      }
+                    }}
+                    onNextMonth={() => {
+                      if (currentMonthIndex === 11) {
+                        setCurrentMonthIndex(0);
+                        setCurrentYear((y) => y + 1);
+                      } else {
+                        setCurrentMonthIndex((m) => m + 1);
+                      }
+                    }}
+                    onClose={() => setActiveTab('home')}
+                  />
+                </React.Suspense>
               </div>
             )}
 
             {activeTab === 'profile' && (
               <div className="flex-1 w-full pb-20">
+                <React.Suspense
+                  fallback={
+                    <div className="py-20 flex flex-col items-center justify-center gap-2 text-slate-500">
+                      <div className="w-8 h-8 rounded-full border-3 border-rose-500/25 border-t-[#E52E2E] animate-spin" />
+                      <span className="text-xs font-bold">{lang === 'bn' ? 'মেনু লোড হচ্ছে...' : 'Loading menu...'}</span>
+                    </div>
+                  }
+                >
                 <ProfileView
                   user={user}
                   lang={lang}
@@ -3398,7 +3482,7 @@ export default function App() {
                       setIsBannerManagerOpen(true);
                       pushHistoryStep();
                     } else {
-                      alert(lang === 'bn' ? 'বিজ্ঞাপন নিয়ন্ত্রণ শুধুমাত্র অ্যাডমিনের জন্য' : 'Admin only access');
+                      showToast(lang === 'bn' ? 'বিজ্ঞাপন নিয়ন্ত্রণ শুধুমাত্র অ্যাডমিনের জন্য' : 'Admin only access', 'warning');
                       openLoginView();
                     }
                   }}
@@ -3429,6 +3513,7 @@ export default function App() {
                   onLogout={handleLogout}
                   onClose={() => closeOverlayViaBack(() => setActiveTab('home'))}
                 />
+                </React.Suspense>
               </div>
             )}
 
@@ -3452,8 +3537,9 @@ export default function App() {
 
         {/* ================= MODALS & EDITORS ================= */}
 
+        <React.Suspense fallback={null}>
         {/* Admin User Management Modal */}
-        {user?.role === 'admin' && (
+        {user?.role === 'admin' && isUserManagementOpen && (
           <UserManagementModal
             isOpen={isUserManagementOpen}
             lang={lang}
@@ -3491,21 +3577,23 @@ export default function App() {
         )}
 
         {/* Centralized Master Google Drive Backup & Restore Modal */}
-        <DriveBackupModal
-          isOpen={isDriveBackupOpen}
-          onClose={() => closeOverlayViaBack(() => setIsDriveBackupOpen(false))}
-          onSubViewChange={(isSubView) => {
-            isDriveBackupSubViewActiveRef.current = isSubView;
-          }}
-          lang={lang}
-          currentUser={user}
-          adminAvatar={adminAvatar}
-          onLogAction={logAction}
-          onDataRestored={refreshAllData}
-        />
+        {isDriveBackupOpen && (
+          <DriveBackupModal
+            isOpen={isDriveBackupOpen}
+            onClose={() => closeOverlayViaBack(() => setIsDriveBackupOpen(false))}
+            onSubViewChange={(isSubView) => {
+              isDriveBackupSubViewActiveRef.current = isSubView;
+            }}
+            lang={lang}
+            currentUser={user}
+            adminAvatar={adminAvatar}
+            onLogAction={logAction}
+            onDataRestored={refreshAllData}
+          />
+        )}
 
         {/* Admin Banner & Ads Manager Modal */}
-        {user?.role === 'admin' && (
+        {user?.role === 'admin' && isBannerManagerOpen && (
           <BannerManagerModal
             isOpen={isBannerManagerOpen}
             banners={banners}
@@ -3520,7 +3608,7 @@ export default function App() {
         )}
 
         {/* Admin Channel Manager Modal */}
-        {user?.role === 'admin' && (
+        {user?.role === 'admin' && isChannelManagerOpen && (
           <ChannelManagerModal
             isOpen={isChannelManagerOpen}
             channels={channels}
@@ -3575,7 +3663,7 @@ export default function App() {
         )}
 
         {/* Service Manager Modal */}
-        {user?.role === 'admin' && (
+        {user?.role === 'admin' && isServiceManagerOpen && (
           <ServiceManagerModal
             isOpen={isServiceManagerOpen}
             serviceStatuses={serviceStatuses}
@@ -3606,58 +3694,64 @@ export default function App() {
         )}
 
         {/* Staff Collection & Company Dues Modal */}
-        <StaffManagerModal
-          isOpen={isStaffManagerOpen}
-          staffAccounts={staffAccounts}
-          lang={lang}
-          user={user}
-          onClose={() => closeOverlayViaBack(() => setIsStaffManagerOpen(false))}
-          onSubViewChange={(isSubView) => {
-            isStaffManagerSubViewActiveRef.current = isSubView;
-          }}
-          onSaveStaffAccounts={handleSaveStaffAccounts}
-          onDeleteStaffAccount={handleDeleteStaffAccount}
-          onDeleteStaffTransaction={handleDeleteStaffTransaction}
-          onLogAction={logAction}
-        />
+        {isStaffManagerOpen && (
+          <StaffManagerModal
+            isOpen={isStaffManagerOpen}
+            staffAccounts={staffAccounts}
+            lang={lang}
+            user={user}
+            onClose={() => closeOverlayViaBack(() => setIsStaffManagerOpen(false))}
+            onSubViewChange={(isSubView) => {
+              isStaffManagerSubViewActiveRef.current = isSubView;
+            }}
+            onSaveStaffAccounts={handleSaveStaffAccounts}
+            onDeleteStaffAccount={handleDeleteStaffAccount}
+            onDeleteStaffTransaction={handleDeleteStaffTransaction}
+            onLogAction={logAction}
+          />
+        )}
 
         {/* Real-Time Customer Support Ticket & Complaint Tracker Modal */}
-        <SupportTicketModal
-          isOpen={isSupportTicketsOpen}
-          tickets={supportTickets}
-          staffAccounts={staffAccounts}
-          lang={lang}
-          user={user}
-          onClose={() => closeOverlayViaBack(() => setIsSupportTicketsOpen(false))}
-          onSubViewChange={(isSubView) => {
-            isSupportSubViewActiveRef.current = isSubView;
-          }}
-          onSaveTicket={handleSaveSupportTicket}
-          onDeleteTicket={handleDeleteSupportTicket}
-          onLogAction={logAction}
-          onPreviewPublicLink={(ticketId) => {
-            isPublicPreviewOverlayRef.current = true;
-            setPublicTrackTicketId(ticketId);
-            pushHistoryStep();
-          }}
-        />
+        {isSupportTicketsOpen && (
+          <SupportTicketModal
+            isOpen={isSupportTicketsOpen}
+            tickets={supportTickets}
+            staffAccounts={staffAccounts}
+            lang={lang}
+            user={user}
+            onClose={() => closeOverlayViaBack(() => setIsSupportTicketsOpen(false))}
+            onSubViewChange={(isSubView) => {
+              isSupportSubViewActiveRef.current = isSubView;
+            }}
+            onSaveTicket={handleSaveSupportTicket}
+            onDeleteTicket={handleDeleteSupportTicket}
+            onLogAction={logAction}
+            onPreviewPublicLink={(ticketId) => {
+              isPublicPreviewOverlayRef.current = true;
+              setPublicTrackTicketId(ticketId);
+              pushHistoryStep();
+            }}
+          />
+        )}
 
         {/* Staff Attendance & Leave Management Modal */}
-        <StaffAttendanceModal
-          isOpen={isStaffAttendanceOpen}
-          staffAccounts={staffAccounts}
-          attendanceRecords={attendanceRecords}
-          lang={lang}
-          user={user}
-          onClose={() => closeOverlayViaBack(() => setIsStaffAttendanceOpen(false))}
-          onSubViewChange={(isSubView) => {
-            isAttendanceSubViewActiveRef.current = isSubView;
-          }}
-          onSaveAttendance={handleSaveAttendance}
-          onSaveBulkAttendance={handleSaveBulkAttendance}
-          onDeleteAttendance={handleDeleteAttendance}
-          onLogAction={logAction}
-        />
+        {isStaffAttendanceOpen && (
+          <StaffAttendanceModal
+            isOpen={isStaffAttendanceOpen}
+            staffAccounts={staffAccounts}
+            attendanceRecords={attendanceRecords}
+            lang={lang}
+            user={user}
+            onClose={() => closeOverlayViaBack(() => setIsStaffAttendanceOpen(false))}
+            onSubViewChange={(isSubView) => {
+              isAttendanceSubViewActiveRef.current = isSubView;
+            }}
+            onSaveAttendance={handleSaveAttendance}
+            onSaveBulkAttendance={handleSaveBulkAttendance}
+            onDeleteAttendance={handleDeleteAttendance}
+            onLogAction={logAction}
+          />
+        )}
 
         {/* Printable Thermal Receipt Modal */}
         <ReceiptModal
@@ -3816,139 +3910,154 @@ export default function App() {
         )}
 
         {/* Recycle Bin Modal */}
-        <RecycleBinModal
-          isOpen={isRecycleBinOpen}
-          transactions={transactions}
-          lang={lang}
-          onClose={() => closeOverlayViaBack(() => setIsRecycleBinOpen(false))}
-          onRestore={handleRestore}
-          onPermanentDelete={handlePermanentDelete}
-          onEmptyTrash={handleEmptyTrash}
-        />
+        {isRecycleBinOpen && (
+          <RecycleBinModal
+            isOpen={isRecycleBinOpen}
+            transactions={transactions}
+            lang={lang}
+            onClose={() => closeOverlayViaBack(() => setIsRecycleBinOpen(false))}
+            onRestore={handleRestore}
+            onPermanentDelete={handlePermanentDelete}
+            onEmptyTrash={handleEmptyTrash}
+          />
+        )}
 
         {/* Audit Log Modal */}
-        <AuditLogModal
-          isOpen={isAuditLogOpen}
-          logs={auditLogs}
-          lang={lang}
-          onClose={() => closeOverlayViaBack(() => setIsAuditLogOpen(false))}
-        />
+        {isAuditLogOpen && (
+          <AuditLogModal
+            isOpen={isAuditLogOpen}
+            logs={auditLogs}
+            lang={lang}
+            onClose={() => closeOverlayViaBack(() => setIsAuditLogOpen(false))}
+          />
+        )}
 
         {/* Footer Settings Modal */}
-        <FooterSettingsModal
-          isOpen={isFooterSettingsOpen}
-          config={footerConfig}
-          banners={banners}
-          lang={lang}
-          onClose={() => closeOverlayViaBack(() => setIsFooterSettingsOpen(false))}
-          onSave={(newCfg) => {
-            setFooterConfig(newCfg);
-            safeStorage.setItem('protyasha_footer', JSON.stringify(newCfg));
-            safeSetDoc(doc(db, 'settings', 'footer_config'), {
-              config: newCfg,
-              updatedAt: new Date().toISOString()
-            }).catch(() => {});
-          }}
-          onSaveBanners={(newBanners) => {
-            handleSaveBanners(newBanners);
-          }}
-        />
+        {isFooterSettingsOpen && (
+          <FooterSettingsModal
+            isOpen={isFooterSettingsOpen}
+            config={footerConfig}
+            banners={banners}
+            lang={lang}
+            onClose={() => closeOverlayViaBack(() => setIsFooterSettingsOpen(false))}
+            onSave={(newCfg) => {
+              setFooterConfig(newCfg);
+              safeStorage.setItem('protyasha_footer', JSON.stringify(newCfg));
+              safeSetDoc(doc(db, 'settings', 'footer_config'), {
+                config: newCfg,
+                updatedAt: new Date().toISOString()
+              }).catch(() => {});
+            }}
+            onSaveBanners={(newBanners) => {
+              handleSaveBanners(newBanners);
+            }}
+          />
+        )}
 
         {/* Change PIN Modal */}
-        <ChangePinModal
-          isOpen={isChangePinOpen}
-          lang={lang}
-          onClose={() => closeOverlayViaBack(() => setIsChangePinOpen(false))}
-          onPinChanged={(newPin) => {
-            safeStorage.setItem('protyasha_admin_pin', newPin);
-            safeSetDoc(doc(db, 'settings', 'admin_security'), {
-              pin: newPin,
-              updatedAt: new Date().toISOString()
-            }).catch(() => {});
-            logAction('Changed PIN', 'পিন পরিবর্তন', 'Security PIN successfully updated');
-          }}
-        />
+        {isChangePinOpen && (
+          <ChangePinModal
+            isOpen={isChangePinOpen}
+            lang={lang}
+            onClose={() => closeOverlayViaBack(() => setIsChangePinOpen(false))}
+            onPinChanged={(newPin) => {
+              safeStorage.setItem('protyasha_admin_pin', newPin);
+              safeSetDoc(doc(db, 'settings', 'admin_security'), {
+                pin: newPin,
+                updatedAt: new Date().toISOString()
+              }).catch(() => {});
+              logAction('Changed PIN', 'পিন পরিবর্তন', 'Security PIN successfully updated');
+            }}
+          />
+        )}
 
         {/* 7-Day Weather Forecast Modal with auto-location and animated conditions */}
-        <WeatherModal
-          isOpen={isWeatherOpen}
-          lang={lang}
-          isAdmin={user?.role === 'admin'}
-          onClose={() => closeOverlayViaBack(() => setIsWeatherOpen(false))}
-          onSubViewChange={(isSubView) => {
-            isWeatherSubViewActiveRef.current = isSubView;
-          }}
-          onSendWeatherNotification={(notif) => {
-            handleSendNotification(notif);
-          }}
-          onLocationChanged={() => {
-            const preferred = getUserPreferredDistrict();
-            if (preferred) {
-              setCurrentDistrict(preferred);
-              fetchLiveWeather(true).then(w => {
-                if (w) setWeatherData(w);
-              });
-            } else {
-              detectPreciseLocation().then(({ district }) => {
-                if (district) setCurrentDistrict(district);
+        {isWeatherOpen && (
+          <WeatherModal
+            isOpen={isWeatherOpen}
+            lang={lang}
+            isAdmin={user?.role === 'admin'}
+            onClose={() => closeOverlayViaBack(() => setIsWeatherOpen(false))}
+            onSubViewChange={(isSubView) => {
+              isWeatherSubViewActiveRef.current = isSubView;
+            }}
+            onSendWeatherNotification={(notif) => {
+              handleSendNotification(notif);
+            }}
+            onLocationChanged={() => {
+              const preferred = getUserPreferredDistrict();
+              if (preferred) {
+                setCurrentDistrict(preferred);
                 fetchLiveWeather(true).then(w => {
                   if (w) setWeatherData(w);
                 });
-              });
-            }
-          }}
-        />
+              } else {
+                detectPreciseLocation().then(({ district }) => {
+                  if (district) setCurrentDistrict(district);
+                  fetchLiveWeather(true).then(w => {
+                    if (w) setWeatherData(w);
+                  });
+                });
+              }
+            }}
+          />
+        )}
 
         {/* Location-based Prayer Times, Sehri/Iftar & Sunrise/Sunset Modal */}
-        <PrayerTimesModal
-          isOpen={isPrayerTimesOpen}
-          lang={lang}
-          isAdmin={user?.role === 'admin'}
-          initialViewMode={prayerInitialView}
-          onClose={() =>
-            closeOverlayViaBack(() => {
-              setIsPrayerTimesOpen(false);
-              setPrayerInitialView('daily');
-            })
-          }
-          onSendNotification={(notif) => {
-            handleSendNotification(notif);
-          }}
-          onPushLocalNotification={handlePushLocalNotification}
-          onLocationChanged={() => {
-            const preferred = getUserPreferredDistrict();
-            if (preferred) {
-              setCurrentDistrict(preferred);
-              fetchLiveWeather(true).then(w => {
-                if (w) setWeatherData(w);
-              });
-            } else {
-              detectPreciseLocation().then(({ district }) => {
-                if (district) setCurrentDistrict(district);
+        {isPrayerTimesOpen && (
+          <PrayerTimesModal
+            isOpen={isPrayerTimesOpen}
+            lang={lang}
+            isAdmin={user?.role === 'admin'}
+            initialViewMode={prayerInitialView}
+            onClose={() =>
+              closeOverlayViaBack(() => {
+                setIsPrayerTimesOpen(false);
+                setPrayerInitialView('daily');
+              })
+            }
+            onSendNotification={(notif) => {
+              handleSendNotification(notif);
+            }}
+            onPushLocalNotification={handlePushLocalNotification}
+            onLocationChanged={() => {
+              const preferred = getUserPreferredDistrict();
+              if (preferred) {
+                setCurrentDistrict(preferred);
                 fetchLiveWeather(true).then(w => {
                   if (w) setWeatherData(w);
                 });
-              });
-            }
-          }}
-          onSubViewActiveChange={(isSubView) => {
-            isPrayerSubViewActiveRef.current = isSubView;
-          }}
-        />
+              } else {
+                detectPreciseLocation().then(({ district }) => {
+                  if (district) setCurrentDistrict(district);
+                  fetchLiveWeather(true).then(w => {
+                    if (w) setWeatherData(w);
+                  });
+                });
+              }
+            }}
+            onSubViewActiveChange={(isSubView) => {
+              isPrayerSubViewActiveRef.current = isSubView;
+            }}
+          />
+        )}
 
         {/* Quick Hisab Dashboard Modal */}
-        <QuickHisabModal
-          isOpen={isQuickHisabOpen}
-          lang={lang}
-          user={user}
-          staffAccounts={staffAccounts}
-          quickHisabOwners={quickHisabOwners}
-          onSaveOwners={handleSaveQuickHisabOwners}
-          onClose={() => closeOverlayViaBack(() => setIsQuickHisabOpen(false))}
-          onSubViewChange={(isSubView) => {
-            isQuickHisabSubViewActiveRef.current = isSubView;
-          }}
-        />
+        {isQuickHisabOpen && (
+          <QuickHisabModal
+            isOpen={isQuickHisabOpen}
+            lang={lang}
+            user={user}
+            staffAccounts={staffAccounts}
+            quickHisabOwners={quickHisabOwners}
+            onSaveOwners={handleSaveQuickHisabOwners}
+            onClose={() => closeOverlayViaBack(() => setIsQuickHisabOpen(false))}
+            onSubViewChange={(isSubView) => {
+              isQuickHisabSubViewActiveRef.current = isSubView;
+            }}
+          />
+        )}
+        </React.Suspense>
 
         {/* Ay-Byay Launching Animation Overlay with Branded Logo */}
         {isLaunchingAyByay && (
@@ -4021,23 +4130,32 @@ export default function App() {
         {/* Full-screen in-app portal viewer for Bill Management Pro / Income-Expense accounts */}
         {activePortal && (
           <div className="fixed inset-0 z-[60] bg-[#f0f4fa] dark:bg-slate-950 overflow-y-auto select-none animate-in fade-in duration-150">
-            {activePortal === 'ay-byay' ? (
-              <AyByayPortal 
-                onExit={() => closeOverlayViaBack(() => setActivePortal(null))}
-                staffAccounts={staffAccounts}
-                onSaveStaffAccounts={handleSaveStaffAccounts}
-                quickHisabOwners={quickHisabOwners}
-                onOpenDriveBackup={() => {
-                  setIsDriveBackupOpen(true);
-                  pushHistoryStep();
-                }}
-                currentUser={user}
-                onAdminLogin={handleAyByayAdminLogin}
-                onAdminLogout={handleAyByayAdminLogout}
-              />
-            ) : (
-              <BillManagerPortal onExit={() => closeOverlayViaBack(() => setActivePortal(null))} />
-            )}
+            <React.Suspense
+              fallback={
+                <div className="min-h-screen flex flex-col items-center justify-center gap-3 p-6 text-slate-600 dark:text-slate-300">
+                  <div className="w-10 h-10 rounded-full border-4 border-rose-500/30 border-t-rose-600 animate-spin" />
+                  <p className="text-sm font-bold">পোর্টাল লোড হচ্ছে...</p>
+                </div>
+              }
+            >
+              {activePortal === 'ay-byay' ? (
+                <AyByayPortal
+                  onExit={() => closeOverlayViaBack(() => setActivePortal(null))}
+                  staffAccounts={staffAccounts}
+                  onSaveStaffAccounts={handleSaveStaffAccounts}
+                  quickHisabOwners={quickHisabOwners}
+                  onOpenDriveBackup={() => {
+                    setIsDriveBackupOpen(true);
+                    pushHistoryStep();
+                  }}
+                  currentUser={user}
+                  onAdminLogin={handleAyByayAdminLogin}
+                  onAdminLogout={handleAyByayAdminLogout}
+                />
+              ) : (
+                <BillManagerPortal onExit={() => closeOverlayViaBack(() => setActivePortal(null))} />
+              )}
+            </React.Suspense>
           </div>
         )}
         {/* Custom Delete Confirmation Modal */}

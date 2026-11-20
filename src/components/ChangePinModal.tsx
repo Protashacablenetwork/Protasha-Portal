@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Lock, KeyRound } from 'lucide-react';
 import { Language } from '../types';
 import { sounds } from '../utils/audio';
+import { showToast } from '../utils/uiFeedback';
 
 interface ChangePinModalProps {
   isOpen: boolean;
@@ -36,7 +37,7 @@ export const ChangePinModal: React.FC<ChangePinModalProps> = ({
 
     sounds.playSuccess();
     onPinChanged(newPin);
-    alert(lang === 'bn' ? 'পিন সফলভাবে পরিবর্তিত হয়েছে!' : 'PIN changed successfully!');
+    showToast(lang === 'bn' ? 'পিন সফলভাবে পরিবর্তিত হয়েছে!' : 'PIN changed successfully!', 'success');
     onClose();
   };
 

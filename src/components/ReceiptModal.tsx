@@ -3,6 +3,7 @@ import { X, Printer, Download, CheckCircle2 } from 'lucide-react';
 import { Language, Transaction } from '../types';
 import { formatCurrency, formatTransactionDate, toBengaliNumber } from '../utils/formatters';
 import { sounds } from '../utils/audio';
+import { showToast } from '../utils/uiFeedback';
 
 interface ReceiptModalProps {
   transaction: Transaction | null;
@@ -42,7 +43,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ transaction, lang, o
 ধন্যবাদ আমাদের সাথে থাকার জন্য!
 `;
     navigator.clipboard?.writeText(memo);
-    alert(lang === 'bn' ? 'সম্পূর্ণ মেমো ক্লিপবোর্ডে কপি করা হয়েছে!' : 'Full receipt memo copied to clipboard!');
+    showToast(lang === 'bn' ? 'সম্পূর্ণ মেমো ক্লিপবোর্ডে কপি করা হয়েছে!' : 'Full receipt memo copied to clipboard!', 'success');
   };
 
   return (

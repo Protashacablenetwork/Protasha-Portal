@@ -3,32 +3,23 @@ import react from '@vitejs/plugin-react';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import {defineConfig} from 'vite';
+import { defineConfig } from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-function mirrorBuildToDist() {
+function mirrorDistToHtdocs() {
   return {
-    name: 'mirror-build-to-dist',
-    buildStart() {
-      const assetsDir = path.resolve(__dirname, 'HTDOCS_UPLOAD', 'assets');
-      try {
-        if (fs.existsSync(assetsDir)) {
-          fs.rmSync(assetsDir, { recursive: true, force: true });
-        }
-      } catch (err) {
-        console.warn('[Build] Could not clean stale HTDOCS_UPLOAD/assets:', err);
-      }
-    },
+    name: 'mirror-dist-to-htdocs',
+    apply: 'build' as const,
     closeBundle() {
-      const outDir = path.resolve(__dirname, 'HTDOCS_UPLOAD');
       const distDir = path.resolve(__dirname, 'dist');
-      if (!fs.existsSync(path.join(outDir, 'index.html'))) return;
+      const htdocsDir = path.resolve(__dirname, 'HTDOCS_UPLOAD');
+      if (!fs.existsSync(path.join(distDir, 'index.html'))) return;
       try {
-        fs.rmSync(distDir, { recursive: true, force: true });
-        fs.cpSync(outDir, distDir, { recursive: true });
+        fs.rmSync(htdocsDir, { recursive: true, force: true });
+        fs.cpSync(distDir, htdocsDir, { recursive: true });
       } catch (err) {
-        console.warn('[Build] Could not mirror HTDOCS_UPLOAD to dist:', err);
+        console.warn('[Build] Could not mirror dist to HTDOCS_UPLOAD:', err);
       }
     },
   };
@@ -38,10 +29,46 @@ export default defineConfig(() => {
   return {
     base: './',
     build: {
-      outDir: 'HTDOCS_UPLOAD',
+      outDir: 'dist',
       emptyOutDir: true,
+      target: ['es2020', 'chrome87', 'firefox78', 'safari14'],
+      chunkSizeWarningLimit: 900,
+      rollupOptions: {
+        output: {
+          entryFileNames: 'assets/app.js',
+          chunkFileNames: 'assets/chunk-[name].js',
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return undefined;
+            if (id.includes('/firebase/') || id.includes('/@firebase/')) return 'vendor-firebase';
+            if (id.includes('/lucide-react/')) return 'vendor-icons';
+            if (id.includes('/react-dom/') || id.includes('/react/') || id.includes('/scheduler/')) return 'vendor-react';
+            return undefined;
+          },
+          assetFileNames: (assetInfo) => {
+            const names = assetInfo.names || (assetInfo.name ? [assetInfo.name] : []);
+            if (names.some((n) => n.endsWith('.css'))) {
+              return 'assets/app.css';
+            }
+            return 'assets/[name][extname]';
+          },
+        },
+      },
     },
-    plugins: [react(), tailwindcss(), mirrorBuildToDist()],
+    optimizeDeps: {
+      include: [
+        'react',
+        'react-dom',
+        'react-dom/client',
+        'lucide-react',
+        'firebase/app',
+        'firebase/firestore',
+        'firebase/auth',
+        'recharts',
+        'motion/react',
+        'canvas-confetti',
+      ],
+    },
+    plugins: [react(), tailwindcss(), mirrorDistToHtdocs()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

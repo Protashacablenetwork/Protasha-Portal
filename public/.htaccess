@@ -1,6 +1,14 @@
+<IfModule mod_mime.c>
+  AddType application/javascript .js .mjs
+  AddType text/css .css
+  AddType application/json .json
+</IfModule>
+
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteRule ^index\.html$ - [L]
+  RewriteCond %{REQUEST_URI} ^/assets/ [NC]
+  RewriteRule ^ - [L]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
   RewriteRule ^ index.html [L,QSA]
@@ -10,5 +18,8 @@
   <FilesMatch "^(index\.html|version\.json)$">
     Header set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
     Header set Pragma "no-cache"
+  </FilesMatch>
+  <FilesMatch "\.(js|mjs|css)$">
+    Header set Cache-Control "no-cache, must-revalidate, max-age=0"
   </FilesMatch>
 </IfModule>

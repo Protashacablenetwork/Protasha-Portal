@@ -27,6 +27,7 @@ import {
   CheckCircle2,
   Download
 } from 'lucide-react';
+import { showToast } from '../../../utils/uiFeedback';
 
 interface TransactionFormProps {
   onAddTransaction: (data: {
@@ -290,7 +291,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
 
     const numAmount = parseNumber(amount);
     if (numAmount <= 0) {
-      alert('❌ সঠিক টাকার পরিমাণ দিন (যেমন: ১৩১৩ বা 1313)');
+      showToast('সঠিক টাকার পরিমাণ দিন (যেমন: ১৩১৩ বা 1313)', 'warning');
       return;
     }
 
@@ -298,7 +299,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     let finalCategory = category;
     if (isOtherCategory) {
       if (!customCategory.trim()) {
-        alert(type === 'income' ? '❌ অনুগ্রহ করে অন্যান্য আয়ের খাতের নাম লিখুন' : '❌ অনুগ্রহ করে অন্যান্য খরচের খাতের নাম লিখুন');
+        showToast(type === 'income' ? 'অনুগ্রহ করে অন্যান্য আয়ের খাতের নাম লিখুন' : 'অনুগ্রহ করে অন্যান্য খরচের খাতের নাম লিখুন', 'warning');
         return;
       }
       finalCategory = customCategory.trim();

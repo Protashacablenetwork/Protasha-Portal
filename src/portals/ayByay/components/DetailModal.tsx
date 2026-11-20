@@ -8,6 +8,7 @@ import {
   formatCurrency 
 } from '../data/categories';
 import { X, Trash2, Edit3, Check, CloudCheck, Calendar, Tag, CreditCard, ArrowLeft } from 'lucide-react';
+import { showToast } from '../../../utils/uiFeedback';
 
 interface DetailModalProps {
   transaction: Transaction | null;
@@ -70,12 +71,12 @@ export const DetailModal: React.FC<DetailModalProps> = ({
 
   const handleSaveEdit = async () => {
     if (!description.trim()) {
-      alert('বিবরণ লিখুন');
+      showToast('বিবরণ লিখুন', 'warning');
       return;
     }
     const numAmount = parseFloat(amount);
     if (isNaN(numAmount) || numAmount <= 0) {
-      alert('সঠিক পরিমাণ দিন (০ এর বেশি)');
+      showToast('সঠিক পরিমাণ দিন (০ এর বেশি)', 'warning');
       return;
     }
 

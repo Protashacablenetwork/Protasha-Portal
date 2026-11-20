@@ -12,6 +12,7 @@ import {
   translations 
 } from '../utils/formatters';
 import { sounds } from '../utils/audio';
+import { showToast } from '../utils/uiFeedback';
 
 interface EntryModalProps {
   isOpen: boolean;
@@ -96,12 +97,12 @@ export const EntryModal: React.FC<EntryModalProps> = ({
     e.preventDefault();
     const cleanNum = parseFloat(toEnglishNumber(amountStr).replace(/,/g, ''));
     if (isNaN(cleanNum) || cleanNum <= 0) {
-      alert(lang === 'bn' ? 'দয়া করে সঠিক টাকার পরিমাণ দিন' : 'Please enter a valid amount');
+      showToast(lang === 'bn' ? 'দয়া করে সঠিক টাকার পরিমাণ দিন' : 'Please enter a valid amount', 'warning');
       return;
     }
 
     if (!person.trim()) {
-      alert(lang === 'bn' ? 'দয়া করে গ্রাহক বা ব্যক্তির নাম লিখুন' : 'Please enter customer or person name');
+      showToast(lang === 'bn' ? 'দয়া করে গ্রাহক বা ব্যক্তির নাম লিখুন' : 'Please enter customer or person name', 'warning');
       return;
     }
 

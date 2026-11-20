@@ -21,6 +21,7 @@ import {
 import { FooterConfig, Language, BannerAd } from '../types';
 import { sounds } from '../utils/audio';
 import { compressImage } from '../utils/imageCompressor';
+import { showConfirm } from '../utils/uiFeedback';
 import promoFestival from '../assets/images/protyasha_promo_festival_banner_1792226649161.jpg';
 import promoWeekend from '../assets/images/protyasha_weekend_add_money_banner_1792226649420.jpg';
 
@@ -311,9 +312,15 @@ export const FooterSettingsModal: React.FC<FooterSettingsModalProps> = ({
   };
 
   // Delete Offer
-  const handleDeleteOffer = (id: string) => {
+  const handleDeleteOffer = async (id: string) => {
     sounds.playTap();
-    if (confirm(isBn ? 'অফারটি মুছে ফেলতে চান?' : 'Delete this offer?')) {
+    const confirmed = await showConfirm({
+      message: isBn ? 'অফারটি মুছে ফেলতে চান?' : 'Delete this offer?',
+      confirmLabel: isBn ? 'মুছে ফেলুন' : 'Delete',
+      cancelLabel: isBn ? 'বাতিল' : 'Cancel',
+      danger: true
+    });
+    if (confirmed) {
       const updated = offerList.filter(b => b.id !== id);
       setOfferList(updated);
       if (onSaveBanners) {

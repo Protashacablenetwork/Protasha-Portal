@@ -4,6 +4,7 @@ import { STAFF_DESIGNATIONS, PAYMENT_METHODS, formatCurrency, getMonthBengaliNam
 import { ConfirmModal } from './ConfirmModal';
 import { StaffAccount, StaffTransaction, QuickHisabOwner } from '../../../types';
 import { safeStorage } from '../../../utils/safeStorage';
+import { showToast } from '../../../utils/uiFeedback';
 import {
   Users,
   Plus,
@@ -274,7 +275,7 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
   const handleStaffFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!staffFormData.name.trim() || !staffFormData.phone.trim()) {
-      alert('অনুগ্রহ করে নাম এবং মোবাইল নম্বর দিন');
+      showToast('অনুগ্রহ করে নাম এবং মোবাইল নম্বর দিন', 'warning');
       return;
     }
 

@@ -1,14 +1,33 @@
-import React, { Component, ErrorInfo, ReactNode, useEffect, useState } from 'react';
+import React, { Component, ErrorInfo, ReactNode, Suspense, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import App from './App.tsx';
-import { PublicTicketTracker } from './components/PublicTicketTracker';
 import {
   clearTrackFromCurrentUrl,
   extractTrackTicketIdFromLocation
 } from './components/TicketTrackingHelpers';
+import { GlobalFeedbackHost } from './components/GlobalFeedbackHost';
 import { Language } from './types';
 import { safeStorage } from './utils/safeStorage';
 import './index.css';
+
+const App = React.lazy(() => import('./App.tsx'));
+const PublicTicketTracker = React.lazy(() =>
+  import('./components/PublicTicketTracker').then((m) => ({ default: m.PublicTicketTracker }))
+);
+
+// Self-heal once if a lazy chunk fails to load transiently on mobile networks or right after deploy
+if (typeof window !== 'undefined') {
+  window.addEventListener('vite:preloadError', (event: Event) => {
+    try {
+      const retryKey = 'protyasha_chunk_reload_at';
+      const last = Number(sessionStorage.getItem(retryKey) || '0');
+      if (Date.now() - last > 15000) {
+        sessionStorage.setItem(retryKey, String(Date.now()));
+        event.preventDefault();
+        window.location.reload();
+      }
+    } catch {}
+  });
+}
 
 interface Props {
   children: ReactNode;
@@ -141,6 +160,13 @@ class ErrorBoundary extends Component<Props, State> {
   }
 }
 
+const BootFallback: React.FC = () => (
+  <div className="min-h-screen bg-white dark:bg-slate-950 flex flex-col items-center justify-center gap-3 p-6">
+    <div className="w-10 h-10 rounded-full border-4 border-rose-500/25 border-t-[#E52E2E] animate-spin" />
+    <p className="text-sm font-bold text-slate-600 dark:text-slate-300">প্রত্যাশা ক্যাবল নেটওয়ার্ক লোড হচ্ছে...</p>
+  </div>
+);
+
 const RootRouter: React.FC = () => {
   const [standaloneTrackId, setStandaloneTrackId] = useState<string | null>(() =>
     extractTrackTicketIdFromLocation()
@@ -164,32 +190,37 @@ const RootRouter: React.FC = () => {
   if (standaloneTrackId) {
     const savedLang = (safeStorage.getItem('protyasha_lang') as Language) || 'bn';
     return (
-      <PublicTicketTracker
-        ticketId={standaloneTrackId}
-        lang={savedLang}
-        onExitToApp={() => {
-          clearTrackFromCurrentUrl();
-          setStandaloneTrackId(null);
-        }}
-      />
+      <Suspense fallback={<BootFallback />}>
+        <PublicTicketTracker
+          ticketId={standaloneTrackId}
+          lang={savedLang}
+          onExitToApp={() => {
+            clearTrackFromCurrentUrl();
+            setStandaloneTrackId(null);
+          }}
+        />
+      </Suspense>
     );
   }
 
-  return <App />;
+  return (
+    <Suspense fallback={<BootFallback />}>
+      <App />
+    </Suspense>
+  );
 };
 
-// Ensure app-ready class is added immediately after mount (ESM scripts often run after DOMContentLoaded)
+// Ensure app-ready class is added only after React actually renders into #root
 const markAppReady = () => {
   requestAnimationFrame(() => {
-    document.body.classList.add('app-ready');
+    requestAnimationFrame(() => {
+      const rootEl = document.getElementById('root');
+      if (rootEl && rootEl.childElementCount > 0) {
+        document.body.classList.add('app-ready');
+      }
+    });
   });
 };
-
-if (document.readyState === 'loading') {
-  window.addEventListener('DOMContentLoaded', markAppReady, { once: true });
-} else {
-  markAppReady();
-}
 
 console.log('[App] Starting initialization...');
 const container = document.getElementById('root');
@@ -198,6 +229,7 @@ if (container) {
   root.render(
     <ErrorBoundary>
       <RootRouter />
+      <GlobalFeedbackHost />
     </ErrorBoundary>
   );
   markAppReady();

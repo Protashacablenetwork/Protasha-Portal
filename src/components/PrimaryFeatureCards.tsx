@@ -17,11 +17,6 @@ interface PrimaryFeatureCardsProps {
   onOpenBillManager: () => void;
   onOpenAyByay: () => void;
   onOpenQuickHisab: () => void;
-  openTicketsCount?: number;
-  todayPresentCount?: number;
-  totalStaffCount?: number;
-  onOpenSupportTickets?: () => void;
-  onOpenStaffAttendance?: () => void;
 }
 
 export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
@@ -29,12 +24,7 @@ export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
   serviceStatuses,
   onOpenBillManager,
   onOpenAyByay,
-  onOpenQuickHisab,
-  openTicketsCount = 0,
-  todayPresentCount = 0,
-  totalStaffCount = 0,
-  onOpenSupportTickets,
-  onOpenStaffAttendance
+  onOpenQuickHisab
 }) => {
   const isBn = lang === 'bn';
 
@@ -183,77 +173,139 @@ export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
           <ArrowRight className="w-4 h-4 stroke-[3]" />
         </div>
       </div>
+    </div>
+  );
+};
 
-      {/* 2-Card Operations Hub Strip: Support Ticket, Staff Attendance */}
-      {(onOpenSupportTickets || onOpenStaffAttendance) && (
-        <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5 pt-0.5">
-          {/* 1. Support Ticket Tracker */}
-          <button
-            type="button"
-            onClick={() => {
-              sounds.playTap();
-              onOpenSupportTickets?.();
-            }}
-            className="group text-left p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 hover:border-rose-300 dark:hover:border-rose-700 shadow-xs active:scale-[0.98] transition-all flex flex-col justify-between min-h-[88px] cursor-pointer"
-          >
-            <div className="flex items-center justify-between gap-1">
-              <div className="w-8 h-8 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200/70 dark:border-rose-800/60 text-[#E52E2E] flex items-center justify-center shrink-0">
-                <Headphones className="w-4 h-4 stroke-[2.2]" />
-              </div>
-              {openTicketsCount > 0 && (
+interface OperationsHubCardsProps {
+  lang: Language;
+  serviceStatuses?: Record<string, any>;
+  openTicketsCount?: number;
+  todayPresentCount?: number;
+  totalStaffCount?: number;
+  onOpenSupportTickets?: () => void;
+  onOpenStaffAttendance?: () => void;
+}
+
+export const OperationsHubCards: React.FC<OperationsHubCardsProps> = ({
+  lang,
+  serviceStatuses = {},
+  openTicketsCount = 0,
+  todayPresentCount = 0,
+  totalStaffCount = 0,
+  onOpenSupportTickets,
+  onOpenStaffAttendance
+}) => {
+  if (!onOpenSupportTickets && !onOpenStaffAttendance) return null;
+
+  const isBn = lang === 'bn';
+  const isTicketsLocked =
+    serviceStatuses.supportTickets?.isActive === false ||
+    String(serviceStatuses.supportTickets?.isActive) === 'false';
+  const isAttendanceLocked =
+    serviceStatuses.staffAttendance?.isActive === false ||
+    String(serviceStatuses.staffAttendance?.isActive) === 'false';
+
+  return (
+    <div className="px-4 pt-1 pb-3 select-none">
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3.5">
+        {/* 1. Support Ticket Tracker */}
+        <button
+          type="button"
+          onClick={() => {
+            sounds.playTap();
+            onOpenSupportTickets?.();
+          }}
+          className={`group text-left p-3 rounded-2xl border shadow-xs active:scale-[0.98] transition-all flex flex-col justify-between min-h-[88px] cursor-pointer ${
+            isTicketsLocked
+              ? 'bg-slate-100/90 dark:bg-slate-900/60 border-slate-300/80 dark:border-slate-800 grayscale opacity-75'
+              : 'bg-white dark:bg-slate-900 border-slate-200/90 dark:border-slate-800 hover:border-rose-300 dark:hover:border-rose-700'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-1">
+            <div className="w-8 h-8 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200/70 dark:border-rose-800/60 text-[#E52E2E] flex items-center justify-center shrink-0">
+              <Headphones className="w-4 h-4 stroke-[2.2]" />
+            </div>
+            {isTicketsLocked ? (
+              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                {isBn ? 'বন্ধ' : 'Off'}
+              </span>
+            ) : (
+              openTicketsCount > 0 && (
                 <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 tabular-nums">
                   {isBn ? toBengaliNumber(openTicketsCount) : openTicketsCount}
                 </span>
-              )}
-            </div>
-            <div className="mt-2">
-              <p className="text-[11px] sm:text-xs font-extrabold text-slate-900 dark:text-white leading-tight truncate">
-                {isBn ? 'সাপোর্ট টিকেট' : 'Support Tickets'}
-              </p>
-              <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                {openTicketsCount > 0
+              )
+            )}
+          </div>
+          <div className="mt-2">
+            <p className="text-[11px] sm:text-xs font-extrabold text-slate-900 dark:text-white leading-tight truncate">
+              {isBn ? 'সাপোর্ট টিকেট' : 'Support Tickets'}
+            </p>
+            <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 truncate mt-0.5">
+              {isTicketsLocked
+                ? isBn
+                  ? 'সাময়িকভাবে বন্ধ'
+                  : 'Temporarily off'
+                : openTicketsCount > 0
                   ? isBn
                     ? `${toBengaliNumber(openTicketsCount)}টি খোলা`
                     : `${openTicketsCount} open`
                   : isBn
                     ? 'কমপ্লেইন ট্র্যাকার'
                     : 'Live tracker'}
-              </p>
-            </div>
-          </button>
+            </p>
+          </div>
+        </button>
 
-          {/* 2. Staff Attendance & Leaves */}
-          <button
-            type="button"
-            onClick={() => {
-              sounds.playTap();
-              onOpenStaffAttendance?.();
-            }}
-            className="group text-left p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 hover:border-teal-300 dark:hover:border-teal-700 shadow-xs active:scale-[0.98] transition-all flex flex-col justify-between min-h-[88px] cursor-pointer"
-          >
-            <div className="flex items-center justify-between gap-1">
-              <div className="w-8 h-8 rounded-xl bg-teal-50 dark:bg-teal-950/60 border border-teal-200/70 dark:border-teal-800/60 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0">
-                <UserCheck className="w-4 h-4 stroke-[2.2]" />
-              </div>
-              {totalStaffCount > 0 && (
+        {/* 2. Staff Attendance & Leaves */}
+        <button
+          type="button"
+          onClick={() => {
+            sounds.playTap();
+            onOpenStaffAttendance?.();
+          }}
+          className={`group text-left p-3 rounded-2xl border shadow-xs active:scale-[0.98] transition-all flex flex-col justify-between min-h-[88px] cursor-pointer ${
+            isAttendanceLocked
+              ? 'bg-slate-100/90 dark:bg-slate-900/60 border-slate-300/80 dark:border-slate-800 grayscale opacity-75'
+              : 'bg-white dark:bg-slate-900 border-slate-200/90 dark:border-slate-800 hover:border-teal-300 dark:hover:border-teal-700'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-1">
+            <div className="w-8 h-8 rounded-xl bg-teal-50 dark:bg-teal-950/60 border border-teal-200/70 dark:border-teal-800/60 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0">
+              <UserCheck className="w-4 h-4 stroke-[2.2]" />
+            </div>
+            {isAttendanceLocked ? (
+              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                {isBn ? 'বন্ধ' : 'Off'}
+              </span>
+            ) : (
+              totalStaffCount > 0 && (
                 <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-teal-50 dark:bg-teal-950/80 text-teal-700 dark:text-teal-300 tabular-nums">
                   {isBn
                     ? `${toBengaliNumber(todayPresentCount)}/${toBengaliNumber(totalStaffCount)}`
                     : `${todayPresentCount}/${totalStaffCount}`}
                 </span>
-              )}
-            </div>
-            <div className="mt-2">
-              <p className="text-[11px] sm:text-xs font-extrabold text-slate-900 dark:text-white leading-tight truncate">
-                {isBn ? 'স্টাফ হাজিরা' : 'Attendance'}
-              </p>
-              <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                {isBn ? 'হাজিরা ও ছুটি' : 'Daily & Leaves'}
-              </p>
-            </div>
-          </button>
-        </div>
-      )}
+              )
+            )}
+          </div>
+          <div className="mt-2">
+            <p className="text-[11px] sm:text-xs font-extrabold text-slate-900 dark:text-white leading-tight truncate">
+              {isBn ? 'স্টাফ হাজিরা' : 'Attendance'}
+            </p>
+            <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 truncate mt-0.5">
+              {isAttendanceLocked
+                ? isBn
+                  ? 'সাময়িকভাবে বন্ধ'
+                  : 'Temporarily off'
+                : isBn
+                  ? 'হাজিরা ও ছুটি'
+                  : 'Daily & Leaves'}
+            </p>
+          </div>
+        </button>
+      </div>
     </div>
   );
 };
+

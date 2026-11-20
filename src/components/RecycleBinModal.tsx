@@ -3,6 +3,7 @@ import { ArrowLeft, RotateCcw, Trash, AlertCircle } from 'lucide-react';
 import { Language, Transaction } from '../types';
 import { formatCurrency, formatTransactionDate } from '../utils/formatters';
 import { sounds } from '../utils/audio';
+import { showConfirm } from '../utils/uiFeedback';
 
 interface RecycleBinModalProps {
   isOpen: boolean;
@@ -46,8 +47,14 @@ export const RecycleBinModal: React.FC<RecycleBinModalProps> = ({
 
         {deleted.length > 0 && (
           <button
-            onClick={() => {
-              if (confirm(lang === 'bn' ? 'সব মুছে ফেলতে চান?' : 'Empty all deleted items?')) {
+            onClick={async () => {
+              const confirmed = await showConfirm({
+                message: lang === 'bn' ? 'সব মুছে ফেলতে চান?' : 'Empty all deleted items?',
+                confirmLabel: lang === 'bn' ? 'সব মুছুন' : 'Empty All',
+                cancelLabel: lang === 'bn' ? 'বাতিল' : 'Cancel',
+                danger: true
+              });
+              if (confirmed) {
                 sounds.playTap();
                 onEmptyTrash();
               }

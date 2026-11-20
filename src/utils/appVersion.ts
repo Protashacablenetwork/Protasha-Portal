@@ -3,8 +3,8 @@ import { db } from './firebase';
 import { NotificationItem } from '../types';
 import { safeStorage } from './safeStorage';
 
-export const CURRENT_APP_VERSION = '2.5.0';
-export const CURRENT_BUILD_NUMBER = 250;
+export const CURRENT_APP_VERSION = '2.6.0';
+export const CURRENT_BUILD_NUMBER = 260;
 export const LAST_ACK_VERSION_KEY = 'protyasha_last_ack_app_version';
 export const LAST_CHECKED_AT_KEY = 'protyasha_last_update_checked_at';
 
@@ -21,20 +21,20 @@ export interface AppVersionInfo {
 export const CURRENT_RELEASE_INFO: AppVersionInfo = {
   version: CURRENT_APP_VERSION,
   buildNumber: CURRENT_BUILD_NUMBER,
-  releaseDate: '2026-11-14',
-  titleBn: 'নিরাপত্তা ও স্মার্ট ফিচার আপডেট',
-  titleEn: 'Security & Smart Features Update',
+  releaseDate: '2026-11-20',
+  titleBn: 'স্পিড, কোড-স্প্লিটিং ও আধুনিক প্রযুক্তি আপডেট',
+  titleEn: 'Performance, Code-Splitting & Modern Tech Update',
   featuresBn: [
-    'একই লগইন আইডিতে একসাথে ১টি ডিভাইস নিরাপত্তা লক',
-    'সাব-অ্যাডমিন নিয়ন্ত্রণ ও ৩০ মিনিট এডিট/ডিলিট সুবিধা',
-    'রমজানের চিরস্থায়ী ক্যালেন্ডার ও সেহরি-ইফতারের ১০ মিনিট আগের অটো রিমাইন্ডার',
-    'অফলাইন মোড ও অটো-সিংক এবং চেক ফর আপডেট সিস্টেম'
+    'স্মার্ট কোড-স্প্লিটিং ও লেজি লোডিং — মোবাইল ও ধীর ইন্টারনেটে দ্রুত অ্যাপ চালু হবে',
+    'নিজস্ব নোটিফিকেশন টোস্ট ও কনফার্মেশন ডায়ালগ (সব ব্রাউজার ও মোবাইল অ্যাপে নিরাপদ)',
+    'স্বয়ংক্রিয় চাংক রিকভারি ও রিয়াল-টাইম লোকেশন ভিত্তিক সেহরি-ইফতার নোটিফিকেশন',
+    'পাবলিক টিকেট ট্র্যাকার আলাদা লাইটওয়েট মডিউল ও উন্নত ক্যাশ ব্যবস্থাপনা'
   ],
   featuresEn: [
-    'Single-device simultaneous login lock per account',
-    'Sub-admin access control with 30-minute edit/delete window',
-    'Perpetual Ramadan calendar and 10-min Sehri & Iftar auto-reminders',
-    'Offline mode with auto-sync and Check for Update system'
+    'Smart code-splitting & lazy loading for faster mobile startup',
+    'Non-blocking custom toast & confirmation dialogs safe in all WebViews',
+    'Auto chunk recovery & live location-based Sehri-Iftar reminders',
+    'Lightweight standalone public ticket tracker & smart cache revalidation'
   ]
 };
 
