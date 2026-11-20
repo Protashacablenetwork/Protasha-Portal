@@ -16,6 +16,11 @@ function mirrorDistToHtdocs() {
       const htdocsDir = path.resolve(__dirname, 'HTDOCS_UPLOAD');
       if (!fs.existsSync(path.join(distDir, 'index.html'))) return;
       try {
+        // Remove temporary AI Studio attachment folder from production build
+        const aistudioAssets = path.join(distDir, 'assets', 'aistudio');
+        if (fs.existsSync(aistudioAssets)) {
+          fs.rmSync(aistudioAssets, { recursive: true, force: true });
+        }
         fs.rmSync(htdocsDir, { recursive: true, force: true });
         fs.cpSync(distDir, htdocsDir, { recursive: true });
       } catch (err) {
