@@ -19,8 +19,18 @@ export interface FeedbackConfirmRequest {
 type ToastListener = (toast: FeedbackToast) => void;
 type ConfirmListener = (req: FeedbackConfirmRequest) => void;
 
-const toastListeners = new Set<ToastListener>();
-const confirmListeners = new Set<ConfirmListener>();
+const feedbackBus: {
+  toastListeners: Set<ToastListener>;
+  confirmListeners: Set<ConfirmListener>;
+} =
+  (globalThis as any).__PCN_FEEDBACK_BUS__ ||
+  ((globalThis as any).__PCN_FEEDBACK_BUS__ = {
+    toastListeners: new Set<ToastListener>(),
+    confirmListeners: new Set<ConfirmListener>(),
+  });
+
+const toastListeners = feedbackBus.toastListeners;
+const confirmListeners = feedbackBus.confirmListeners;
 
 export function subscribeFeedbackToasts(listener: ToastListener): () => void {
   toastListeners.add(listener);

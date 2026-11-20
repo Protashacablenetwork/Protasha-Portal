@@ -9,10 +9,17 @@ import { Language } from './types';
 import { safeStorage } from './utils/safeStorage';
 import './index.css';
 
-const App = React.lazy(() => import('./App.tsx'));
-const PublicTicketTracker = React.lazy(() =>
-  import('./components/PublicTicketTracker').then((m) => ({ default: m.PublicTicketTracker }))
-);
+const loadApp = () => import('./App.tsx');
+const loadPublicTicketTracker = () =>
+  import('./components/PublicTicketTracker').then((m) => ({ default: m.PublicTicketTracker }));
+
+// Kick off App chunk download immediately on normal routes so there is no Suspense waterfall
+if (typeof window !== 'undefined' && !extractTrackTicketIdFromLocation()) {
+  void loadApp();
+}
+
+const App = React.lazy(loadApp);
+const PublicTicketTracker = React.lazy(loadPublicTicketTracker);
 
 // Self-heal once if a lazy chunk fails to load transiently on mobile networks or right after deploy
 if (typeof window !== 'undefined') {
@@ -160,13 +167,6 @@ class ErrorBoundary extends Component<Props, State> {
   }
 }
 
-const BootFallback: React.FC = () => (
-  <div className="min-h-screen bg-white dark:bg-slate-950 flex flex-col items-center justify-center gap-3 p-6">
-    <div className="w-10 h-10 rounded-full border-4 border-rose-500/25 border-t-[#E52E2E] animate-spin" />
-    <p className="text-sm font-bold text-slate-600 dark:text-slate-300">প্রত্যাশা ক্যাবল নেটওয়ার্ক লোড হচ্ছে...</p>
-  </div>
-);
-
 const RootRouter: React.FC = () => {
   const [standaloneTrackId, setStandaloneTrackId] = useState<string | null>(() =>
     extractTrackTicketIdFromLocation()
@@ -190,7 +190,7 @@ const RootRouter: React.FC = () => {
   if (standaloneTrackId) {
     const savedLang = (safeStorage.getItem('protyasha_lang') as Language) || 'bn';
     return (
-      <Suspense fallback={<BootFallback />}>
+      <Suspense fallback={null}>
         <PublicTicketTracker
           ticketId={standaloneTrackId}
           lang={savedLang}
@@ -204,25 +204,12 @@ const RootRouter: React.FC = () => {
   }
 
   return (
-    <Suspense fallback={<BootFallback />}>
+    <Suspense fallback={null}>
       <App />
     </Suspense>
   );
 };
 
-// Ensure app-ready class is added only after React actually renders into #root
-const markAppReady = () => {
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      const rootEl = document.getElementById('root');
-      if (rootEl && rootEl.childElementCount > 0) {
-        document.body.classList.add('app-ready');
-      }
-    });
-  });
-};
-
-console.log('[App] Starting initialization...');
 const container = document.getElementById('root');
 if (container) {
   const root = createRoot(container);
@@ -232,5 +219,4 @@ if (container) {
       <GlobalFeedbackHost />
     </ErrorBoundary>
   );
-  markAppReady();
 }

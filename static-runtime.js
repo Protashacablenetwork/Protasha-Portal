@@ -1,4 +1,4 @@
-// Universal Zero-Build Static Runtime for Protasha Cable Network
+// Universal Zero-Build Static Runtime v2 (Fast Boot + Stale-While-Revalidate + On-Demand Lazy Chunks)
 // Automatically runs ONLY when raw source files (Download ZIP) are uploaded directly
 // to ANY static hosting server (InfinityFree, cPanel, Apache, Nginx, IIS, GitHub Pages, etc.)
 // without running `npm run build` or uploading `dist/` or `HTDOCS_UPLOAD/`.
@@ -52,8 +52,30 @@
     'motion/react': 'https://esm.sh/motion@12.23.24/react?deps=react@19.0.1,react-dom@19.0.1'
   };
 
+  // Immediately preload core external ES modules in parallel with cache lookup & Tailwind CSS
+  (function preloadCoreExternals() {
+    var coreUrls = [
+      EXTERNALS['react'],
+      EXTERNALS['react/jsx-runtime'],
+      EXTERNALS['react-dom/client'],
+      EXTERNALS['firebase/app'],
+      EXTERNALS['firebase/firestore'],
+      EXTERNALS['lucide-react']
+    ];
+    for (var i = 0; i < coreUrls.length; i++) {
+      try {
+        var link = document.createElement('link');
+        link.rel = 'modulepreload';
+        link.crossOrigin = 'anonymous';
+        link.href = coreUrls[i];
+        document.head.appendChild(link);
+      } catch {}
+    }
+  })();
+
   var MEDIA_RE = /\.(jpg|jpeg|png|gif|webp|svg|ico|mp3|wav|ogg|woff2?|ttf)(\?.*)?$/i;
   var injectedCssUrls = new Set();
+  var tailwindScriptPromise = null;
 
   function looksLikeHtml(text, contentType) {
     var ct = (contentType || '').toLowerCase();
@@ -81,32 +103,50 @@
     });
   }
 
-  async function injectTailwindCss(cssUrl) {
-    if (injectedCssUrls.has(cssUrl)) return;
-    injectedCssUrls.add(cssUrl);
-    try {
-      var r = await fetch(cssUrl);
-      if (!r.ok) return;
-      var cssText = await r.text();
-      if (looksLikeHtml(cssText, r.headers.get('content-type'))) return;
-      var style = document.createElement('style');
-      style.type = 'text/tailwindcss';
-      style.textContent = cssText;
-      document.head.appendChild(style);
-    } catch {}
+  function ensureTailwindScript() {
+    if (!tailwindScriptPromise) {
+      tailwindScriptPromise = loadScriptTag([
+        'https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4',
+        'https://unpkg.com/@tailwindcss/browser@4'
+      ]).catch(function () {});
+    }
+    return tailwindScriptPromise;
   }
 
-  // Concurrency-limited fetch queue (max 5 in-flight requests) so shared hosts like InfinityFree never throttle
-  var MAX_CONCURRENT = 5;
+  function injectCssText(cssUrl, cssText) {
+    if (!cssText || injectedCssUrls.has(cssUrl)) return;
+    injectedCssUrls.add(cssUrl);
+    var style = document.createElement('style');
+    style.type = 'text/tailwindcss';
+    style.textContent = cssText;
+    document.head.appendChild(style);
+  }
+
+  async function injectTailwindCss(cssUrl) {
+    if (injectedCssUrls.has(cssUrl)) return '';
+    try {
+      var r = await fetch(cssUrl, { credentials: 'same-origin' });
+      if (!r.ok) return '';
+      var cssText = await r.text();
+      if (looksLikeHtml(cssText, r.headers.get('content-type'))) return '';
+      injectCssText(cssUrl, cssText);
+      return cssText;
+    } catch {
+      return '';
+    }
+  }
+
+  // Concurrency-limited fetch queue (max 8 in-flight requests: fast yet gentle on shared hosts)
+  var MAX_CONCURRENT = 8;
   var activeFetches = 0;
   var fetchQueue = [];
   var loadedFileCount = 0;
 
-  function queuedFetch(url) {
+  function queuedFetch(url, noStore) {
     return new Promise(function (resolve, reject) {
       var run = function () {
         activeFetches += 1;
-        fetch(url, { credentials: 'same-origin' })
+        fetch(url, noStore ? { credentials: 'same-origin', cache: 'no-store' } : { credentials: 'same-origin' })
           .then(resolve, reject)
           .finally(function () {
             activeFetches -= 1;
@@ -124,12 +164,23 @@
     });
   }
 
-  // Lightweight IndexedDB cache so repeat visits boot in <0.5s
-  var CACHE_DB = 'pcn_static_runtime_cache_v4';
+  // IndexedDB cache (v5: stores instant-boot bundle + CSS + per-chunk lazy builds)
+  var CACHE_DB = 'pcn_static_runtime_cache_v5';
   var CACHE_STORE = 'bundles';
+  var cacheDbPromise = null;
+
+  // Clean up legacy v4 cache database silently to save mobile storage
+  try {
+    if (typeof indexedDB !== 'undefined') {
+      setTimeout(function () {
+        try { indexedDB.deleteDatabase('pcn_static_runtime_cache_v4'); } catch {}
+      }, 4000);
+    }
+  } catch {}
 
   function openCacheDb() {
-    return new Promise(function (resolve) {
+    if (cacheDbPromise) return cacheDbPromise;
+    cacheDbPromise = new Promise(function (resolve) {
       try {
         if (typeof indexedDB === 'undefined') return resolve(null);
         var req = indexedDB.open(CACHE_DB, 1);
@@ -142,9 +193,10 @@
         resolve(null);
       }
     });
+    return cacheDbPromise;
   }
 
-  async function getCachedBundle(key) {
+  async function cacheGet(key) {
     var db = await openCacheDb();
     if (!db) return null;
     return new Promise(function (resolve) {
@@ -159,13 +211,28 @@
     });
   }
 
-  async function setCachedBundle(key, code) {
+  async function cacheSet(key, val) {
     var db = await openCacheDb();
     if (!db) return;
     return new Promise(function (resolve) {
       try {
         var tx = db.transaction(CACHE_STORE, 'readwrite');
-        tx.objectStore(CACHE_STORE).put(code, key);
+        tx.objectStore(CACHE_STORE).put(val, key);
+        tx.oncomplete = function () { resolve(); };
+        tx.onerror = function () { resolve(); };
+      } catch {
+        resolve();
+      }
+    });
+  }
+
+  async function cacheDelete(key) {
+    var db = await openCacheDb();
+    if (!db) return;
+    return new Promise(function (resolve) {
+      try {
+        var tx = db.transaction(CACHE_STORE, 'readwrite');
+        tx.objectStore(CACHE_STORE).delete(key);
         tx.oncomplete = function () { resolve(); };
         tx.onerror = function () { resolve(); };
       } catch {
@@ -186,20 +253,19 @@
   var fileCache = new Map();
   var resolveCache = new Map();
 
-  async function fetchFirstValid(candidates) {
+  async function fetchFirstValid(candidates, noStore) {
     for (var i = 0; i < candidates.length; i++) {
       var url = candidates[i];
-      if (fileCache.has(url)) {
+      if (!noStore && fileCache.has(url)) {
         return { url: url, text: fileCache.get(url) };
       }
       for (var attempt = 0; attempt < 2; attempt++) {
         try {
-          var res = await queuedFetch(url);
-          // Skip InfinityFree / host redirects to external error pages
+          var res = await queuedFetch(url, noStore);
           if (res.redirected && res.url && res.url.indexOf(appBase) !== 0) break;
           if (!res.ok) {
             if (res.status >= 500 || res.status === 429) {
-              await new Promise(function (r) { setTimeout(r, 350); });
+              await new Promise(function (r) { setTimeout(r, 300); });
               continue;
             }
             break;
@@ -208,13 +274,13 @@
           if (looksLikeHtml(text, res.headers.get('content-type'))) break;
           fileCache.set(url, text);
           loadedFileCount += 1;
-          if (loadedFileCount > 3 && loadedFileCount % 6 === 0) {
+          if (loadedFileCount > 3 && loadedFileCount % 5 === 0) {
             setStatus('অ্যাপ প্রথমবার প্রস্তুত হচ্ছে... (' + loadedFileCount + ' ফাইল)');
           }
           return { url: url, text: text };
         } catch {
           if (attempt === 0) {
-            await new Promise(function (r) { setTimeout(r, 250); });
+            await new Promise(function (r) { setTimeout(r, 200); });
           }
         }
       }
@@ -250,7 +316,7 @@
         : [rawUrl + '.tsx', rawUrl + '.ts', rawUrl + '/index.tsx', rawUrl + '/index.ts', rawUrl + '.js'];
     }
 
-    var found = await fetchFirstValid(candidates);
+    var found = await fetchFirstValid(candidates, false);
     if (!found) {
       throw new Error('Module not found on server: ' + rawUrl);
     }
@@ -258,43 +324,11 @@
     return found.url;
   }
 
-  try {
-    setStatus('অ্যাপের ডিজাইন ও স্টাইল লোড হচ্ছে...');
-
-    var mainUrl = new URL('src/main.tsx', appBase).href;
-    var appTsxUrl = new URL('src/App.tsx', appBase).href;
-    var versionTsUrl = new URL('src/utils/appVersion.ts', appBase).href;
-    var indexCssUrl = new URL('src/index.css', appBase).href;
-
-    var tailwindPromise = injectTailwindCss(indexCssUrl).then(function () {
-      return loadScriptTag([
-        'https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4',
-        'https://unpkg.com/@tailwindcss/browser@4'
-      ]);
-    });
-
-    var [mainProbe, appProbe, versionProbe] = await Promise.all([
-      fetchFirstValid([mainUrl]),
-      fetchFirstValid([appTsxUrl]),
-      fetchFirstValid([versionTsUrl])
-    ]);
-
-    if (!mainProbe) {
-      throw new Error('Could not load ' + mainUrl);
-    }
-
-    var cacheKey = appBase + '|' + simpleHash(
-      mainProbe.text + '|' +
-      (appProbe ? String(appProbe.text.length) + ':' + appProbe.text.slice(0, 400) : '') + '|' +
-      (versionProbe ? versionProbe.text : '')
-    );
-
-    var bundledCode = await getCachedBundle(cacheKey);
-
-    if (!bundledCode) {
-      setStatus('অ্যাপ প্রথমবার প্রস্তুত হচ্ছে, কয়েক সেকেন্ড অপেক্ষা করুন...');
-
-      var esbuildMod = null;
+  // Lazily initialized esbuild-wasm (skipped completely on cached repeat visits until a lazy chunk is opened!)
+  var esbuildPromise = null;
+  function getEsbuild() {
+    if (esbuildPromise) return esbuildPromise;
+    esbuildPromise = (async function () {
       var wasmCandidates = [
         {
           esm: 'https://cdn.jsdelivr.net/npm/esbuild-wasm@0.25.0/esm/browser.min.js',
@@ -305,121 +339,257 @@
           wasm: 'https://unpkg.com/esbuild-wasm@0.25.0/esbuild.wasm'
         }
       ];
-
       var initErr = null;
       for (var c = 0; c < wasmCandidates.length; c++) {
         try {
-          esbuildMod = await import(wasmCandidates[c].esm);
-          // IMPORTANT: worker: false works reliably on BOTH http:// (InfinityFree) and https:// without Blob Worker hangs!
-          await esbuildMod.initialize({ wasmURL: wasmCandidates[c].wasm, worker: false });
-          initErr = null;
-          break;
+          var mod = await import(wasmCandidates[c].esm);
+          // worker: false avoids Blob Worker hangs across both http:// and https:// hosts
+          await mod.initialize({ wasmURL: wasmCandidates[c].wasm, worker: false });
+          return mod;
         } catch (err) {
           initErr = err;
         }
       }
-      if (!esbuildMod || initErr) {
-        throw initErr || new Error('esbuild-wasm failed to initialize');
-      }
+      esbuildPromise = null;
+      throw initErr || new Error('esbuild-wasm failed to initialize');
+    })();
+    return esbuildPromise;
+  }
 
-      var httpPlugin = {
-        name: 'pcn-static-http-loader',
-        setup: function (build) {
-          build.onResolve({ filter: /.*/ }, async function (args) {
-            var p = args.path;
+  function toRelPath(absUrl) {
+    if (absUrl.indexOf(appBase) === 0) {
+      return absUrl.slice(appBase.length).replace(/\?.*$/, '');
+    }
+    return absUrl;
+  }
 
-            if (p === mainUrl) {
-              return { path: mainUrl, namespace: 'pcn-http' };
+  function shouldDeferDynamicImport(relPath) {
+    // Keep main App.tsx inside the initial boot bundle so login/home renders in 1 single pass
+    if (/^src\/App(\.tsx?)?$/i.test(relPath)) return false;
+    return /^src\/(components|portals)\//i.test(relPath);
+  }
+
+  function rewriteLazyImports(code) {
+    return code.replace(
+      /\bimport\s*\(\s*(["'])pcn-lazy:([^"']+)\1\s*\)/g,
+      'window.__PCN_LOAD_CHUNK__("$2")'
+    );
+  }
+
+  async function buildEntry(entryUrl, deferDynamicLocal) {
+    var esbuildMod = await getEsbuild();
+
+    var httpPlugin = {
+      name: 'pcn-static-http-loader',
+      setup: function (build) {
+        build.onResolve({ filter: /.*/ }, async function (args) {
+          var p = args.path;
+
+          if (p === entryUrl) {
+            return { path: entryUrl, namespace: 'pcn-http' };
+          }
+
+          if (/^https?:\/\//i.test(p)) {
+            return { path: p, external: true };
+          }
+
+          if (p.startsWith('@/')) {
+            var aliased = new URL(p.slice(2), appBase).href;
+            var aliasRel = toRelPath(aliased);
+            if (deferDynamicLocal && args.kind === 'dynamic-import' && shouldDeferDynamicImport(aliasRel)) {
+              return { path: 'pcn-lazy:' + aliasRel, external: true };
             }
+            var canonicalAlias = await resolveLocalUrl(aliased);
+            return { path: canonicalAlias, namespace: 'pcn-http' };
+          }
 
-            if (/^https?:\/\//i.test(p)) {
-              return { path: p, external: true };
+          if (p.startsWith('./') || p.startsWith('../') || p.startsWith('/')) {
+            var rawResolved = p.startsWith('/')
+              ? new URL(p.slice(1), appBase).href
+              : new URL(p, args.importer || entryUrl).href;
+            var rel = toRelPath(rawResolved);
+            if (deferDynamicLocal && args.kind === 'dynamic-import' && shouldDeferDynamicImport(rel)) {
+              return { path: 'pcn-lazy:' + rel, external: true };
             }
+            var canonical = await resolveLocalUrl(rawResolved);
+            return { path: canonical, namespace: 'pcn-http' };
+          }
 
-            if (p.startsWith('@/')) {
-              var aliased = new URL(p.slice(2), appBase).href;
-              var canonicalAlias = await resolveLocalUrl(aliased);
-              return { path: canonicalAlias, namespace: 'pcn-http' };
-            }
+          if (EXTERNALS[p]) {
+            return { path: EXTERNALS[p], external: true };
+          }
+          return {
+            path: 'https://esm.sh/' + p + '?deps=react@19.0.1,react-dom@19.0.1',
+            external: true
+          };
+        });
 
-            if (p.startsWith('./') || p.startsWith('../') || p.startsWith('/')) {
-              var rawResolved = p.startsWith('/')
-                ? new URL(p.slice(1), appBase).href
-                : new URL(p, args.importer || mainUrl).href;
-              var canonical = await resolveLocalUrl(rawResolved);
-              return { path: canonical, namespace: 'pcn-http' };
-            }
+        build.onLoad({ filter: /.*/, namespace: 'pcn-http' }, async function (args) {
+          var targetUrl = args.path;
 
-            if (EXTERNALS[p]) {
-              return { path: EXTERNALS[p], external: true };
-            }
+          if (MEDIA_RE.test(targetUrl)) {
             return {
-              path: 'https://esm.sh/' + p + '?deps=react@19.0.1,react-dom@19.0.1',
-              external: true
+              contents: 'export default ' + JSON.stringify(targetUrl) + ';',
+              loader: 'js'
             };
-          });
+          }
 
-          build.onLoad({ filter: /.*/, namespace: 'pcn-http' }, async function (args) {
-            var targetUrl = args.path;
+          if (/\.css(\?.*)?$/i.test(targetUrl)) {
+            await injectTailwindCss(targetUrl);
+            return { contents: '', loader: 'js' };
+          }
 
-            if (MEDIA_RE.test(targetUrl)) {
-              return {
-                contents: 'export default ' + JSON.stringify(targetUrl) + ';',
-                loader: 'js'
-              };
-            }
+          var text = fileCache.get(targetUrl);
+          if (typeof text !== 'string') {
+            var found = await fetchFirstValid([targetUrl], false);
+            if (!found) throw new Error('Could not load ' + targetUrl);
+            text = found.text;
+          }
 
-            if (/\.css(\?.*)?$/i.test(targetUrl)) {
-              await injectTailwindCss(targetUrl);
-              return { contents: '', loader: 'js' };
-            }
-
-            var text = fileCache.get(targetUrl);
-            if (typeof text !== 'string') {
-              var found = await fetchFirstValid([targetUrl]);
-              if (!found) throw new Error('Could not load ' + targetUrl);
-              text = found.text;
-            }
-
-            return {
-              contents: text,
-              loader: loaderForUrl(targetUrl)
-            };
-          });
-        }
-      };
-
-      var result = await esbuildMod.build({
-        entryPoints: [mainUrl],
-        bundle: true,
-        splitting: false,
-        format: 'esm',
-        jsx: 'automatic',
-        target: ['es2020'],
-        write: false,
-        define: {
-          'process.env.NODE_ENV': '"production"'
-        },
-        plugins: [httpPlugin]
-      });
-
-      if (!result.outputFiles || !result.outputFiles.length) {
-        throw new Error('Empty bundle output from esbuild');
+          return {
+            contents: text,
+            loader: loaderForUrl(targetUrl)
+          };
+        });
       }
+    };
 
-      bundledCode = result.outputFiles[0].text;
-      setCachedBundle(cacheKey, bundledCode).catch(function () {});
+    var result = await esbuildMod.build({
+      entryPoints: [entryUrl],
+      bundle: true,
+      splitting: false,
+      format: 'esm',
+      jsx: 'automatic',
+      target: ['es2020'],
+      write: false,
+      define: {
+        'process.env.NODE_ENV': '"production"'
+      },
+      plugins: [httpPlugin]
+    });
+
+    if (!result.outputFiles || !result.outputFiles.length) {
+      throw new Error('Empty bundle output from esbuild');
+    }
+    return rewriteLazyImports(result.outputFiles[0].text);
+  }
+
+  async function importCodeBlob(code) {
+    var blob = new Blob([code], { type: 'application/javascript' });
+    var blobUrl = URL.createObjectURL(blob);
+    try {
+      return await import(blobUrl);
+    } finally {
+      setTimeout(function () {
+        try { URL.revokeObjectURL(blobUrl); } catch {}
+      }, 15000);
+    }
+  }
+
+  // Register on-demand lazy chunk loader so modals & sub-portals compile & cache only when opened!
+  var activeVersionKey = 'v0';
+  var chunkModulePromises = new Map();
+
+  window.__PCN_LOAD_CHUNK__ = function (relPath) {
+    var cleanRel = String(relPath || '').replace(/^\/+/, '');
+    if (chunkModulePromises.has(cleanRel)) {
+      return chunkModulePromises.get(cleanRel);
+    }
+    var promise = (async function () {
+      var chunkCacheKey = 'chunk|' + appBase + '|' + activeVersionKey + '|' + cleanRel;
+      var cachedChunk = await cacheGet(chunkCacheKey);
+      var chunkCode = typeof cachedChunk === 'string' ? cachedChunk : null;
+      if (!chunkCode) {
+        var entryUrl = await resolveLocalUrl(new URL(cleanRel, appBase).href);
+        chunkCode = await buildEntry(entryUrl, true);
+        cacheSet(chunkCacheKey, chunkCode).catch(function () {});
+      }
+      return await importCodeBlob(chunkCode);
+    })().catch(function (err) {
+      chunkModulePromises.delete(cleanRel);
+      throw err;
+    });
+    chunkModulePromises.set(cleanRel, promise);
+    return promise;
+  };
+
+  try {
+    var mainUrl = new URL('src/main.tsx', appBase).href;
+    var versionTsUrl = new URL('src/utils/appVersion.ts', appBase).href;
+    var indexCssUrl = new URL('src/index.css', appBase).href;
+    var latestCacheKey = 'latest|' + appBase;
+
+    // 1. Start Tailwind CDN script download immediately (non-blocking)
+    var tailwindReady = ensureTailwindScript();
+
+    // 2. FAST PATH: Check IndexedDB FIRST (zero network wait for repeat visitors!)
+    var cachedEntry = await cacheGet(latestCacheKey);
+
+    if (cachedEntry && cachedEntry.code && cachedEntry.versionKey) {
+      activeVersionKey = cachedEntry.versionKey;
+      if (cachedEntry.css) {
+        injectCssText(indexCssUrl, cachedEntry.css);
+      } else {
+        void injectTailwindCss(indexCssUrl);
+      }
+      setStatus('অ্যাপ চালু হচ্ছে...');
+
+      // Wait briefly for Tailwind (capped at 2s so a slow CDN never blocks mount)
+      await Promise.race([
+        tailwindReady,
+        new Promise(function (r) { setTimeout(r, 2000); })
+      ]);
+
+      await importCodeBlob(cachedEntry.code);
+
+      // Background Stale-While-Revalidate check: if a new ZIP version was uploaded, invalidate cache for next visit
+      setTimeout(async function () {
+        try {
+          var freshVersion = await fetchFirstValid([versionTsUrl], true);
+          if (freshVersion && simpleHash(freshVersion.text) !== cachedEntry.versionKey) {
+            await cacheDelete(latestCacheKey);
+          }
+        } catch {}
+      }, 2000);
+      return;
     }
 
-    await tailwindPromise;
-    setStatus('অ্যাপ চালু হচ্ছে...');
+    // 3. COLD BOOT PATH (First visit or after ZIP update):
+    // Run Tailwind CSS + esbuild-wasm init + entry probes IN PARALLEL, and defer 26 lazy modals & 2 portals!
+    setStatus('অ্যাপ প্রথমবার প্রস্তুত হচ্ছে, কয়েক সেকেন্ড অপেক্ষা করুন...');
 
-    var blob = new Blob([bundledCode], { type: 'application/javascript' });
-    var blobUrl = URL.createObjectURL(blob);
-    await import(blobUrl);
-    setTimeout(function () {
-      try { URL.revokeObjectURL(blobUrl); } catch {}
-    }, 15000);
+    var cssPromise = injectTailwindCss(indexCssUrl);
+    var esbuildWarm = getEsbuild();
+
+    var [mainProbe, versionProbe, cssText] = await Promise.all([
+      fetchFirstValid([mainUrl], false),
+      fetchFirstValid([versionTsUrl], false),
+      cssPromise,
+      esbuildWarm
+    ]);
+
+    if (!mainProbe) {
+      throw new Error('Could not load ' + mainUrl);
+    }
+
+    activeVersionKey = simpleHash(
+      (versionProbe ? versionProbe.text : '') + '|' + mainProbe.text.length
+    );
+
+    var bundledCode = await buildEntry(mainUrl, true);
+    cacheSet(latestCacheKey, {
+      versionKey: activeVersionKey,
+      code: bundledCode,
+      css: cssText || ''
+    }).catch(function () {});
+
+    await Promise.race([
+      tailwindReady,
+      new Promise(function (r) { setTimeout(r, 2500); })
+    ]);
+
+    setStatus('অ্যাপ চালু হচ্ছে...');
+    await importCodeBlob(bundledCode);
   } catch (err) {
     console.error('[StaticRuntime] Boot failed:', err);
     failRuntime(

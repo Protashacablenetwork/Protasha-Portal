@@ -21,9 +21,17 @@ provider.setCustomParameters({
   prompt: 'select_account'
 });
 
-let isSigningIn = false;
-let cachedAccessToken: string | null = null;
-let currentGoogleUser: User | null = null;
+const driveAuthState: {
+  isSigningIn: boolean;
+  cachedAccessToken: string | null;
+  currentGoogleUser: User | null;
+} =
+  (globalThis as any).__PCN_DRIVE_AUTH__ ||
+  ((globalThis as any).__PCN_DRIVE_AUTH__ = {
+    isSigningIn: false,
+    cachedAccessToken: null,
+    currentGoogleUser: null,
+  });
 
 // Initialize Google Drive Auth state listener
 export const initDriveAuth = (
@@ -31,11 +39,11 @@ export const initDriveAuth = (
   onAuthFailure?: () => void
 ) => {
   return onAuthStateChanged(auth, async (user: User | null) => {
-    currentGoogleUser = user;
-    if (user && cachedAccessToken) {
-      if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
+    driveAuthState.currentGoogleUser = user;
+    if (user && driveAuthState.cachedAccessToken) {
+      if (onAuthSuccess) onAuthSuccess(user, driveAuthState.cachedAccessToken);
     } else {
-      cachedAccessToken = null;
+      driveAuthState.cachedAccessToken = null;
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -44,7 +52,7 @@ export const initDriveAuth = (
 // Sign in with Google Drive & background archive permissions with explicit account selection
 export const signInWithGoogleDrive = async (): Promise<{ user: User; accessToken: string }> => {
   try {
-    isSigningIn = true;
+    driveAuthState.isSigningIn = true;
     const authProvider = new GoogleAuthProvider();
     authProvider.addScope(DRIVE_SCOPE);
     authProvider.addScope(SHEETS_SCOPE);
@@ -58,14 +66,14 @@ export const signInWithGoogleDrive = async (): Promise<{ user: User; accessToken
       throw new Error('গুগল ড্রাইভ অ্যাক্সেস টোকেন পাওয়া যায়নি');
     }
 
-    cachedAccessToken = credential.accessToken;
-    currentGoogleUser = result.user;
+    driveAuthState.cachedAccessToken = credential.accessToken;
+    driveAuthState.currentGoogleUser = result.user;
     try {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('protyasha-google-connected'));
       }
     } catch {}
-    return { user: result.user, accessToken: cachedAccessToken };
+    return { user: result.user, accessToken: driveAuthState.cachedAccessToken };
   } catch (error: any) {
     console.error('Google Drive sign in error:', error);
     if (error?.code === 'auth/unauthorized-domain') {
@@ -74,21 +82,21 @@ export const signInWithGoogleDrive = async (): Promise<{ user: User; accessToken
     }
     throw error;
   } finally {
-    isSigningIn = false;
+    driveAuthState.isSigningIn = false;
   }
 };
 
 export const getDriveAccessToken = (): string | null => {
-  return cachedAccessToken;
+  return driveAuthState.cachedAccessToken;
 };
 
 export const getConnectedGoogleUser = (): User | null => {
-  return currentGoogleUser || auth.currentUser;
+  return driveAuthState.currentGoogleUser || auth.currentUser;
 };
 
 export const disconnectGoogleDrive = async () => {
-  cachedAccessToken = null;
-  currentGoogleUser = null;
+  driveAuthState.cachedAccessToken = null;
+  driveAuthState.currentGoogleUser = null;
   await auth.signOut();
 };
 
@@ -148,7 +156,7 @@ export async function uploadBackupToGoogleDrive(
   backupData: any,
   fileName?: string
 ): Promise<DriveBackupFile> {
-  const token = cachedAccessToken;
+  const token = driveAuthState.cachedAccessToken;
   if (!token) {
     throw new Error('গুগল ড্রাইভে লগইন করা নেই। অনুগ্রহ করে প্রথমে গুগল একাউন্ট কানেক্ট করুন।');
   }
@@ -207,7 +215,7 @@ export async function uploadBackupToGoogleDrive(
  * List all backup files in Google Drive
  */
 export async function listGoogleDriveBackups(): Promise<DriveBackupFile[]> {
-  const token = cachedAccessToken;
+  const token = driveAuthState.cachedAccessToken;
   if (!token) {
     throw new Error('গুগল ড্রাইভ কানেক্টেড নয়');
   }
@@ -234,7 +242,7 @@ export async function listGoogleDriveBackups(): Promise<DriveBackupFile[]> {
  * Download a backup file from Google Drive
  */
 export async function downloadGoogleDriveBackup(fileId: string): Promise<any> {
-  const token = cachedAccessToken;
+  const token = driveAuthState.cachedAccessToken;
   if (!token) {
     throw new Error('গুগল ড্রাইভ কানেক্টেড নয়');
   }
@@ -259,7 +267,7 @@ export async function downloadGoogleDriveBackup(fileId: string): Promise<any> {
  * Delete a backup file from Google Drive (Mandatory user confirmation required in UI)
  */
 export async function deleteGoogleDriveBackup(fileId: string): Promise<boolean> {
-  const token = cachedAccessToken;
+  const token = driveAuthState.cachedAccessToken;
   if (!token) {
     throw new Error('গুগল ড্রাইভ কানেক্টেড নয়');
   }

@@ -1,8 +1,9 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { safeStorage } from './safeStorage';
 import { getAuth } from 'firebase/auth';
 import {
   initializeFirestore,
+  getFirestore,
   enableNetwork,
   doc,
   getDocFromServer,
@@ -13,16 +14,22 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const databaseId = (firebaseConfig as any).firestoreDatabaseId || 'staff-collection-db';
 
-// Initialize Firestore against the newly provisioned database with long-polling auto-detection
+// Initialize Firestore against the provisioned database with long-polling auto-detection
 // to prevent NS_BINDING_ABORTED / WebChannel drops across proxies and browsers.
-export const db = initializeFirestore(
-  app,
-  { experimentalAutoDetectLongPolling: true },
-  databaseId
-);
+export const db = (() => {
+  try {
+    return initializeFirestore(
+      app,
+      { experimentalAutoDetectLongPolling: true },
+      databaseId
+    );
+  } catch {
+    return getFirestore(app, databaseId);
+  }
+})();
 
 // Unified reference to the active provisioned Firestore database
 export const staffDb = db;
@@ -35,7 +42,7 @@ const QUOTA_KEY = 'firestore_quota_exceeded';
 const QUOTA_RESET_KEY = 'firestore_quota_reset_time';
 let sessionQuotaExceeded = false;
 
-// Clear any legacy localStorage quota lockouts on boot and ensure network is active
+// Clear any legacy localStorage quota lockouts on boot
 try {
   safeStorage.removeItem(QUOTA_KEY);
   safeStorage.removeItem(QUOTA_RESET_KEY);
@@ -199,4 +206,10 @@ export async function testFirestoreConnection(): Promise<boolean> {
   }
 }
 
-testFirestoreConnection();
+// Validate connection to the provisioned Firestore database once after boot
+if (!(globalThis as any).__PCN_FB_CONN_CHECKED__) {
+  (globalThis as any).__PCN_FB_CONN_CHECKED__ = true;
+  setTimeout(() => {
+    void testFirestoreConnection();
+  }, 2000);
+}

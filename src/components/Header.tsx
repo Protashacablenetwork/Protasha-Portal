@@ -64,7 +64,7 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   useEffect(() => {
-    loadWeather();
+    const initialWeatherTimer = setTimeout(loadWeather, 2200);
     const interval = setInterval(loadWeather, 10 * 60 * 1000);
 
     let rafId = 0;
@@ -85,6 +85,7 @@ export const Header: React.FC<HeaderProps> = ({
     window.addEventListener('scroll', handleScroll, { passive: true });
 
     return () => {
+      clearTimeout(initialWeatherTimer);
       clearInterval(interval);
       window.removeEventListener('scroll', handleScroll);
       if (rafId) window.cancelAnimationFrame(rafId);

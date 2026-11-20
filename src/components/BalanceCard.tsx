@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import confetti from 'canvas-confetti';
 import { Eye, EyeOff } from 'lucide-react';
 import { Language } from '../types';
 import { formatCurrency, translations } from '../utils/formatters';
@@ -30,18 +29,21 @@ export const BalanceCard: React.FC<BalanceCardProps> = ({ balance, lang }) => {
     setIsVisible(nextState);
 
     if (nextState) {
-      // Gentle mini confetti burst from card position
-      try {
-        confetti({
-          particleCount: 28,
-          spread: 45,
-          origin: { y: 0.28 },
-          colors: ['#E52E2E', '#FF9800', '#4CAF50', '#2196F3'],
-          disableForReducedMotion: true
-        });
-      } catch {
-        // ignore
-      }
+      // Gentle mini confetti burst loaded on demand
+      import('canvas-confetti')
+        .then((mod) => {
+          const runConfetti = mod.default || (mod as any);
+          if (typeof runConfetti === 'function') {
+            runConfetti({
+              particleCount: 28,
+              spread: 45,
+              origin: { y: 0.28 },
+              colors: ['#E52E2E', '#FF9800', '#4CAF50', '#2196F3'],
+              disableForReducedMotion: true
+            });
+          }
+        })
+        .catch(() => {});
     }
   };
 

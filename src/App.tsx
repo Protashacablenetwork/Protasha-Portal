@@ -16,7 +16,6 @@ import {
   SupportTicket,
   StaffAttendanceRecord
 } from './types';
-import confetti from 'canvas-confetti';
 import { 
   initialNotifications, 
   initialFooterConfig,
@@ -30,25 +29,47 @@ import { sounds } from './utils/audio';
 import { savePersistentImage, getPersistentImage, getSyncPersistentImage, deletePersistentImage } from './utils/imageStorage';
 import { ArrowLeft, ExternalLink, Trash2, Zap } from 'lucide-react';
 
-// Components
+// Core initial-screen components
 import { Header } from './components/Header';
 import { BalanceCard } from './components/BalanceCard';
 import { PrimaryFeatureCards, OperationsHubCards } from './components/PrimaryFeatureCards';
 import { PromoCarousel } from './components/PromoCarousel';
 import { QuickChannels } from './components/QuickChannels';
 import { TransactionList } from './components/TransactionList';
-import { TransactionDetailPage } from './components/TransactionDetailPage';
-import { ReceiptModal } from './components/ReceiptModal';
-import { EntryModal } from './components/EntryModal';
-import { NotificationsModal } from './components/NotificationsModal';
-import { NotificationDetailModal } from './components/NotificationDetailModal';
 import { LoginView } from './components/LoginView';
 import { BottomNav, TabId } from './components/BottomNav';
-import { ServiceNoticeModal } from './components/ServiceNoticeModal';
 import { clearTrackFromCurrentUrl, extractTrackTicketIdFromLocation } from './components/TicketTrackingHelpers';
 import { showConfirm, showToast } from './utils/uiFeedback';
 
+// Lazy confetti trigger so canvas-confetti is zero bytes on initial boot
+const triggerConfetti = (opts: Record<string, any>) => {
+  import('canvas-confetti')
+    .then((mod) => {
+      const fn = mod.default || (mod as any);
+      if (typeof fn === 'function') fn(opts);
+    })
+    .catch(() => {});
+};
+
 // On-demand lazy chunks for heavy views, modals, and sub-portals (fast mobile boot)
+const TransactionDetailPage = React.lazy(() =>
+  import('./components/TransactionDetailPage').then((m) => ({ default: m.TransactionDetailPage }))
+);
+const ReceiptModal = React.lazy(() =>
+  import('./components/ReceiptModal').then((m) => ({ default: m.ReceiptModal }))
+);
+const EntryModal = React.lazy(() =>
+  import('./components/EntryModal').then((m) => ({ default: m.EntryModal }))
+);
+const NotificationsModal = React.lazy(() =>
+  import('./components/NotificationsModal').then((m) => ({ default: m.NotificationsModal }))
+);
+const NotificationDetailModal = React.lazy(() =>
+  import('./components/NotificationDetailModal').then((m) => ({ default: m.NotificationDetailModal }))
+);
+const ServiceNoticeModal = React.lazy(() =>
+  import('./components/ServiceNoticeModal').then((m) => ({ default: m.ServiceNoticeModal }))
+);
 const ProfileView = React.lazy(() =>
   import('./components/ProfileView').then((m) => ({ default: m.ProfileView }))
 );
@@ -220,6 +241,11 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
+    document.body.classList.add('app-ready');
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
     const unsubDriveAuth = initDriveAuth(() => {
       scheduleSilentCloudArchiveSync(500);
     });
@@ -228,7 +254,7 @@ export default function App() {
       unsubDriveAuth();
       unsubArchive();
     };
-  }, []);
+  }, [Boolean(user)]);
 
   // Show Login/Register page: If user is not logged in, show Login page by default!
   const [isLoginOpen, setIsLoginOpen] = useState(() => {
@@ -581,47 +607,51 @@ export default function App() {
     return () => stopGuard();
   }, [user?.id, user?.phone, user?.role, lang]);
 
-  // Real-time synchronization with Cloud Firestore for Staff Accounts
+  // Real-time synchronization with Cloud Firestore for Staff Accounts (deferred after login for fast boot)
   useEffect(() => {
+    if (!user) return;
     let unsubscribe: (() => void) | null = null;
-    try {
-      unsubscribe = onSnapshot(collection(staffDb, 'staff'), async (snapshot) => {
-        if (snapshot.empty) {
-          try {
-            const metaSnap = await getDoc(doc(db, 'settings', 'staff_meta'));
-            if (metaSnap.exists() && metaSnap.data()?.initialized) {
-              setStaffAccounts([]);
-              broadcastStaffAccounts([]);
-            }
-          } catch {}
-          return;
-        }
-        const cloudStaff: StaffAccount[] = [];
-        snapshot.forEach(docSnap => {
-          const data = docSnap.data() as StaffAccount;
-          if (data && (data.id || docSnap.id) && data.name) {
-            cloudStaff.push({
-              ...data,
-              id: String(data.id || docSnap.id),
-              phone: data.phone || '',
-              role: data.role || 'লাইন টেকনিশিয়ান',
-              isActive: data.isActive !== false,
-              transactions: Array.isArray(data.transactions) ? data.transactions : []
-            });
+    const timer = setTimeout(() => {
+      try {
+        unsubscribe = onSnapshot(collection(staffDb, 'staff'), async (snapshot) => {
+          if (snapshot.empty) {
+            try {
+              const metaSnap = await getDoc(doc(db, 'settings', 'staff_meta'));
+              if (metaSnap.exists() && metaSnap.data()?.initialized) {
+                setStaffAccounts([]);
+                broadcastStaffAccounts([]);
+              }
+            } catch {}
+            return;
           }
+          const cloudStaff: StaffAccount[] = [];
+          snapshot.forEach(docSnap => {
+            const data = docSnap.data() as StaffAccount;
+            if (data && (data.id || docSnap.id) && data.name) {
+              cloudStaff.push({
+                ...data,
+                id: String(data.id || docSnap.id),
+                phone: data.phone || '',
+                role: data.role || 'লাইন টেকনিশিয়ান',
+                isActive: data.isActive !== false,
+                transactions: Array.isArray(data.transactions) ? data.transactions : []
+              });
+            }
+          });
+          setStaffAccounts(cloudStaff);
+          broadcastStaffAccounts(cloudStaff);
+        }, (err) => {
+          handleFirestoreError(err, OperationType.LIST, 'staff');
         });
-        setStaffAccounts(cloudStaff);
-        broadcastStaffAccounts(cloudStaff);
-      }, (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'staff');
-      });
-    } catch (e) {
-      console.warn('Staff Firestore listener setup notice:', e);
-    }
+      } catch (e) {
+        console.warn('Staff Firestore listener setup notice:', e);
+      }
+    }, 500);
     return () => {
+      clearTimeout(timer);
       if (unsubscribe) unsubscribe();
     };
-  }, []);
+  }, [Boolean(user)]);
 
   // Real-time synchronization for Banners (Ads) from dedicated 'banners' collection
   useEffect(() => {
@@ -667,6 +697,7 @@ export default function App() {
 
   // Real-time synchronization for Payment Channels from dedicated 'channels' collection
   useEffect(() => {
+    if (!user) return;
     let unsubColl: (() => void) | null = null;
     try {
       unsubColl = onSnapshot(collection(db, 'channels'), async (snapshot) => {
@@ -702,98 +733,110 @@ export default function App() {
     return () => {
       if (unsubColl) unsubColl();
     };
-  }, []);
+  }, [Boolean(user)]);
 
-  // Real-time synchronization for Quick Hisab Owners from dedicated 'quick_hisab_owners' collection
+  // Real-time synchronization for Quick Hisab Owners (deferred after login)
   useEffect(() => {
+    if (!user) return;
     let unsubColl: (() => void) | null = null;
-    try {
-      unsubColl = onSnapshot(collection(db, 'quick_hisab_owners'), async (snapshot) => {
-        if (snapshot.empty) {
-          try {
-            const metaSnap = await getDoc(doc(db, 'settings', 'owners_meta'));
-            if (metaSnap.exists() && metaSnap.data()?.initialized) {
-              setQuickHisabOwners([]);
-              safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify([]));
-            }
-          } catch {}
-          return;
-        }
-        const cloudOwners: QuickHisabOwner[] = [];
-        snapshot.forEach(dSnap => {
-          const o = dSnap.data() as QuickHisabOwner;
-          if (o && o.name) {
-            cloudOwners.push({ ...o, id: String(o.id || dSnap.id) });
+    const timer = setTimeout(() => {
+      try {
+        unsubColl = onSnapshot(collection(db, 'quick_hisab_owners'), async (snapshot) => {
+          if (snapshot.empty) {
+            try {
+              const metaSnap = await getDoc(doc(db, 'settings', 'owners_meta'));
+              if (metaSnap.exists() && metaSnap.data()?.initialized) {
+                setQuickHisabOwners([]);
+                safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify([]));
+              }
+            } catch {}
+            return;
           }
+          const cloudOwners: QuickHisabOwner[] = [];
+          snapshot.forEach(dSnap => {
+            const o = dSnap.data() as QuickHisabOwner;
+            if (o && o.name) {
+              cloudOwners.push({ ...o, id: String(o.id || dSnap.id) });
+            }
+          });
+          setQuickHisabOwners(cloudOwners);
+          try {
+            safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(cloudOwners));
+          } catch {}
+        }, (err) => {
+          handleFirestoreError(err, OperationType.LIST, 'quick_hisab_owners');
         });
-        setQuickHisabOwners(cloudOwners);
-        try {
-          safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(cloudOwners));
-        } catch {}
-      }, (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'quick_hisab_owners');
-      });
-    } catch (e) {
-      console.warn('Quick Hisab Owners listener setup notice:', e);
-    }
+      } catch (e) {
+        console.warn('Quick Hisab Owners listener setup notice:', e);
+      }
+    }, 650);
     return () => {
+      clearTimeout(timer);
       if (unsubColl) unsubColl();
     };
-  }, []);
+  }, [Boolean(user)]);
 
-  // Real-time synchronization for Customer Support Tickets ('support_tickets')
+  // Real-time synchronization for Customer Support Tickets (deferred after login)
   useEffect(() => {
+    if (!user) return;
     let unsubTickets: (() => void) | null = null;
-    try {
-      unsubTickets = onSnapshot(collection(db, 'support_tickets'), (snapshot) => {
-        const list: SupportTicket[] = [];
-        snapshot.forEach((dSnap) => {
-          const item = dSnap.data() as SupportTicket;
-          if (item && (item.id || dSnap.id) && item.customerName) {
-            list.push({ ...item, id: String(item.id || dSnap.id) });
-          }
+    const timer = setTimeout(() => {
+      try {
+        unsubTickets = onSnapshot(collection(db, 'support_tickets'), (snapshot) => {
+          const list: SupportTicket[] = [];
+          snapshot.forEach((dSnap) => {
+            const item = dSnap.data() as SupportTicket;
+            if (item && (item.id || dSnap.id) && item.customerName) {
+              list.push({ ...item, id: String(item.id || dSnap.id) });
+            }
+          });
+          setSupportTickets(list);
+          try {
+            safeStorage.setItem('protyasha_support_tickets', JSON.stringify(list));
+          } catch {}
+        }, (err) => {
+          handleFirestoreError(err, OperationType.LIST, 'support_tickets');
         });
-        setSupportTickets(list);
-        try {
-          safeStorage.setItem('protyasha_support_tickets', JSON.stringify(list));
-        } catch {}
-      }, (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'support_tickets');
-      });
-    } catch (e) {
-      console.warn('Support tickets Firestore listener notice:', e);
-    }
+      } catch (e) {
+        console.warn('Support tickets Firestore listener notice:', e);
+      }
+    }, 750);
     return () => {
+      clearTimeout(timer);
       if (unsubTickets) unsubTickets();
     };
-  }, []);
+  }, [Boolean(user)]);
 
-  // Real-time synchronization for Staff Attendance & Leave ('staff_attendance')
+  // Real-time synchronization for Staff Attendance & Leave (deferred after login)
   useEffect(() => {
+    if (!user) return;
     let unsubAttendance: (() => void) | null = null;
-    try {
-      unsubAttendance = onSnapshot(collection(db, 'staff_attendance'), (snapshot) => {
-        const list: StaffAttendanceRecord[] = [];
-        snapshot.forEach((dSnap) => {
-          const item = dSnap.data() as StaffAttendanceRecord;
-          if (item && (item.id || dSnap.id) && item.staffId && item.date) {
-            list.push({ ...item, id: String(item.id || dSnap.id) });
-          }
+    const timer = setTimeout(() => {
+      try {
+        unsubAttendance = onSnapshot(collection(db, 'staff_attendance'), (snapshot) => {
+          const list: StaffAttendanceRecord[] = [];
+          snapshot.forEach((dSnap) => {
+            const item = dSnap.data() as StaffAttendanceRecord;
+            if (item && (item.id || dSnap.id) && item.staffId && item.date) {
+              list.push({ ...item, id: String(item.id || dSnap.id) });
+            }
+          });
+          setAttendanceRecords(list);
+          try {
+            safeStorage.setItem('protyasha_staff_attendance', JSON.stringify(list));
+          } catch {}
+        }, (err) => {
+          handleFirestoreError(err, OperationType.LIST, 'staff_attendance');
         });
-        setAttendanceRecords(list);
-        try {
-          safeStorage.setItem('protyasha_staff_attendance', JSON.stringify(list));
-        } catch {}
-      }, (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'staff_attendance');
-      });
-    } catch (e) {
-      console.warn('Staff attendance Firestore listener notice:', e);
-    }
+      } catch (e) {
+        console.warn('Staff attendance Firestore listener notice:', e);
+      }
+    }, 850);
     return () => {
+      clearTimeout(timer);
       if (unsubAttendance) unsubAttendance();
     };
-  }, []);
+  }, [Boolean(user)]);
 
   const isNotifReadForUser = useCallback((notif: NotificationItem) => {
     if (readNotifIds.includes(notif.id)) return true;
@@ -930,79 +973,84 @@ export default function App() {
     return () => clearInterval(interval);
   }, [user]);
   useEffect(() => {
-    // Safety Timeout: Force hide splash screen after 4s regardless of Firestore status
-    const safetyTimer = setTimeout(() => {
-      document.body.classList.add('app-ready');
-    }, 4000);
+    document.body.classList.add('app-ready');
+    // Skip redundant 5x Firestore seed reads once this device has confirmed initialization
+    if (safeStorage.getItem('protyasha_db_seeded_v1') === '1') return;
 
-    const bootstrapNewDatabase = async () => {
-      const nowIso = new Date().toISOString();
-      try {
-        const ensureCollectionSeeded = async <T extends { id: string | number }>(
-          metaDocId: string,
-          colName: string,
-          targetDb: typeof db,
-          items: T[],
-          normalize: (item: T, idx: number) => Record<string, any>
-        ) => {
-          try {
-            const metaRef = doc(db, 'settings', metaDocId);
-            const metaSnap = await getDoc(metaRef);
-            if (metaSnap.exists() && metaSnap.data()?.initialized) return;
+    const timer = setTimeout(() => {
+      const bootstrapNewDatabase = async () => {
+        const nowIso = new Date().toISOString();
+        try {
+          const ensureCollectionSeeded = async <T extends { id: string | number }>(
+            metaDocId: string,
+            colName: string,
+            targetDb: typeof db,
+            items: T[],
+            normalize: (item: T, idx: number) => Record<string, any>
+          ) => {
+            try {
+              const metaRef = doc(db, 'settings', metaDocId);
+              const metaSnap = await getDoc(metaRef);
+              if (metaSnap.exists() && metaSnap.data()?.initialized) return true;
 
-            const existingSnap = await getDocs(collection(targetDb, colName));
-            if (existingSnap.empty && items.length > 0) {
-              await Promise.all(
-                items.map((item, idx) =>
-                  safeSetDoc(doc(targetDb, colName, String(item.id)), normalize(item, idx)).catch(() => {})
-                )
-              );
+              const existingSnap = await getDocs(collection(targetDb, colName));
+              if (existingSnap.empty && items.length > 0) {
+                await Promise.all(
+                  items.map((item, idx) =>
+                    safeSetDoc(doc(targetDb, colName, String(item.id)), normalize(item, idx)).catch(() => {})
+                  )
+                );
+              }
+              await safeSetDoc(metaRef, { initialized: true, updatedAt: nowIso }).catch(() => {});
+              return true;
+            } catch (e) {
+              console.warn(`Seed check notice for ${colName}:`, e);
+              return false;
             }
-            await safeSetDoc(metaRef, { initialized: true, updatedAt: nowIso }).catch(() => {});
-          } catch (e) {
-            console.warn(`Seed check notice for ${colName}:`, e);
+          };
+
+          const results = await Promise.all([
+            ensureCollectionSeeded('banners_meta', 'banners', db, initialBanners, (b, idx) => ({
+              ...b,
+              id: String(b.id),
+              isActive: b.isActive !== false,
+              priority: b.priority ?? idx + 1,
+              updatedAt: nowIso
+            })),
+            ensureCollectionSeeded('channels_meta', 'channels', db, initialPaymentChannels, (ch, idx) => ({
+              ...ch,
+              id: String(ch.id),
+              order: idx + 1,
+              updatedAt: nowIso
+            })),
+            ensureCollectionSeeded('staff_meta', 'staff', staffDb, initialStaffAccounts, (stf) => ({
+              ...stf,
+              id: String(stf.id),
+              phone: stf.phone || ''
+            })),
+            ensureCollectionSeeded('owners_meta', 'quick_hisab_owners', db, initialQuickHisabOwners, (owner) => ({
+              ...owner,
+              id: String(owner.id)
+            })),
+            ensureCollectionSeeded('users_meta', 'users', db, initialAppUsers, (u) => ({
+              ...u,
+              id: String(u.id),
+              role: u.role || 'user',
+              status: u.status || 'active'
+            }))
+          ]);
+          if (results.every(Boolean)) {
+            safeStorage.setItem('protyasha_db_seeded_v1', '1');
           }
-        };
+        } catch (err) {
+          console.warn('Initial database bootstrap error:', err);
+        }
+      };
 
-        await Promise.all([
-          ensureCollectionSeeded('banners_meta', 'banners', db, initialBanners, (b, idx) => ({
-            ...b,
-            id: String(b.id),
-            isActive: b.isActive !== false,
-            priority: b.priority ?? idx + 1,
-            updatedAt: nowIso
-          })),
-          ensureCollectionSeeded('channels_meta', 'channels', db, initialPaymentChannels, (ch, idx) => ({
-            ...ch,
-            id: String(ch.id),
-            order: idx + 1,
-            updatedAt: nowIso
-          })),
-          ensureCollectionSeeded('staff_meta', 'staff', staffDb, initialStaffAccounts, (stf) => ({
-            ...stf,
-            id: String(stf.id),
-            phone: stf.phone || ''
-          })),
-          ensureCollectionSeeded('owners_meta', 'quick_hisab_owners', db, initialQuickHisabOwners, (owner) => ({
-            ...owner,
-            id: String(owner.id)
-          })),
-          ensureCollectionSeeded('users_meta', 'users', db, initialAppUsers, (u) => ({
-            ...u,
-            id: String(u.id),
-            role: u.role || 'user',
-            status: u.status || 'active'
-          }))
-        ]);
-      } catch (err) {
-        console.warn('Initial database bootstrap error:', err);
-      }
-    };
+      void bootstrapNewDatabase();
+    }, 1500);
 
-    bootstrapNewDatabase().finally(() => {
-      clearTimeout(safetyTimer);
-      document.body.classList.add('app-ready');
-    });
+    return () => clearTimeout(timer);
   }, []);
 
   const refreshAllData = useCallback(async () => {
@@ -1366,6 +1414,7 @@ export default function App() {
 
   // Automated Real-Time Weather, Prayer Times & Location-Based Sehri/Iftar Notification Monitoring
   useEffect(() => {
+    if (!user) return;
     let isSubscribed = true;
 
     const runAutomatedMonitoring = async () => {
@@ -1454,8 +1503,8 @@ export default function App() {
       }
     };
 
-    // Defer initial monitoring slightly so app launch is instant
-    const initialTimer = setTimeout(runAutomatedMonitoring, 1800);
+    // Defer initial monitoring so app launch & first paint are instant
+    const initialTimer = setTimeout(runAutomatedMonitoring, 2400);
     // Check periodically in background
     const interval = setInterval(runAutomatedMonitoring, 5 * 60 * 1000);
     return () => {
@@ -1463,10 +1512,11 @@ export default function App() {
       clearTimeout(initialTimer);
       clearInterval(interval);
     };
-  }, [currentDistrict.nameEn, showAppToast]);
+  }, [Boolean(user), currentDistrict.nameEn, showAppToast]);
 
   // Dedicated 30-second Sehri & Iftar Real-Time Reminder Scheduler (30m, 10m, Iftar time & Daily timetable)
   useEffect(() => {
+    if (!user) return;
     const checkFastingReminder = async () => {
       const enabled = isFastingReminderEnabled();
       if (!enabled) return;
@@ -1524,7 +1574,7 @@ export default function App() {
       clearInterval(interval);
       window.removeEventListener('fasting-reminder-setting-changed', handleSettingChange);
     };
-  }, [currentDistrict, showAppToast]);
+  }, [Boolean(user), currentDistrict, showAppToast]);
 
   // Handle manual or automatic app update check & trigger notification if new update/features exist
   const handleUpdateCheckResult = useCallback(
@@ -1990,8 +2040,9 @@ export default function App() {
     safeStorage.setItem('protyasha_lang', lang);
   }, [lang]);
 
-  // Real-time Cloud Synchronization with Google Cloud Firestore
+  // Real-time Cloud Synchronization with Google Cloud Firestore (active once logged in)
   useEffect(() => {
+    if (!user) return;
     // 1. Listen to Transaction Collection directly for instant updates from all portals
     let unsubscribeTransactions: (() => void) | null = null;
     try {
@@ -2037,7 +2088,7 @@ export default function App() {
     return () => {
       if (unsubscribeTransactions) unsubscribeTransactions();
     };
-  }, [userKey]);
+  }, [Boolean(user), userKey]);
 
   // Real-time listeners for settings documents (service control, notifications, footer, admin profile, audit logs)
   useEffect(() => {
@@ -2193,8 +2244,10 @@ export default function App() {
     };
   }, []);
 
-  // Sync state to local storage with safety check
+  // Sync state to local storage with safety check (skip redundant initial hydration write)
+  const isStorageSyncMountedRef = useRef(false);
   useEffect(() => {
+    if (!isStorageSyncMountedRef.current) return;
     try {
       safeStorage.setItem('protyasha_transactions', JSON.stringify(transactions));
     } catch (e) {
@@ -2203,6 +2256,7 @@ export default function App() {
   }, [transactions]);
 
   useEffect(() => {
+    if (!isStorageSyncMountedRef.current) return;
     try {
       safeStorage.setItem('protyasha_staff', JSON.stringify(staffAccounts));
     } catch (e) {
@@ -2211,6 +2265,7 @@ export default function App() {
   }, [staffAccounts]);
 
   useEffect(() => {
+    if (!isStorageSyncMountedRef.current) return;
     try {
       safeStorage.setItem('protyasha_channels', JSON.stringify(channels));
     } catch (e) {
@@ -2218,8 +2273,8 @@ export default function App() {
     }
   }, [channels]);
 
-
   useEffect(() => {
+    if (!isStorageSyncMountedRef.current) return;
     try {
       safeStorage.setItem('protyasha_banners', JSON.stringify(banners));
     } catch (e) {
@@ -2228,6 +2283,7 @@ export default function App() {
   }, [banners]);
 
   useEffect(() => {
+    if (!isStorageSyncMountedRef.current) return;
     try {
       safeStorage.setItem('protyasha_notifications', JSON.stringify(notifications));
     } catch (e) {
@@ -2236,6 +2292,7 @@ export default function App() {
   }, [notifications]);
 
   useEffect(() => {
+    if (!isStorageSyncMountedRef.current) return;
     try {
       safeStorage.setItem('protyasha_footer', JSON.stringify(footerConfig));
     } catch (e) {
@@ -2244,12 +2301,17 @@ export default function App() {
   }, [footerConfig]);
 
   useEffect(() => {
+    if (!isStorageSyncMountedRef.current) return;
     try {
       safeStorage.setItem('protyasha_audit', JSON.stringify(auditLogs));
     } catch (e) {
       console.warn('LocalStorage limit reached for audit logs:', e);
     }
   }, [auditLogs]);
+
+  useEffect(() => {
+    isStorageSyncMountedRef.current = true;
+  }, []);
 
   useEffect(() => {
     if (user) {
@@ -2410,15 +2472,11 @@ export default function App() {
     sounds.playSuccess();
     saveNotificationsToCloud(updatedNotifications);
 
-    try {
-      confetti({
-        particleCount: 30,
-        spread: 60,
-        origin: { y: 0.3 }
-      });
-    } catch {
-      // ignore
-    }
+    triggerConfetti({
+      particleCount: 30,
+      spread: 60,
+      origin: { y: 0.3 }
+    });
   };
 
   const handleMarkNotificationAsRead = (id: string) => {
@@ -2520,15 +2578,11 @@ export default function App() {
     }
 
     sounds.playSuccess();
-    try {
-      confetti({
-        particleCount: 35,
-        spread: 60,
-        origin: { y: 0.6 }
-      });
-    } catch {
-      // ignore
-    }
+    triggerConfetti({
+      particleCount: 35,
+      spread: 60,
+      origin: { y: 0.6 }
+    });
 
     let updatedTransactions: Transaction[];
     let savedTrx: Transaction;
@@ -3104,19 +3158,27 @@ export default function App() {
           />
         ) : selectedTransaction ? (
           /* CARD TAP OPENS NEW PAGE (NOT POPUP) */
-          <TransactionDetailPage
-            transaction={selectedTransaction}
-            lang={lang}
-            user={user}
-            onBack={() => closeOverlayViaBack(() => setSelectedTransaction(null))}
-            onEdit={handleStartEdit}
-            onDelete={handleDeleteTransaction}
-            onViewReceipt={(trx) => {
-              setReceiptTransaction(trx);
-              pushHistoryStep();
-            }}
-            onOpenLogin={openLoginView}
-          />
+          <React.Suspense
+            fallback={
+              <div className="min-h-screen flex items-center justify-center bg-white dark:bg-slate-900">
+                <div className="w-9 h-9 rounded-full border-4 border-rose-500/25 border-t-[#E52E2E] animate-spin" />
+              </div>
+            }
+          >
+            <TransactionDetailPage
+              transaction={selectedTransaction}
+              lang={lang}
+              user={user}
+              onBack={() => closeOverlayViaBack(() => setSelectedTransaction(null))}
+              onEdit={handleStartEdit}
+              onDelete={handleDeleteTransaction}
+              onViewReceipt={(trx) => {
+                setReceiptTransaction(trx);
+                pushHistoryStep();
+              }}
+              onOpenLogin={openLoginView}
+            />
+          </React.Suspense>
         ) : (
           <>
             {/* View Switcher by Tab */}
@@ -3753,91 +3815,99 @@ export default function App() {
           />
         )}
 
-        {/* Printable Thermal Receipt Modal */}
-        <ReceiptModal
-          transaction={receiptTransaction}
-          lang={lang}
-          onClose={() => closeOverlayViaBack(() => setReceiptTransaction(null))}
-        />
+        {/* Printable Thermal Receipt Modal (lazy-mounted on demand) */}
+        {receiptTransaction && (
+          <ReceiptModal
+            transaction={receiptTransaction}
+            lang={lang}
+            onClose={() => closeOverlayViaBack(() => setReceiptTransaction(null))}
+          />
+        )}
 
-        {/* Income / Expense Entry & Edit Modal */}
-        <EntryModal
-          isOpen={isEntryModalOpen}
-          type={entryType}
-          initialMethod={initialEntryMethod}
-          editingTransaction={editingTransaction}
-          existingCustomers={existingCustomers}
-          channels={channels}
-          lang={lang}
-          onClose={() =>
-            closeOverlayViaBack(() => {
-              setIsEntryModalOpen(false);
-              setEditingTransaction(null);
-            })
-          }
-          onSave={handleSaveEntry}
-        />
+        {/* Income / Expense Entry & Edit Modal (lazy-mounted on demand) */}
+        {isEntryModalOpen && (
+          <EntryModal
+            isOpen={isEntryModalOpen}
+            type={entryType}
+            initialMethod={initialEntryMethod}
+            editingTransaction={editingTransaction}
+            existingCustomers={existingCustomers}
+            channels={channels}
+            lang={lang}
+            onClose={() =>
+              closeOverlayViaBack(() => {
+                setIsEntryModalOpen(false);
+                setEditingTransaction(null);
+              })
+            }
+            onSave={handleSaveEntry}
+          />
+        )}
 
-        {/* Notifications Modal (Red Bell Click / Broadcast) */}
-        <NotificationsModal
-          isOpen={isNotificationsOpen}
-          notifications={userNotifications}
-          lang={lang}
-          user={user}
-          onClose={() =>
-            closeOverlayViaBack(() => {
-              setIsNotificationsOpen(false);
+        {/* Notifications Modal (Red Bell Click / Broadcast - lazy-mounted on demand) */}
+        {isNotificationsOpen && (
+          <NotificationsModal
+            isOpen={isNotificationsOpen}
+            notifications={userNotifications}
+            lang={lang}
+            user={user}
+            onClose={() =>
+              closeOverlayViaBack(() => {
+                setIsNotificationsOpen(false);
+                setEditingNotification(null);
+              })
+            }
+            onSelectNotification={(notif) => {
+              handleMarkNotificationAsRead(notif.id);
+              setSelectedNotificationDetail(notif);
+              pushHistoryStep();
+            }}
+            onMarkAllAsRead={handleMarkAllAsRead}
+            onSendNotification={handleSendNotification}
+            onEditNotification={(notif) => {
+              const updatedNotifications = notifications.map(n => n.id === notif.id ? notif : n);
+              setNotifications(updatedNotifications);
+              saveNotificationsToCloud(updatedNotifications);
               setEditingNotification(null);
-            })
-          }
-          onSelectNotification={(notif) => {
-            handleMarkNotificationAsRead(notif.id);
-            setSelectedNotificationDetail(notif);
-            pushHistoryStep();
-          }}
-          onMarkAllAsRead={handleMarkAllAsRead}
-          onSendNotification={handleSendNotification}
-          onEditNotification={(notif) => {
-            const updatedNotifications = notifications.map(n => n.id === notif.id ? notif : n);
-            setNotifications(updatedNotifications);
-            saveNotificationsToCloud(updatedNotifications);
-            setEditingNotification(null);
-          }}
-          initialEditingNotif={editingNotification}
-        />
+            }}
+            initialEditingNotif={editingNotification}
+          />
+        )}
 
-        {/* Notification Detail View Modal (Tapping any notification shows full details) */}
-        <NotificationDetailModal
-          notification={selectedNotificationDetail}
-          lang={lang}
-          user={user}
-          onClose={() => closeOverlayViaBack(() => setSelectedNotificationDetail(null))}
-          onDelete={handleDeleteNotification}
-          onMarkAsRead={handleMarkNotificationAsRead}
-          onOpenWeather={() => {
-            sounds.playTap();
-            setIsWeatherOpen(true);
-            pushHistoryStep();
-          }}
-          onOpenPrayerTimes={() => {
-            sounds.playTap();
-            setPrayerInitialView('daily');
-            setIsPrayerTimesOpen(true);
-            pushHistoryStep();
-          }}
-          onOpenRamadanSchedule={() => {
-            sounds.playTap();
-            setPrayerInitialView('ramadan');
-            setIsPrayerTimesOpen(true);
-            pushHistoryStep();
-          }}
-          onEdit={(notif) => {
-            setSelectedNotificationDetail(null);
-            setEditingNotification(notif);
-            setIsNotificationsOpen(true);
-            pushHistoryStep();
-          }}
-        />
+        {/* Notification Detail View Modal (lazy-mounted on demand) */}
+        {selectedNotificationDetail && (
+          <NotificationDetailModal
+            notification={selectedNotificationDetail}
+            lang={lang}
+            user={user}
+            onClose={() => closeOverlayViaBack(() => setSelectedNotificationDetail(null))}
+            onDelete={handleDeleteNotification}
+            onMarkAsRead={handleMarkNotificationAsRead}
+            onOpenWeather={() => {
+              sounds.playTap();
+              setIsWeatherOpen(true);
+              pushHistoryStep();
+            }}
+            onOpenPrayerTimes={() => {
+              sounds.playTap();
+              setPrayerInitialView('daily');
+              setIsPrayerTimesOpen(true);
+              pushHistoryStep();
+            }}
+            onOpenRamadanSchedule={() => {
+              sounds.playTap();
+              setPrayerInitialView('ramadan');
+              setIsPrayerTimesOpen(true);
+              pushHistoryStep();
+            }}
+            onEdit={(notif) => {
+              setSelectedNotificationDetail(null);
+              setEditingNotification(notif);
+              setIsNotificationsOpen(true);
+              pushHistoryStep();
+            }}
+          />
+        )}
 
         {/* Profile Full View Modal */}
         {isProfileOpen && (

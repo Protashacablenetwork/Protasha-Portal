@@ -3,8 +3,8 @@ import { db } from './firebase';
 import { NotificationItem } from '../types';
 import { safeStorage } from './safeStorage';
 
-export const CURRENT_APP_VERSION = '2.6.2';
-export const CURRENT_BUILD_NUMBER = 262;
+export const CURRENT_APP_VERSION = '2.6.3';
+export const CURRENT_BUILD_NUMBER = 263;
 export const LAST_ACK_VERSION_KEY = 'protyasha_last_ack_app_version';
 export const LAST_CHECKED_AT_KEY = 'protyasha_last_update_checked_at';
 
