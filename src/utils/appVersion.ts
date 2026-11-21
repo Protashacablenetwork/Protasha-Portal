@@ -3,8 +3,8 @@ import { db } from './firebase';
 import { NotificationItem } from '../types';
 import { safeStorage } from './safeStorage';
 
-export const CURRENT_APP_VERSION = '2.6.3';
-export const CURRENT_BUILD_NUMBER = 263;
+export const CURRENT_APP_VERSION = '2.6.4';
+export const CURRENT_BUILD_NUMBER = 264;
 export const LAST_ACK_VERSION_KEY = 'protyasha_last_ack_app_version';
 export const LAST_CHECKED_AT_KEY = 'protyasha_last_update_checked_at';
 
@@ -21,20 +21,20 @@ export interface AppVersionInfo {
 export const CURRENT_RELEASE_INFO: AppVersionInfo = {
   version: CURRENT_APP_VERSION,
   buildNumber: CURRENT_BUILD_NUMBER,
-  releaseDate: '2026-11-20',
-  titleBn: 'স্পিড, কোড-স্প্লিটিং ও আধুনিক প্রযুক্তি আপডেট',
-  titleEn: 'Performance, Code-Splitting & Modern Tech Update',
+  releaseDate: '2026-11-21',
+  titleBn: 'নেটিভ বিল ম্যানেজার প্রো ও স্মার্ট ব্যাক-বাটন আপডেট',
+  titleEn: 'Native Bill Manager Pro & Hardware Back-Button Update',
   featuresBn: [
-    'স্মার্ট কোড-স্প্লিটিং ও লেজি লোডিং — মোবাইল ও ধীর ইন্টারনেটে দ্রুত অ্যাপ চালু হবে',
-    'নিজস্ব নোটিফিকেশন টোস্ট ও কনফার্মেশন ডায়ালগ (সব ব্রাউজার ও মোবাইল অ্যাপে নিরাপদ)',
-    'স্বয়ংক্রিয় চাংক রিকভারি ও রিয়াল-টাইম লোকেশন ভিত্তিক সেহরি-ইফতার নোটিফিকেশন',
-    'পাবলিক টিকেট ট্র্যাকার আলাদা লাইটওয়েট মডিউল ও উন্নত ক্যাশ ব্যবস্থাপনা'
+    'মূল অ্যাপের ভেতরেই সম্পূর্ণ নেটিভ বিল ম্যানেজার প্রো পোর্টাল সংযুক্ত (কোনো এক্সটার্নাল আইফ্রেম ছাড়াই)',
+    'ডিভাইসের অরজিনাল ব্যাক বাটন দিয়ে মডাল, মেনু ও টেবিল থেকে ধাপে ধাপে হোমে ফেরার সুবিধা',
+    'অফলাইন ক্যাশ, এরিয়া ফিল্টার, ডুপ্লিকেট চেক, তাগাদা এসএমএস ও সিঙ্গেল-পেজ মানি রসিদ প্রিন্ট',
+    'স্টাফ ও মালিক পদবি ভিত্তিক হিসাব সংরক্ষণ এবং এডমিন ইন-অ্যাপ আপডেট সিস্টেম'
   ],
   featuresEn: [
-    'Smart code-splitting & lazy loading for faster mobile startup',
-    'Non-blocking custom toast & confirmation dialogs safe in all WebViews',
-    'Auto chunk recovery & live location-based Sehri-Iftar reminders',
-    'Lightweight standalone public ticket tracker & smart cache revalidation'
+    'Native in-app Bill Manager Pro dashboard integrated directly without external iframe delays',
+    'Full device hardware & browser Back button LIFO navigation across modals, drawers, and views',
+    'Offline caching, area filters, duplicate entry detector, due SMS & single-page receipt print',
+    'Staff role dropdown separation and admin in-app version broadcast tools'
   ]
 };
 

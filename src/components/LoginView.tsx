@@ -54,6 +54,9 @@ interface LoginViewProps {
   sessionNotice?: string;
   onClearSessionNotice?: () => void;
   onSubViewChange?: (isSubView: boolean) => void;
+  isVisitorModeEnabled?: boolean;
+  visitorDisabledTitle?: string;
+  visitorDisabledMessage?: string;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({
@@ -69,7 +72,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
   onOpenHelpModal,
   sessionNotice,
   onClearSessionNotice,
-  onSubViewChange
+  onSubViewChange,
+  isVisitorModeEnabled = true,
+  visitorDisabledTitle,
+  visitorDisabledMessage
 }) => {
   const isBn = lang === 'bn';
   const t = translations[lang];
@@ -84,8 +90,8 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [pin, setPin] = useState('');
   const [showPin, setShowPin] = useState(false);
 
-  // Informational Pop-up Modal State for Store, Offer, and Help
-  const [activeModal, setActiveModal] = useState<'store' | 'offer' | 'help' | null>(null);
+  // Informational Pop-up Modal State for Store, Offer, Help, and Visitor Restriction Notice
+  const [activeModal, setActiveModal] = useState<'store' | 'offer' | 'help' | 'visitor_blocked' | null>(null);
 
   useSubViewBack(
     true,
@@ -657,9 +663,13 @@ export const LoginView: React.FC<LoginViewProps> = ({
     }
   };
 
-  // 1-Tap Visitor Mode Login
+  // 1-Tap Visitor Mode Login (Respects Admin Visitor Mode Control)
   const handleVisitorLogin = () => {
     sounds.playTap();
+    if (!isVisitorModeEnabled) {
+      setActiveModal('visitor_blocked');
+      return;
+    }
     sounds.playSuccess();
     onLoginSuccess({
       email: 'visitor@protashacablenetwork.com',
@@ -1145,10 +1155,23 @@ export const LoginView: React.FC<LoginViewProps> = ({
           <button
             type="button"
             onClick={handleVisitorLogin}
-            className="w-full py-2.5 px-3 rounded-2xl bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 shadow-2xs flex items-center justify-center gap-2 text-xs font-bold active:scale-[0.98] transition-all cursor-pointer"
+            className={`w-full py-2.5 px-3 rounded-2xl border shadow-2xs flex items-center justify-center gap-2 text-xs font-bold active:scale-[0.98] transition-all cursor-pointer ${
+              isVisitorModeEnabled
+                ? 'bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700'
+                : 'bg-rose-50/70 dark:bg-slate-800/80 hover:bg-rose-100/70 text-slate-700 dark:text-slate-200 border-rose-200 dark:border-rose-900/60'
+            }`}
           >
-            <Users className="w-4 h-4 text-[#E52E2E]" />
+            {isVisitorModeEnabled ? (
+              <Users className="w-4 h-4 text-[#E52E2E] shrink-0" />
+            ) : (
+              <Lock className="w-4 h-4 text-[#E52E2E] shrink-0" />
+            )}
             <span>{isBn ? 'সরাসরি ভিজিটর হিসেবে দেখুন (লগইন ছাড়া)' : 'Browse as Guest Visitor (No login needed)'}</span>
+            {!isVisitorModeEnabled && (
+              <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded-full bg-[#E52E2E] text-white shrink-0">
+                {isBn ? 'বন্ধ' : 'OFF'}
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -1241,22 +1264,29 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${
                   activeModal === 'store' ? 'bg-rose-50 dark:bg-rose-950/50 text-[#E52E2E]' :
                   activeModal === 'offer' ? 'bg-amber-50 dark:bg-amber-950/50 text-amber-600' :
+                  activeModal === 'visitor_blocked' ? 'bg-rose-50 dark:bg-rose-950/50 text-[#E52E2E]' :
                   'bg-blue-50 dark:bg-blue-950/50 text-blue-600'
                 }`}>
                   {activeModal === 'store' && <Store className="w-5 h-5" />}
                   {activeModal === 'offer' && <Tag className="w-5 h-5" />}
                   {activeModal === 'help' && <Headphones className="w-5 h-5" />}
+                  {activeModal === 'visitor_blocked' && <UserPlus className="w-5 h-5" />}
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900 dark:text-white leading-tight">
                     {activeModal === 'store' && (isBn ? 'প্রত্যাশা ক্যাবল নেটওয়ার্ক' : 'Protasha Cable Network')}
                     {activeModal === 'offer' && (isBn ? 'চলমান স্পেশাল অফার' : 'Special Offers')}
                     {activeModal === 'help' && (isBn ? 'কাস্টমার সাপোর্ট ও সাহায্য' : 'Customer Support & Help')}
+                    {activeModal === 'visitor_blocked' &&
+                      (visitorDisabledTitle?.trim() ||
+                        (isBn ? 'নতুন একাউন্ট তৈরি করুন' : 'Create an Account'))}
                   </h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
                     {activeModal === 'store' && (isBn ? 'প্রধান শাখা ও কাস্টমার পয়েন্ট' : 'Head Office & Customer Point')}
                     {activeModal === 'offer' && (isBn ? 'বর্তমান ডিসকাউন্ট প্যাকেজ' : 'Active Discounts')}
                     {activeModal === 'help' && (isBn ? '২৪/৭ সার্বক্ষণিক হেল্পলাইন' : '24/7 Dedicated Support')}
+                    {activeModal === 'visitor_blocked' &&
+                      (isBn ? 'সরাসরি ভিজিটর মোড বর্তমানে বন্ধ রয়েছে' : 'Direct Visitor Mode is currently disabled')}
                   </p>
                 </div>
               </div>
@@ -1409,19 +1439,73 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   </div>
                 </div>
               )}
+
+              {activeModal === 'visitor_blocked' && (
+                <div className="space-y-3">
+                  <div className="p-3.5 rounded-2xl bg-rose-50/80 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/60 text-slate-700 dark:text-slate-200">
+                    <p className="font-semibold leading-relaxed text-xs sm:text-[13px]">
+                      {visitorDisabledMessage?.trim() ||
+                        (isBn
+                          ? 'অ্যাডমিন বর্তমানে সরাসরি ভিজিটর মোড বন্ধ রেখেছেন। অ্যাপের তথ্য দেখতে ও সেবা ব্যবহার করতে অনুগ্রহ করে আপনার মোবাইল নাম্বার দিয়ে একটি নতুন একাউন্ট খুলুন অথবা লগইন করুন।'
+                          : 'Direct Visitor Mode is currently turned off by the admin. Please create a new account with your mobile number or sign in to access the app.')}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/25 border border-emerald-200/80 dark:border-emerald-900/50 flex items-start gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <p className="text-[11px] font-medium text-emerald-900 dark:text-emerald-200 leading-relaxed">
+                      {isBn
+                        ? 'নতুন একাউন্ট খুলতে মাত্র ৩০ সেকেন্ড সময় লাগবে — নাম, মোবাইল নাম্বার ও পিন দিলেই সরাসরি প্রবেশ করতে পারবেন।'
+                        : 'Creating an account takes only 30 seconds — just enter your name, mobile number, and a PIN.'}
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Close / Action Button */}
-            <button
-              type="button"
-              onClick={() => {
-                sounds.playTap();
-                setActiveModal(null);
-              }}
-              className="w-full mt-4 py-3 rounded-2xl bg-[#E52E2E] hover:bg-[#D32F2F] text-white font-bold text-sm shadow-md active:scale-98 transition-all cursor-pointer"
-            >
-              {isBn ? 'ঠিক আছে' : 'OK'}
-            </button>
+            {/* Close / Action Buttons */}
+            {activeModal === 'visitor_blocked' ? (
+              <div className="mt-4 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    sounds.playTap();
+                    setActiveModal(null);
+                    setAuthMode('register');
+                    setErrorMsg('');
+                    setSuccessMsg('');
+                    setCanForceAdminLogin(false);
+                  }}
+                  className="w-full py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:opacity-95 text-white font-bold text-sm shadow-md shadow-emerald-600/25 flex items-center justify-center gap-2 active:scale-98 transition-all cursor-pointer"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>{isBn ? 'নতুন একাউন্ট খুলুন' : 'Create New Account'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    sounds.playTap();
+                    setActiveModal(null);
+                    setAuthMode('login');
+                    setErrorMsg('');
+                  }}
+                  className="w-full py-2.5 rounded-2xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs flex items-center justify-center gap-1.5 active:scale-98 transition-all cursor-pointer"
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  <span>{isBn ? 'আগে থেকেই একাউন্ট আছে? লগইন করুন' : 'Already have an account? Sign In'}</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playTap();
+                  setActiveModal(null);
+                }}
+                className="w-full mt-4 py-3 rounded-2xl bg-[#E52E2E] hover:bg-[#D32F2F] text-white font-bold text-sm shadow-md active:scale-98 transition-all cursor-pointer"
+              >
+                {isBn ? 'ঠিক আছে' : 'OK'}
+              </button>
+            )}
           </div>
         </div>
       )}

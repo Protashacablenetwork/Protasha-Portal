@@ -49,7 +49,9 @@
     'lucide-react': 'https://esm.sh/lucide-react@0.546.0?deps=react@19.0.1',
     'recharts': 'https://esm.sh/recharts@3.10.1?deps=react@19.0.1,react-dom@19.0.1',
     'canvas-confetti': 'https://esm.sh/canvas-confetti@1.9.4',
-    'motion/react': 'https://esm.sh/motion@12.23.24/react?deps=react@19.0.1,react-dom@19.0.1'
+    'motion/react': 'https://esm.sh/motion@12.23.24/react?deps=react@19.0.1,react-dom@19.0.1',
+    'xlsx': 'https://esm.sh/xlsx@0.18.5',
+    'chart.js': 'https://esm.sh/chart.js@4.6.1'
   };
 
   // Immediately preload core external ES modules in parallel with cache lookup & Tailwind CSS

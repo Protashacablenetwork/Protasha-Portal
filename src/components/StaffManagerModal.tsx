@@ -1705,19 +1705,25 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
               />
             </div>
 
-            {/* Role */}
+            {/* Role / Designation Dropdown */}
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                পদবী / দায়িত্ব *
+                পদবি বা দায়িত্ব *
               </label>
-              <input
-                type="text"
+              <select
                 required
                 value={staffRole}
                 onChange={(e) => setStaffRole(e.target.value)}
-                placeholder="যেমন: কালেকশন অফিসার, লাইন টেকনিশিয়ান"
                 className="w-full h-10 px-3 text-xs rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
-              />
+              >
+                <option value="লাইন টেকনিশিয়ান">লাইন টেকনিশিয়ান (Line Technician)</option>
+                <option value="সিনিয়র লাইন টেকনিশিয়ান ও স্প্লাইসার">সিনিয়র লাইন টেকনিশিয়ান ও স্প্লাইসার (Senior Tech & Splicer)</option>
+                <option value="ম্যানেজার / কালেক্টর">ম্যানেজার / কালেক্টর (Manager / Collector)</option>
+                <option value="বিল সংগ্রাহক">বিল সংগ্রাহক (Bill Collector)</option>
+                <option value="মালিক / অংশীদার">মালিক / অংশীদার (Owner / Partner - লভ্যাংশ থেকে কর্তন)</option>
+                <option value="সাধারণ সদস্য / গ্রাহক">সাধারণ সদস্য / গ্রাহক (General Member / Customer - স্টাফ নয়)</option>
+                <option value="অন্যান্য">অন্যান্য (Other)</option>
+              </select>
             </div>
 
             {/* Address */}

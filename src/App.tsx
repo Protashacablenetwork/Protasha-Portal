@@ -300,6 +300,7 @@ export default function App() {
       } catch {}
     }
     return {
+      visitorMode: { isActive: true },
       billManager: { isActive: true, logoUrl: 'https://bill-manager.ai.studio/logo.jpg' },
       ayByay: { isActive: true, logoUrl: 'https://i.ibb.co/0jZfwH1s/file-0000000079b4821185e81949d65e68d5.png' },
       quickHisab: { isActive: true },
@@ -310,6 +311,29 @@ export default function App() {
       ledger: { isActive: true }
     };
   });
+
+  const isVisitorModeEnabled =
+    serviceStatuses.visitorMode?.isActive !== false &&
+    String(serviceStatuses.visitorMode?.isActive) !== 'false';
+
+  // If Admin disables Visitor Mode in real-time while a guest is browsing in visitor mode, return them to Login screen
+  useEffect(() => {
+    if (user?.role === 'visitor' && !isVisitorModeEnabled) {
+      safeStorage.removeItem('protyasha_user');
+      sessionStorage.removeItem('protyasha_session_active');
+      setUser(null);
+      setActivePortal(null);
+      setActiveTab('home');
+      setIsProfileOpen(false);
+      setSelectedTransaction(null);
+      setIsLoginOpen(true);
+      setSessionNotice(
+        lang === 'bn'
+          ? 'অ্যাডমিন সরাসরি ভিজিটর মোড বন্ধ করেছেন। অনুগ্রহ করে নতুন একাউন্ট খুলুন অথবা লগইন করুন।'
+          : 'Admin has turned off Direct Visitor Mode. Please create an account or sign in.'
+      );
+    }
+  }, [user?.role, isVisitorModeEnabled, lang]);
 
   const [isServiceManagerOpen, setIsServiceManagerOpen] = useState(false);
   const [activeServiceNotice, setActiveServiceNotice] = useState<{ name: string; title?: string; message?: string; logoUrl?: string } | null>(null);
@@ -1798,7 +1822,12 @@ export default function App() {
 
   const closeOverlayViaBack = useCallback((fallbackClose: () => void) => {
     try {
-      if (window.history.state?.appOverlay || window.history.state?.appSubView || window.history.state?.ayByayPortal) {
+      if (
+        window.history.state?.appOverlay ||
+        window.history.state?.appSubView ||
+        window.history.state?.ayByayPortal ||
+        window.history.state?.billManagerPortal
+      ) {
         window.history.back();
         return;
       }
@@ -1899,8 +1928,12 @@ export default function App() {
       } else if (s.activeServiceNotice) {
         setActiveServiceNotice(null);
       } else if (s.activePortal) {
-        // If we are in AyByay native portal and history is still inside AyByay's stack, let portal unwind first
+        // If we are in AyByay or BillManager native portal and history is still inside portal stack, let portal unwind first
         if (s.activePortal === 'ay-byay' && hState && hState.ayByayPortal) {
+          releaseBackLock();
+          return;
+        }
+        if (s.activePortal === 'bill-manager' && hState && hState.billManagerPortal) {
           releaseBackLock();
           return;
         }
@@ -2410,6 +2443,54 @@ export default function App() {
     }).catch(() => {});
   };
 
+  const handleSaveServiceStatuses = (updated: Record<string, ServiceStatusConfig>) => {
+    setServiceStatuses(updated);
+    try {
+      safeStorage.setItem('protyasha_service_statuses', JSON.stringify(updated));
+    } catch {}
+
+    Object.keys(updated).forEach(svcId => {
+      if (updated[svcId]?.logoUrl) {
+        savePersistentImage(`service_logo_${svcId}`, updated[svcId].logoUrl!);
+      }
+    });
+
+    safeSetDoc(doc(db, 'settings', 'service_control'), {
+      id: 'service_control',
+      statuses: updated,
+      updatedAt: new Date().toISOString()
+    }).catch(err => console.error('Service control sync error:', err));
+  };
+
+  const handleToggleVisitorMode = (enabled: boolean) => {
+    const current = serviceStatuses.visitorMode || { isActive: true };
+    const updated: Record<string, ServiceStatusConfig> = {
+      ...serviceStatuses,
+      visitorMode: {
+        ...current,
+        isActive: enabled
+      }
+    };
+    handleSaveServiceStatuses(updated);
+    logAction(
+      enabled ? 'Enabled Visitor Mode' : 'Disabled Visitor Mode',
+      enabled ? 'সরাসরি ভিজিটর মোড চালু' : 'সরাসরি ভিজিটর মোড বন্ধ',
+      enabled
+        ? 'লগইন পেইজে সরাসরি ভিজিটর মোড চালু করা হয়েছে'
+        : 'লগইন পেইজে সরাসরি ভিজিটর মোড বন্ধ করা হয়েছে (একাউন্ট বাধ্যতামূলক)'
+    );
+    showToast(
+      lang === 'bn'
+        ? enabled
+          ? 'সরাসরি ভিজিটর মোড চালু করা হয়েছে'
+          : 'সরাসরি ভিজিটর মোড বন্ধ করা হয়েছে'
+        : enabled
+        ? 'Direct Visitor Mode enabled'
+        : 'Direct Visitor Mode disabled',
+      enabled ? 'success' : 'info'
+    );
+  };
+
   const checkServiceAccess = (serviceId: string, displayName: string): boolean => {
     const status = serviceStatuses[serviceId];
     if (status && (status.isActive === false || String(status.isActive) === 'false')) {
@@ -2443,8 +2524,13 @@ export default function App() {
     sounds.playTap();
     setIsLaunchingBillManager(true);
     setTimeout(() => {
+      try {
+        window.history.pushState(
+          { appOverlay: true, billManagerPortal: true, appStep: 'bm-root', view: 'dashboard', time: Date.now() },
+          ''
+        );
+      } catch {}
       setActivePortal('bill-manager');
-      pushHistoryStep();
       setIsLaunchingBillManager(false);
     }, 950);
   };
@@ -3142,6 +3228,9 @@ export default function App() {
             banners={banners}
             adminAvatar={adminAvatar}
             sessionNotice={sessionNotice}
+            isVisitorModeEnabled={isVisitorModeEnabled}
+            visitorDisabledTitle={serviceStatuses.visitorMode?.title}
+            visitorDisabledMessage={serviceStatuses.visitorMode?.customMessage}
             onClearSessionNotice={() => setSessionNotice('')}
             onLanguageChange={setLang}
             onLoginSuccess={handleLoginSuccess}
@@ -3569,6 +3658,8 @@ export default function App() {
                     }
                   }}
                   onUpdateChecked={(res) => handleUpdateCheckResult(res, false)}
+                  visitorModeEnabled={isVisitorModeEnabled}
+                  onToggleVisitorMode={handleToggleVisitorMode}
                   onSubViewChange={(isSubView) => {
                     isProfileSubViewActiveRef.current = isSubView;
                   }}
@@ -3732,24 +3823,7 @@ export default function App() {
             lang={lang}
             onClose={() => closeOverlayViaBack(() => setIsServiceManagerOpen(false))}
             onSaveServiceStatuses={(updated) => {
-              setServiceStatuses(updated);
-              try {
-                safeStorage.setItem('protyasha_service_statuses', JSON.stringify(updated));
-              } catch {}
-
-              // Persist logos to IndexedDB for each service (only save if logo exists, never delete inadvertently)
-              Object.keys(updated).forEach(svcId => {
-                if (updated[svcId]?.logoUrl) {
-                  savePersistentImage(`service_logo_${svcId}`, updated[svcId].logoUrl!);
-                }
-              });
-
-              safeSetDoc(doc(db, 'settings', 'service_control'), {
-                id: 'service_control',
-                statuses: updated,
-                updatedAt: new Date().toISOString()
-              }).catch(err => console.error('Service control sync error:', err));
-
+              handleSaveServiceStatuses(updated);
               logAction('Updated Services', 'সেবা স্ট্যাটাস পরিবর্তন', 'সেবা সক্রিয়/নিষ্ক্রিয় ও নোটিশ আপডেট');
             }}
           />
@@ -3971,6 +4045,8 @@ export default function App() {
               }
             }}
             onUpdateChecked={(res) => handleUpdateCheckResult(res, false)}
+            visitorModeEnabled={isVisitorModeEnabled}
+            onToggleVisitorMode={handleToggleVisitorMode}
             onSubViewChange={(isSubView) => {
               isProfileSubViewActiveRef.current = isSubView;
             }}
@@ -4173,7 +4249,14 @@ export default function App() {
                 <div className="absolute w-28 h-28 rounded-3xl border-2 border-orange-400/50 animate-ping opacity-60" />
                 <div className="relative w-24 h-24 rounded-3xl bg-white shadow-2xl p-2.5 border-2 border-orange-400 flex items-center justify-center overflow-hidden transform animate-bounce">
                   <img 
-                    src={serviceStatuses.billManager?.logoUrl || "https://bill-manager.ai.studio/logo.jpg"} 
+                    src={
+                      serviceStatuses.billManager?.logoUrl &&
+                      !serviceStatuses.billManager.logoUrl.includes('bill-manager.ai.studio')
+                        ? serviceStatuses.billManager.logoUrl
+                        : ((window as any).__PCN_ASSET_BASE__
+                            ? `${(window as any).__PCN_ASSET_BASE__}bill-manager-logo.jpg`
+                            : './bill-manager-logo.jpg')
+                    } 
                     alt="বিল ম্যানেজার প্রো লগো" 
                     className="w-full h-full object-contain rounded-2xl"
                   />

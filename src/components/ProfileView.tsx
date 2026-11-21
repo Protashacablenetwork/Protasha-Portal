@@ -41,8 +41,8 @@ import { translations } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import { safeStorage } from '../utils/safeStorage';
 import { compressImage } from '../utils/imageCompressor';
-import { db } from '../utils/firebase';
-import { enableNetwork, disableNetwork } from 'firebase/firestore';
+import { db, safeSetDoc } from '../utils/firebase';
+import { enableNetwork, disableNetwork, doc, getDoc } from 'firebase/firestore';
 import { signInWithGoogleDrive } from '../utils/googleDrive';
 import { isFastingReminderEnabled, setFastingReminderEnabled } from '../utils/prayerTimeService';
 import { getDeviceLabel } from '../utils/deviceSession';
@@ -80,6 +80,8 @@ interface ProfileViewProps {
   onUpdateChecked?: (result: UpdateCheckResult) => void;
   onSubViewChange?: (isSubView: boolean) => void;
   isTabMode?: boolean;
+  visitorModeEnabled?: boolean;
+  onToggleVisitorMode?: (enabled: boolean) => void;
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
@@ -106,7 +108,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onOpenFooterSettings,
   onUpdateChecked,
   onSubViewChange,
-  isTabMode = false
+  isTabMode = false,
+  visitorModeEnabled = true,
+  onToggleVisitorMode
 }) => {
   const t = translations[lang];
   const isBn = lang === 'bn';
@@ -181,6 +185,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
   const [isApplyingUpdate, setIsApplyingUpdate] = useState(false);
+  const [adminNewVersion, setAdminNewVersion] = useState('2.6.4');
+  const [adminNewFeatures, setAdminNewFeatures] = useState('');
+  const [isPublishingUpdate, setIsPublishingUpdate] = useState(false);
 
   useSubViewBack(
     true,
@@ -918,6 +925,66 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 <ChevronRight className="w-5 h-5 text-slate-400" />
               </button>
 
+              {/* Direct Visitor Mode Control Row (Admin Only) */}
+              {onToggleVisitorMode && (
+                <div className="p-4 flex items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 bg-gradient-to-r from-rose-50/40 to-amber-50/30 dark:from-rose-950/15 dark:to-amber-950/10">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div
+                      className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
+                        visitorModeEnabled
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'bg-rose-600 text-white shadow-xs'
+                      }`}
+                    >
+                      {visitorModeEnabled ? <Users className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 flex-wrap">
+                        <span>{isBn ? 'সরাসরি ভিজিটর মোড (লগইন পেইজ)' : 'Direct Visitor Mode (Login Page)'}</span>
+                        <span
+                          className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
+                            visitorModeEnabled
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300'
+                              : 'bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-300'
+                          }`}
+                        >
+                          {visitorModeEnabled ? (isBn ? 'চালু' : 'ON') : (isBn ? 'বন্ধ' : 'OFF')}
+                        </span>
+                      </h4>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 leading-snug mt-0.5">
+                        {visitorModeEnabled
+                          ? (isBn
+                              ? 'লগইন পেইজে লগইন ছাড়া ভিজিটর হিসেবে প্রবেশ চালু আছে'
+                              : 'Guests can browse directly from Login page without account')
+                          : (isBn
+                              ? 'বন্ধ আছে — ভিজিটর অপশনে চাপ দিলে একাউন্ট খুলতে বলবে'
+                              : 'Disabled — tapping Visitor Mode prompts users to create an account')}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      sounds.playTap();
+                      onToggleVisitorMode(!visitorModeEnabled);
+                    }}
+                    aria-label={
+                      isBn ? 'সরাসরি ভিজিটর মোড চালু বা বন্ধ করুন' : 'Toggle direct visitor mode'
+                    }
+                    className={`w-12 h-7 rounded-full transition-colors relative p-1 cursor-pointer shrink-0 ${
+                      visitorModeEnabled ? 'bg-emerald-600' : 'bg-rose-500 dark:bg-rose-600'
+                    }`}
+                  >
+                    <div
+                      className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${
+                        visitorModeEnabled ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              )}
+
               {/* Audit Log Row */}
               <button
                 onClick={() => {
@@ -1631,6 +1698,118 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
 
             <div className="p-4 space-y-3.5 overflow-y-auto">
+              {isAdmin && (
+                <div className="p-3.5 rounded-2xl bg-amber-50/80 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/65 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-600" />
+                    <h4 className="text-xs font-extrabold text-amber-900 dark:text-amber-200">
+                      {isBn ? 'অ্যাডমিন ইন-অ্যাপ আপডেট প্রকাশ প্যানেল' : 'Admin In-App Update Publishing Panel'}
+                    </h4>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      {isBn ? 'নতুন ভার্সন নম্বর (যেমন: 2.6.4)' : 'New Version (e.g. 2.6.4)'}
+                    </label>
+                    <input
+                      type="text"
+                      value={adminNewVersion}
+                      onChange={(e) => setAdminNewVersion(e.target.value)}
+                      placeholder="2.6.4"
+                      className="w-full h-9 px-3 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      {isBn ? 'আপডেটের বিবরণ / ফিচারসমূহ (প্রতি লাইনে একটি)' : 'Release Features (one per line)'}
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={adminNewFeatures}
+                      onChange={(e) => setAdminNewFeatures(e.target.value)}
+                      placeholder={isBn ? 'নতুন ফিচার, স্পিড অপ্টিমাইজেশন ও বাগ ফিক্স...' : 'New features, speed optimizations & bug fixes...'}
+                      className="w-full p-2.5 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      {isBn ? 'আপডেট জিপ ফাইল বা কোড প্যাকেজ (ঐচ্ছিক .zip)' : 'Update ZIP File or Code Package (optional .zip)'}
+                    </label>
+                    <input
+                      type="file"
+                      accept=".zip,.json"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setSuccessToastMessage(isBn ? `জিপ ফাইল সিলেক্ট হয়েছে: ${file.name}` : `ZIP file selected: ${file.name}`);
+                          setShowSuccessToast(true);
+                        }
+                      }}
+                      className="w-full text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-amber-100 file:text-amber-800 dark:file:bg-amber-900 dark:file:text-amber-200 cursor-pointer"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isPublishingUpdate}
+                    onClick={async () => {
+                      if (!adminNewVersion.trim()) {
+                        setSuccessToastMessage(isBn ? 'দয়া করে নতুন ভার্সন নম্বর লিখুন' : 'Please enter new version number');
+                        setShowSuccessToast(true);
+                        return;
+                      }
+                      setIsPublishingUpdate(true);
+                      sounds.playTap();
+                      try {
+                        const newBuild = (updateResult?.latestBuildNumber || 263) + 1;
+                        const releaseData = {
+                          version: adminNewVersion.trim(),
+                          buildNumber: newBuild,
+                          releaseDate: new Date().toISOString().split('T')[0],
+                          titleBn: isBn ? 'নতুন ইন-অ্যাপ আপডেট ও ফিচারসমূহ' : 'New In-App Update & Features',
+                          titleEn: 'New In-App Update & Features',
+                          featuresBn: adminNewFeatures.trim() ? adminNewFeatures.split('\n').filter(Boolean) : ['সকল ইউজার ও এডমিন প্যানেলের জন্য নতুন আপডেট ও সিকিউরিটি প্যাচ।'],
+                          featuresEn: ['New update & security patch for all users and admin panels.'],
+                          updatedAt: new Date().toISOString()
+                        };
+
+                        await safeSetDoc(doc(db, 'settings', 'app_version'), releaseData);
+
+                        const broadcastRef = doc(db, 'settings', 'broadcast_notifications');
+                        const bSnap = await getDoc(broadcastRef);
+                        const existingList = bSnap.exists() && Array.isArray(bSnap.data()?.list) ? bSnap.data().list : [];
+                        const newNotif = {
+                          id: `notif_update_${Date.now()}`,
+                          titleBn: `নতুন অ্যাপ আপডেট প্রকাশিত হয়েছে (v${adminNewVersion.trim()})`,
+                          titleEn: `New App Update Published (v${adminNewVersion.trim()})`,
+                          bodyBn: adminNewFeatures.trim() || 'নতুন সংস্করণ এবং উন্নত ফিচারসমূহ ইনস্টল করতে আপডেট করুন।',
+                          bodyEn: releaseData.titleEn,
+                          date: new Date().toISOString().split('T')[0],
+                          timeBn: new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
+                          timeEn: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+                          type: 'info',
+                          isGlobal: true
+                        };
+                        await safeSetDoc(broadcastRef, { list: [newNotif, ...existingList].slice(0, 50), updatedAt: new Date().toISOString() }, { merge: true });
+
+                        setSuccessToastMessage(isBn ? 'নতুন আপডেট সফলভাবে প্রকাশিত হয়েছে! সকল ইউজার ও এডমিন প্যানেল আপডেট নোটিফিকেশন পাবে।' : 'New update successfully published! All users and admin panel will receive the update notification.');
+                        setShowSuccessToast(true);
+                        setIsUpdateModalOpen(false);
+                        sounds.playSuccess();
+                      } catch (err) {
+                        console.error('Publish update error:', err);
+                        setSuccessToastMessage(isBn ? 'আপডেট প্রকাশ ব্যর্থ হয়েছে' : 'Failed to publish update');
+                        setShowSuccessToast(true);
+                      } finally {
+                        setIsPublishingUpdate(false);
+                      }
+                    }}
+                    className="w-full py-2.5 rounded-xl bg-gradient-to-tr from-amber-600 to-rose-600 text-white text-xs font-bold shadow-md shadow-amber-600/30 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
+                  >
+                    {isPublishingUpdate ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
+                    <span>{isBn ? 'নতুন আপডেট ক্লাউডে প্রকাশ করুন (ইন-অ্যাপ আপডেট)' : 'Publish Update to Cloud (In-App Update)'}</span>
+                  </button>
+                </div>
+              )}
+
               {updateResult.status === 'update_available' ? (
                 <div className="p-3.5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60">
                   <p className="text-xs font-extrabold text-rose-800 dark:text-rose-200">

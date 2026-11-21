@@ -89,6 +89,52 @@ app.get('/api/ay-byay/external/summary', async (req: express.Request, res: expre
     }
 });
 
+// API: CORS-free Google Sheet XLSX Proxy for Bill Manager Pro
+app.get('/api/fetch-sheet', async (req: express.Request, res: express.Response) => {
+    const targetUrl = String(req.query.url || '').trim();
+    if (!targetUrl) {
+        return res.status(400).json({ error: 'URL parameter is required' });
+    }
+
+    try {
+        const parsed = new URL(targetUrl);
+        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+            return res.status(400).json({ error: 'Invalid URL protocol' });
+        }
+        const host = parsed.hostname.toLowerCase();
+        const isAllowedHost =
+            host === 'docs.google.com' ||
+            host.endsWith('.googleusercontent.com') ||
+            host === 'sheets.googleapis.com';
+        if (!isAllowedHost) {
+            return res.status(403).json({ error: 'Host not permitted' });
+        }
+
+        const response = await fetch(parsed.toString(), {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            },
+            redirect: 'follow'
+        });
+
+        if (!response.ok) {
+            return res.status(response.status).json({ error: `Failed to fetch from source: ${response.statusText}` });
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        return res.send(buffer);
+    } catch (err: any) {
+        console.error('Error proxying sheet:', err);
+        return res.status(500).json({ error: err?.message || 'Internal server error' });
+    }
+});
+
 // API: App Version & Release Notes (No-cache live version check)
 app.get('/api/app-version', (_req: express.Request, res: express.Response) => {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');

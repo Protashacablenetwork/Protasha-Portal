@@ -315,6 +315,15 @@ export function AyByayPortal({
 
     (staffAccounts || []).forEach(acc => {
       if (!acc || !acc.id || seenIds.has(String(acc.id))) return;
+      const roleLower = (acc.role || '').toLowerCase();
+      if (
+        roleLower.includes('মালিক') ||
+        roleLower.includes('অংশীদার') ||
+        roleLower.includes('সদস্য') ||
+        roleLower.includes('গ্রাহক')
+      ) {
+        return;
+      }
       seenIds.add(String(acc.id));
       let joinDate = '2026-01-01';
       if (acc.createdAt) {

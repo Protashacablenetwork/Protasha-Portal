@@ -14,6 +14,7 @@ interface ServiceManagerModalProps {
 }
 
 const AVAILABLE_SERVICES = [
+  { id: 'visitorMode', nameBn: 'সরাসরি ভিজিটর মোড (লগইন পেইজ)', nameEn: 'Direct Visitor Mode (Login Page)', icon: '👤' },
   { id: 'billManager', nameBn: 'বিল ম্যানেজমেন্ট প্রো', nameEn: 'Bill Management Pro', icon: '📄', defaultLogo: 'https://bill-manager.ai.studio/logo.jpg' },
   { id: 'ayByay', nameBn: 'আয়-ব্যয় হিসাব খাতা', nameEn: 'Income & Expense Manager', icon: '💰', defaultLogo: 'https://i.ibb.co/0jZfwH1s/file-0000000079b4821185e81949d65e68d5.png' },
   { id: 'quickHisab', nameBn: 'কুইক হিসাব ও লভ্যাংশ বণ্টন', nameEn: 'Quick Hisab & Profit Share', icon: '🧮', defaultLogo: '' },
