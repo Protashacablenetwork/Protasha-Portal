@@ -36,6 +36,7 @@ interface NotificationsModalProps {
   onMarkAllAsRead: () => void;
   onSendNotification: (notif: Omit<NotificationItem, 'id' | 'isRead'>) => void;
   onEditNotification?: (notif: NotificationItem) => void;
+  onPublishPopupNotice?: (data: { title: string; message: string; priority: 'info' | 'important' | 'urgent' | 'policy' }) => Promise<void> | void;
   initialEditingNotif?: NotificationItem | null;
 }
 
@@ -49,6 +50,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
   onMarkAllAsRead,
   onSendNotification,
   onEditNotification,
+  onPublishPopupNotice,
   initialEditingNotif
 }) => {
   // Filter Tab State: 'all' | 'unread' | 'read'
@@ -62,6 +64,7 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
   const [notifType, setNotifType] = useState<NotificationItem['type']>('offer');
   const [notifAmount, setNotifAmount] = useState<string>('');
   const [notifImage, setNotifImage] = useState<string>('');
+  const [alsoShowAsPopup, setAlsoShowAsPopup] = useState(false);
   const [formError, setFormError] = useState('');
 
   const isBn = lang === 'bn';
@@ -152,12 +155,21 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
           amount: notifAmount ? parseFloat(notifAmount) : undefined,
           image: notifImage.trim() || undefined
         });
+
+        if (alsoShowAsPopup && onPublishPopupNotice) {
+          void onPublishPopupNotice({
+            title: notifTitle.trim(),
+            message: notifBody.trim(),
+            priority: notifType === 'alert' ? 'urgent' : notifType === 'info' ? 'info' : 'important'
+          });
+        }
     }
 
     sounds.playSuccess();
     setNotifTitle('');
     setNotifBody('');
     setNotifAmount('');
+    setAlsoShowAsPopup(false);
     setFormError('');
     setIsComposing(false);
     setEditingNotif(null);
@@ -422,11 +434,31 @@ export const NotificationsModal: React.FC<NotificationsModalProps> = ({
                 />
               </div>
 
+              {/* Optional In-App Popup Consent Checkbox */}
+              {!editingNotif && onPublishPopupNotice && (
+                <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200/80 dark:border-rose-900/50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={alsoShowAsPopup}
+                    onChange={(e) => setAlsoShowAsPopup(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 accent-[#E52E2E] rounded cursor-pointer shrink-0"
+                  />
+                  <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200 leading-snug">
+                    {isBn
+                      ? 'অ্যাপ ওপেন করলেই ইউজারদের পপ-আপ বক্সে দেখান ও সম্মতি (Acknowledgement) নিন'
+                      : 'Also display as an in-app popup box and collect user acknowledgement'}
+                  </span>
+                </label>
+              )}
+
               {/* Submit Buttons */}
               <div className="flex items-center gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setIsComposing(false)}
+                  onClick={() => {
+                    setIsComposing(false);
+                    setAlsoShowAsPopup(false);
+                  }}
                   className="flex-1 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold"
                 >
                   {isBn ? 'বাতিল' : 'Cancel'}

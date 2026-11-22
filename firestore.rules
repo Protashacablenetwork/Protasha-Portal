@@ -337,6 +337,43 @@ service cloud.firestore {
         (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
     }
 
+    function isValidPopupNotice(data) {
+      return data.keys().hasAll(['id', 'title', 'message', 'priority', 'audience', 'isActive', 'createdAt']) &&
+        data.keys().hasOnly([
+          'id', 'title', 'message', 'priority', 'audience', 'consentLabel',
+          'requiresConsent', 'isActive', 'imageUrl', 'createdBy', 'createdAt', 'updatedAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+        data.message is string && data.message.size() >= 1 && data.message.size() <= 3000 &&
+        data.priority in ['info', 'important', 'urgent', 'policy'] &&
+        data.audience in ['all', 'users', 'staff'] &&
+        data.isActive is bool &&
+        data.createdAt is string && data.createdAt.size() >= 1 && data.createdAt.size() <= 64 &&
+        (!('consentLabel' in data) || (data.consentLabel is string && data.consentLabel.size() <= 300)) &&
+        (!('requiresConsent' in data) || data.requiresConsent is bool) &&
+        (!('imageUrl' in data) || data.imageUrl == null || (data.imageUrl is string && data.imageUrl.size() <= 900000)) &&
+        (!('createdBy' in data) || data.createdBy == null || (data.createdBy is string && data.createdBy.size() <= 128)) &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidPopupAcknowledgement(data) {
+      return data.keys().hasAll(['id', 'noticeId', 'userKey', 'userName', 'acknowledgedAt']) &&
+        data.keys().hasOnly([
+          'id', 'noticeId', 'userKey', 'userName', 'userPhone',
+          'userRole', 'consentText', 'deviceLabel', 'acknowledgedAt'
+        ]) &&
+        data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
+        data.noticeId is string && data.noticeId.size() >= 1 && data.noticeId.size() <= 128 &&
+        data.userKey is string && data.userKey.size() >= 1 && data.userKey.size() <= 128 &&
+        data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 150 &&
+        data.acknowledgedAt is string && data.acknowledgedAt.size() >= 1 && data.acknowledgedAt.size() <= 64 &&
+        (!('userPhone' in data) || data.userPhone == null || (data.userPhone is string && data.userPhone.size() <= 32)) &&
+        (!('userRole' in data) || data.userRole == null || (data.userRole is string && data.userRole.size() <= 32)) &&
+        (!('consentText' in data) || data.consentText == null || (data.consentText is string && data.consentText.size() <= 300)) &&
+        (!('deviceLabel' in data) || data.deviceLabel == null || (data.deviceLabel is string && data.deviceLabel.size() <= 150));
+    }
+
     match /transactions/{txId} {
       allow get: if isValidId(txId);
       allow list: if isActiveRequest();
@@ -447,6 +484,20 @@ service cloud.firestore {
       allow list: if isActiveRequest();
       allow create, update: if isValidId(recordId) && isValidStaffAttendance(incoming());
       allow delete: if isValidId(recordId);
+    }
+
+    match /popup_notices/{noticeId} {
+      allow get: if isValidId(noticeId);
+      allow list: if isActiveRequest();
+      allow create, update: if isValidId(noticeId) && isValidPopupNotice(incoming());
+      allow delete: if isValidId(noticeId);
+
+      match /acknowledgements/{ackId} {
+        allow get: if isValidId(noticeId) && isValidId(ackId);
+        allow list: if isValidId(noticeId) && isActiveRequest();
+        allow create, update: if isValidId(noticeId) && isValidId(ackId) && isValidPopupAcknowledgement(incoming());
+        allow delete: if isValidId(noticeId) && isValidId(ackId);
+      }
     }
   }
 }

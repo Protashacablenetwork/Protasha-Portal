@@ -291,3 +291,35 @@ export interface StaffAttendanceRecord {
   recordedBy?: string;
   updatedAt: string;
 }
+
+export type PopupNoticePriority = 'info' | 'important' | 'urgent' | 'policy';
+
+export type PopupNoticeAudience = 'all' | 'users' | 'staff';
+
+export interface PopupNotice {
+  id: string;
+  title: string;
+  message: string;
+  priority: PopupNoticePriority;
+  audience: PopupNoticeAudience;
+  consentLabel: string;
+  requiresConsent: boolean;
+  isActive: boolean;
+  imageUrl?: string;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PopupNoticeAcknowledgement {
+  id: string;
+  noticeId: string;
+  userKey: string;
+  userName: string;
+  userPhone?: string;
+  userRole?: string;
+  consentText?: string;
+  deviceLabel?: string;
+  acknowledgedAt: string;
+}
+

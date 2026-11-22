@@ -296,6 +296,43 @@
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "staffId", "date", "month", "status"]
+    },
+    "PopupNotice": {
+      "title": "PopupNotice",
+      "description": "Admin-published in-app popup notice requiring user consent or acknowledgement",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "maxLength": 200 },
+        "message": { "type": "string", "maxLength": 3000 },
+        "priority": { "type": "string", "enum": ["info", "important", "urgent", "policy"] },
+        "audience": { "type": "string", "enum": ["all", "users", "staff"] },
+        "consentLabel": { "type": "string", "maxLength": 300 },
+        "requiresConsent": { "type": "boolean" },
+        "isActive": { "type": "boolean" },
+        "imageUrl": { "type": "string", "maxLength": 900000 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "title", "message", "priority", "audience", "isActive", "createdAt"]
+    },
+    "PopupNoticeAcknowledgement": {
+      "title": "PopupNoticeAcknowledgement",
+      "description": "User consent and acknowledgement record for an admin popup notice",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "noticeId": { "type": "string", "maxLength": 128 },
+        "userKey": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 150 },
+        "userPhone": { "type": "string", "maxLength": 32 },
+        "userRole": { "type": "string", "maxLength": 32 },
+        "consentText": { "type": "string", "maxLength": 300 },
+        "deviceLabel": { "type": "string", "maxLength": 150 },
+        "acknowledgedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "noticeId", "userKey", "userName", "acknowledgedAt"]
     }
   },
   "firestore": {
@@ -314,6 +351,8 @@
     "/settings/{settingId}": { "schema": "SettingsDocument", "description": "Application settings and domain metadata documents" },
     "/support_tickets/{ticketId}": { "schema": "SupportTicket", "description": "Real-time customer complaints and support tickets" },
     "/support_tickets/{ticketId}/messages/{messageId}": { "schema": "SupportTicketMessage", "description": "Real-time conversation messages for each support ticket" },
-    "/staff_attendance/{recordId}": { "schema": "StaffAttendance", "description": "Daily staff attendance and leave records" }
+    "/staff_attendance/{recordId}": { "schema": "StaffAttendance", "description": "Daily staff attendance and leave records" },
+    "/popup_notices/{noticeId}": { "schema": "PopupNotice", "description": "Admin-published popup notices requiring user acknowledgement" },
+    "/popup_notices/{noticeId}/acknowledgements/{ackId}": { "schema": "PopupNoticeAcknowledgement", "description": "User consent and acknowledgement records per popup notice" }
   }
 }

@@ -24,7 +24,8 @@ import {
   Calendar,
   Phone,
   MapPin,
-  FileText
+  FileText,
+  ChevronRight
 } from 'lucide-react';
 import { Language, StaffAccount, UserSession, QuickHisabOwner } from '../types';
 import { initialQuickHisabOwners } from '../data/initialData';
@@ -38,12 +39,15 @@ import { collection, doc, getDoc, getDocs, onSnapshot } from 'firebase/firestore
 import { safeStorage } from '../utils/safeStorage';
 import { useSubViewBack } from '../utils/useSubViewBack';
 import { showConfirm } from '../utils/uiFeedback';
+import { computeOwnersDividendLedger } from '../utils/ownerDueSync';
+import { OwnerDetailView } from './OwnerDetailView';
 
 interface QuickHisabModalProps {
   isOpen: boolean;
   lang: Language;
   user: UserSession | null;
   staffAccounts: StaffAccount[];
+  onSaveStaffAccounts?: (updated: StaffAccount[]) => void;
   quickHisabOwners?: QuickHisabOwner[];
   onSaveOwners?: (updated: QuickHisabOwner[]) => void;
   onClose: () => void;
@@ -78,6 +82,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
   lang,
   user,
   staffAccounts,
+  onSaveStaffAccounts,
   quickHisabOwners: propOwners,
   onSaveOwners,
   onClose,
@@ -252,15 +257,20 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
   const [editStaffSalary, setEditStaffSalary] = useState(String(summary.staffSalary));
   const [isSavingFin, setIsSavingFin] = useState(false);
 
+  // Selected Owner for dedicated detail page
+  const [selectedOwnerId, setSelectedOwnerId] = useState<string | null>(null);
+
   useSubViewBack(
     isOpen,
-    (isEditorOpen ? 1 : 0) + (isFinEditorOpen ? 1 : 0),
+    (isEditorOpen ? 1 : 0) + (isFinEditorOpen ? 1 : 0) + (selectedOwnerId ? 1 : 0),
     () => {
       if (isFinEditorOpen) {
         setIsFinEditorOpen(false);
       } else if (isEditorOpen) {
         setIsEditorOpen(false);
         setEditingOwner(null);
+      } else if (selectedOwnerId) {
+        setSelectedOwnerId(null);
       }
     },
     onSubViewChange,
@@ -691,19 +701,34 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Dynamic share calculations based on current owners
-  const totalShareUnits = owners.reduce((sum, o) => sum + (Number(o.shareUnits) || 0), 0) || 12.5;
+  // Dynamic share + company due deduction calculations based on current owners & staffAccounts
   const netProfit = summary.netProfit || 0;
+  const dividendLedger = computeOwnersDividendLedger(owners, staffAccounts, netProfit);
+  const {
+    totalShareUnits,
+    byOwnerId,
+    totalCompanyDueAllOwners,
+    totalDeductedFromDividend,
+    totalNetPayableAfterDeduction,
+    ownersWithDueCount
+  } = dividendLedger;
+
   const fullOwnersCount = owners.filter(o => o.shareUnits === 1.0).length;
   const halfOwnersCount = owners.filter(o => o.shareUnits === 0.5).length;
-  
+
   // Amount per 1.0 share and per 0.5 share
   const fullShareAmount = netProfit > 0 ? (netProfit * 1.0) / totalShareUnits : 0;
   const halfShareAmount = netProfit > 0 ? (netProfit * 0.5) / totalShareUnits : 0;
 
-  const filteredOwners = owners.filter(o => 
+  const selectedOwnerBreakdown = selectedOwnerId ? byOwnerId[String(selectedOwnerId)] || null : null;
+  const selectedOwnerIndex = selectedOwnerId
+    ? Math.max(0, owners.findIndex(o => String(o.id) === String(selectedOwnerId)))
+    : 0;
+
+  const filteredOwners = owners.filter(o =>
     o.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    String(o.id).includes(searchQuery)
+    String(o.id).includes(searchQuery) ||
+    String(o.phone || '').includes(searchQuery)
   );
 
   const renderAmount = (amount: number) => {
@@ -733,15 +758,15 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
           >
             <ArrowLeft className="w-5 h-5 stroke-[2.2]" />
           </button>
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-slate-900 dark:text-white leading-tight">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white leading-tight truncate">
                 {isBn ? 'কুইক হিসাব ও লভ্যাংশ ড্যাশবোর্ড' : 'Quick Hisab & Profit Dashboard'}
               </h2>
               {isAdmin && (
-                <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
-                  <Shield className="w-3 h-3" />
-                  {isBn ? 'এডমিন নিয়ন্ত্রণ' : 'Admin'}
+                <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 whitespace-nowrap shrink-0">
+                  <Shield className="w-3 h-3 shrink-0" />
+                  {isBn ? 'এডমিন' : 'Admin'}
                 </span>
               )}
             </div>
@@ -1043,6 +1068,40 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
             />
           </div>
 
+          {/* Company Due Deduction Summary Bar (Shown when any owner has active company due) */}
+          {totalCompanyDueAllOwners > 0 && (
+            <div className="p-3.5 rounded-2xl bg-rose-50/90 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-bold text-rose-900 dark:text-rose-200">
+                  {isBn
+                    ? `মালিকদের নিকট কোম্পানি পাওনা সমন্বয় (${toBengaliNumber(ownersWithDueCount)} জন)`
+                    : `Owner Company Due Adjustment (${ownersWithDueCount})`}
+                </p>
+                <span className="text-xs font-black text-rose-600 dark:text-rose-400 tabular-nums">
+                  {renderAmount(totalCompanyDueAllOwners)}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 pt-1.5 border-t border-rose-200/70 dark:border-rose-900/40 text-[11px]">
+                <div>
+                  <span className="text-slate-600 dark:text-slate-400">
+                    {isBn ? 'লভ্যাংশ থেকে কর্তন:' : 'Deducted:'}{' '}
+                  </span>
+                  <span className="font-bold text-amber-700 dark:text-amber-400 tabular-nums">
+                    -{renderAmount(totalDeductedFromDividend)}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-slate-600 dark:text-slate-400">
+                    {isBn ? 'কর্তন পর মোট প্রদেয়:' : 'Net Payable:'}{' '}
+                  </span>
+                  <span className="font-black text-emerald-700 dark:text-emerald-400 tabular-nums">
+                    {renderAmount(totalNetPayableAfterDeduction)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Owners List */}
           <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-2 shadow-xs space-y-1.5">
             {filteredOwners.length === 0 ? (
@@ -1051,131 +1110,195 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
               </div>
             ) : (
               filteredOwners.map((owner, idx) => {
-                const shareUnits = Number(owner.shareUnits) || 0;
-                const isHalf = owner.isHalf || shareUnits === 0.5;
-                const sharePercentage = (shareUnits / totalShareUnits) * 100;
-                const shareAmount = netProfit > 0 ? (netProfit * shareUnits) / totalShareUnits : 0;
+                const breakdown = byOwnerId[String(owner.id)];
+                const shareUnits = breakdown ? breakdown.shareUnits : (Number(owner.shareUnits) || 0);
+                const isHalf = breakdown ? breakdown.isHalf : Boolean(owner.isHalf || shareUnits === 0.5);
+                const sharePercentage = breakdown ? breakdown.sharePercentage : (shareUnits / totalShareUnits) * 100;
+                const grossShare = breakdown ? breakdown.grossShare : (netProfit > 0 ? (netProfit * shareUnits) / totalShareUnits : 0);
+                const companyDue = breakdown ? breakdown.applicableCompanyDue : 0;
+                const deductedAmount = breakdown ? breakdown.deductedAmount : 0;
+                const netPayable = breakdown ? breakdown.netPayable : grossShare;
+                const unpaidDueAfter = breakdown ? breakdown.unpaidDueAfterDividend : 0;
 
                 return (
-                  <div 
-                    key={owner.id} 
-                    className={`p-3 rounded-2xl flex items-center justify-between transition-all border ${
-                      isHalf 
-                        ? 'bg-amber-500/10 border-amber-500/30 dark:bg-amber-950/25 dark:border-amber-900/40'
-                        : 'bg-slate-50/70 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800/60 hover:border-slate-200 dark:hover:border-slate-700'
+                  <div
+                    key={owner.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      sounds.playTap();
+                      setSelectedOwnerId(String(owner.id));
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        sounds.playTap();
+                        setSelectedOwnerId(String(owner.id));
+                      }
+                    }}
+                    className={`p-3 sm:p-3.5 rounded-2xl transition-all border cursor-pointer active:scale-[0.99] space-y-2 ${
+                      companyDue > 0
+                        ? 'bg-rose-50/40 border-rose-200/80 dark:bg-rose-950/15 dark:border-rose-900/50 hover:border-rose-300 dark:hover:border-rose-700'
+                        : isHalf
+                        ? 'bg-amber-500/10 border-amber-500/30 dark:bg-amber-950/25 dark:border-amber-900/40 hover:border-amber-500/60'
+                        : 'bg-slate-50/70 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800/60 hover:border-slate-300 dark:hover:border-slate-700'
                     }`}
                   >
-                    <div className="flex items-center gap-3 flex-1 min-w-0 mr-2">
-                      {/* Owner Photo / Circular Avatar */}
-                      <div className="relative shrink-0">
-                        {owner.avatarUrl ? (
-                          <img 
-                            src={owner.avatarUrl} 
-                            alt={owner.name} 
-                            className="w-10 h-10 rounded-full object-cover border-2 border-white dark:border-slate-800 shadow-xs" 
-                          />
-                        ) : (
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-black shadow-xs ${
-                            isHalf 
-                              ? 'bg-gradient-to-tr from-amber-500 to-orange-500 text-white'
-                              : 'bg-gradient-to-tr from-indigo-600 via-blue-600 to-indigo-700 text-white'
-                          }`}>
-                            {isBn ? toBengaliNumber(idx + 1) : (idx + 1)}
-                          </div>
-                        )}
-
-                        {/* Admin-only quick camera icon to change photo directly */}
-                        {isAdmin && (
-                          <button
-                            onClick={() => {
-                              setQuickUploadOwnerId(owner.id);
-                              quickFileInputRef.current?.click();
-                            }}
-                            title={isBn ? 'ছবি পরিবর্তন করুন' : 'Change photo'}
-                            className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-slate-900 text-white flex items-center justify-center text-[10px] shadow-sm hover:scale-110 active:scale-95 transition-transform"
-                          >
-                            <Camera className="w-2.5 h-2.5" />
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Owner Info */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <p className="text-xs sm:text-sm font-black text-slate-900 dark:text-white truncate">
-                            {owner.name}
-                          </p>
-                          
-                          {/* Admin-only Edit & Delete buttons (COMPLETELY HIDDEN FOR REGULAR USERS) */}
-                          {isAdmin && (
-                            <div className="flex items-center gap-1 shrink-0">
-                              <button
-                                onClick={() => handleOpenEditOwner(owner)}
-                                className="p-1 rounded-md text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors"
-                                title={isBn ? 'সম্পাদনা করুন' : 'Edit owner'}
-                              >
-                                <Edit2 className="w-3 h-3" />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteOwner(owner.id)}
-                                className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
-                                title={isBn ? 'মুছে ফেলুন' : 'Delete owner'}
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
+                    <div className="flex items-start justify-between gap-2.5">
+                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                        {/* Owner Photo / Circular Avatar */}
+                        <div className="relative shrink-0 mt-0.5">
+                          {owner.avatarUrl ? (
+                            <img
+                              src={owner.avatarUrl}
+                              alt={owner.name}
+                              referrerPolicy="no-referrer"
+                              className="w-11 h-11 rounded-full object-cover border-2 border-white dark:border-slate-800 shadow-xs"
+                            />
+                          ) : (
+                            <div className={`w-11 h-11 rounded-full flex items-center justify-center text-xs font-black shadow-xs ${
+                              isHalf
+                                ? 'bg-gradient-to-tr from-amber-500 to-orange-500 text-white'
+                                : 'bg-gradient-to-tr from-indigo-600 via-blue-600 to-indigo-700 text-white'
+                            }`}>
+                              {isBn ? toBengaliNumber(idx + 1) : (idx + 1)}
                             </div>
+                          )}
+
+                          {/* Admin-only quick camera icon to change photo directly */}
+                          {isAdmin && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setQuickUploadOwnerId(owner.id);
+                                quickFileInputRef.current?.click();
+                              }}
+                              title={isBn ? 'ছবি পরিবর্তন করুন' : 'Change photo'}
+                              className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-slate-900 text-white flex items-center justify-center text-[10px] shadow-sm hover:scale-110 active:scale-95 transition-transform"
+                            >
+                              <Camera className="w-2.5 h-2.5" />
+                            </button>
                           )}
                         </div>
 
-                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                          <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md ${
-                            isHalf 
-                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                              : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300'
-                          }`}>
-                            {isHalf 
-                              ? (isBn ? 'অর্ধেক মালিক (০.৫ অংশ)' : '0.5 Half Share') 
-                              : (isBn ? `পূর্ণ মালিক (${shareUnits} অংশ)` : `${shareUnits} Share`)}
-                          </span>
-                          <span className="text-[10px] font-medium text-slate-400">
-                            • {sharePercentage.toFixed(2)}%
-                          </span>
-                        </div>
+                        {/* Owner Info (Full width for name!) */}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[13px] sm:text-sm font-black text-slate-900 dark:text-white leading-snug break-words">
+                            {owner.name}
+                          </p>
 
-                        {(owner.phone || owner.address) && (
-                          <div className="mt-1 flex flex-col gap-0.5 text-[10px] text-slate-500 dark:text-slate-400">
-                            {owner.phone && (
-                              <a 
-                                href={`tel:${owner.phone}`} 
-                                onClick={(e) => e.stopPropagation()} 
-                                className="inline-flex items-center gap-1 hover:text-[#E52E2E] transition-colors"
-                              >
-                                <Phone className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
-                                <span className="font-semibold">{owner.phone}</span>
-                              </a>
-                            )}
-                            {owner.address && (
-                              <div className="inline-flex items-center gap-1">
-                                <MapPin className="w-2.5 h-2.5 text-rose-500 shrink-0" />
-                                <span className="truncate max-w-[150px] sm:max-w-[200px]">{owner.address}</span>
-                              </div>
-                            )}
+                          <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                              isHalf
+                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                                : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300'
+                            }`}>
+                              {isHalf
+                                ? (isBn ? 'অর্ধেক মালিক (০.৫ অংশ)' : '0.5 Half Share')
+                                : (isBn ? `পূর্ণ মালিক (${shareUnits} অংশ)` : `${shareUnits} Share`)}
+                            </span>
+                            <span className="text-[10px] font-semibold text-slate-400 tabular-nums">
+                              • {sharePercentage.toFixed(2)}%
+                            </span>
+                          </div>
+
+                          {(owner.phone || owner.address) && (
+                            <div className="mt-1.5 flex flex-col gap-0.5 text-[10.5px] text-slate-500 dark:text-slate-400">
+                              {owner.phone && (
+                                <a
+                                  href={`tel:${owner.phone}`}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center gap-1 hover:text-[#E52E2E] transition-colors w-fit"
+                                >
+                                  <Phone className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                                  <span className="font-semibold tabular-nums">{owner.phone}</span>
+                                </a>
+                              )}
+                              {owner.address && (
+                                <div className="inline-flex items-center gap-1">
+                                  <MapPin className="w-2.5 h-2.5 text-rose-500 shrink-0" />
+                                  <span className="truncate max-w-[165px] sm:max-w-[240px]">{owner.address}</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Right Column: Payable Amount + Details Chevron */}
+                      <div className="text-right shrink-0 flex flex-col items-end justify-between">
+                        <div className="flex items-center gap-1">
+                          <p className={`text-sm sm:text-base font-black tabular-nums ${
+                            deductedAmount > 0
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : isHalf
+                              ? 'text-amber-600 dark:text-amber-400'
+                              : 'text-[#E52E2E]'
+                          }`}>
+                            {renderAmount(netPayable)}
+                          </p>
+                          <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        </div>
+                        <p className="text-[9.5px] font-bold text-slate-400 tracking-tight">
+                          {deductedAmount > 0
+                            ? (isBn ? 'কর্তনের পর প্রাপ্য' : 'Net Payable')
+                            : (isBn ? 'প্রাপ্য লভ্যাংশ' : 'Payable')}
+                        </p>
+
+                        {/* Admin Quick Edit/Delete neatly aligned without squishing owner name */}
+                        {isAdmin && (
+                          <div className="flex items-center gap-1 mt-2" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditOwner(owner)}
+                              className="p-1.5 rounded-lg bg-white/80 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+                              title={isBn ? 'সম্পাদনা করুন' : 'Edit owner'}
+                            >
+                              <Edit2 className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteOwner(owner.id)}
+                              className="p-1.5 rounded-lg bg-white/80 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 text-slate-500 hover:text-rose-600 transition-colors"
+                              title={isBn ? 'মুছে ফেলুন' : 'Delete owner'}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
                           </div>
                         )}
                       </div>
                     </div>
 
-                    {/* Payable Amount */}
-                    <div className="text-right shrink-0">
-                      <p className={`text-xs sm:text-sm font-black tabular-nums ${
-                        isHalf ? 'text-amber-600 dark:text-amber-400' : 'text-[#E52E2E]'
-                      }`}>
-                        {renderAmount(shareAmount)}
-                      </p>
-                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">
-                        {isBn ? 'প্রাপ্য লভ্যাংশ' : 'Payable'}
-                      </p>
-                    </div>
+                    {/* Company Due Deduction Strip (Shown cleanly across bottom of card when due > 0) */}
+                    {companyDue > 0 && (
+                      <div className="pt-2 border-t border-rose-200/70 dark:border-rose-900/40 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[10.5px] font-bold tabular-nums">
+                        {deductedAmount > 0 ? (
+                          <>
+                            <span className="text-slate-600 dark:text-slate-400">
+                              {isBn ? `মোট শেয়ার: ${renderAmount(grossShare)}` : `Gross: ${renderAmount(grossShare)}`}
+                            </span>
+                            <span className="text-rose-600 dark:text-rose-400">
+                              {isBn ? `কোম্পানি পাওনা কর্তন: -${renderAmount(deductedAmount)}` : `Due Deducted: -${renderAmount(deductedAmount)}`}
+                            </span>
+                            {unpaidDueAfter > 0 && (
+                              <span className="text-amber-600 dark:text-amber-400">
+                                {isBn ? `অবশিষ্ট পাওনা: ${renderAmount(unpaidDueAfter)}` : `Remaining Due: ${renderAmount(unpaidDueAfter)}`}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-rose-600 dark:text-rose-400">
+                              {isBn ? `কোম্পানি পাওনা বকেয়া: ${renderAmount(companyDue)}` : `Company Due: ${renderAmount(companyDue)}`}
+                            </span>
+                            <span className="text-slate-400 font-semibold">
+                              {isBn ? 'বিস্তারিত দেখুন ›' : 'View details ›'}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })
@@ -1498,6 +1621,23 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
             </div>
           </div>
         </div>
+      )}
+      {/* Dedicated Owner Detail Sub-Page */}
+      {selectedOwnerBreakdown && (
+        <OwnerDetailView
+          breakdown={selectedOwnerBreakdown}
+          ownerIndex={selectedOwnerIndex}
+          totalShareUnits={totalShareUnits}
+          netProfit={netProfit}
+          selectedMonth={selectedMonth}
+          lang={lang}
+          isAdmin={isAdmin}
+          user={user}
+          staffAccounts={staffAccounts}
+          onSaveStaffAccounts={onSaveStaffAccounts}
+          onEditOwner={() => handleOpenEditOwner(selectedOwnerBreakdown.owner)}
+          onBack={() => setSelectedOwnerId(null)}
+        />
       )}
     </div>
   );

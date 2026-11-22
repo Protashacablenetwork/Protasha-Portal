@@ -14,7 +14,9 @@ import {
   ServiceStatusConfig,
   QuickHisabOwner,
   SupportTicket,
-  StaffAttendanceRecord
+  StaffAttendanceRecord,
+  PopupNotice,
+  PopupNoticeAcknowledgement
 } from './types';
 import { 
   initialNotifications, 
@@ -124,6 +126,12 @@ const PublicTicketTracker = React.lazy(() =>
 const StaffAttendanceModal = React.lazy(() =>
   import('./components/StaffAttendanceModal').then((m) => ({ default: m.StaffAttendanceModal }))
 );
+const AdminPopupNoticeModal = React.lazy(() =>
+  import('./components/AdminPopupNoticeModal').then((m) => ({ default: m.AdminPopupNoticeModal }))
+);
+const UserPopupNoticeModal = React.lazy(() =>
+  import('./components/UserPopupNoticeModal').then((m) => ({ default: m.UserPopupNoticeModal }))
+);
 const AyByayPortal = React.lazy(() =>
   import('./portals/ayByay/App').then((m) => ({ default: m.AyByayPortal }))
 );
@@ -140,7 +148,7 @@ import {
   PrayerTimings
 } from './utils/prayerTimeService';
 import { safeStorage } from './utils/safeStorage';
-import { canAddTransactions, canModifyTransaction, isTransactionOwner, isLoggedInSession, isSupportTicketOwner } from './utils/permissions';
+import { canAddTransactions, canModifyTransaction, isTransactionOwner, isLoggedInSession, isSupportTicketOwner, normalizePhoneNumber } from './utils/permissions';
 import { saveStoredUser } from './utils/userStorage';
 import {
   sanitizeStaffForFirestore,
@@ -151,7 +159,8 @@ import {
 import {
   startDeviceSessionGuard,
   releaseDeviceSession,
-  claimDeviceSession
+  claimDeviceSession,
+  getDeviceLabel
 } from './utils/deviceSession';
 import {
   checkForAppUpdates,
@@ -198,6 +207,23 @@ const mergeCloudAndLocalNotifications = (
     merged.push(item);
   }
   return merged;
+};
+
+const getStablePopupAckUserKey = (u: UserSession | null): string => {
+  if (u && u.role !== 'visitor') {
+    const raw = String(u.id || u.phone || u.role || 'member');
+    const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
+    if (cleaned) return cleaned;
+  }
+  try {
+    const existing = safeStorage.getItem('protyasha_device_ack_id');
+    if (existing && /^[a-zA-Z0-9_-]+$/.test(existing)) return existing;
+    const generated = `guest_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    safeStorage.setItem('protyasha_device_ack_id', generated);
+    return generated;
+  } catch {
+    return 'guest_device';
+  }
 };
 
 export default function App() {
@@ -444,6 +470,31 @@ export default function App() {
     return [];
   });
 
+  // In-App Admin Popup Notices & User Consent Acknowledgements
+  const [popupNotices, setPopupNotices] = useState<PopupNotice[]>(() => {
+    try {
+      const saved = safeStorage.getItem('protyasha_popup_notices');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed.filter((n: any) => n && n.id && n.title);
+      }
+    } catch {}
+    return [];
+  });
+  const popupAckUserKey = useMemo(() => getStablePopupAckUserKey(user), [user]);
+  const [acknowledgedPopupIds, setAcknowledgedPopupIds] = useState<string[]>(() => {
+    try {
+      const saved = safeStorage.getItem(`protyasha_popup_acks_${getStablePopupAckUserKey(user)}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [popupAcksByNotice, setPopupAcksByNotice] = useState<Record<string, PopupNoticeAcknowledgement[]>>({});
+  const [isPopupNoticeManagerOpen, setIsPopupNoticeManagerOpen] = useState(false);
+  const [previewPopupNotice, setPreviewPopupNotice] = useState<PopupNotice | null>(null);
+  const [isSubmittingPopupAck, setIsSubmittingPopupAck] = useState(false);
+
   // Helper to filter out legacy dummy/demo notifications and sanitize duplicate weather advice prefixes
   const cleanDemoNotifications = (list: NotificationItem[]): NotificationItem[] => {
     if (!Array.isArray(list)) return [];
@@ -622,6 +673,8 @@ export default function App() {
       setIsEntryModalOpen(false);
       setReceiptTransaction(null);
       setSelectedNotificationDetail(null);
+      setIsPopupNoticeManagerOpen(false);
+      setPreviewPopupNotice(null);
       setIsLoginOpen(true);
       if (!stateRef.current.publicTrackTicketId) {
         window.history.pushState({ screen: 'login' }, '', window.location.pathname);
@@ -861,6 +914,113 @@ export default function App() {
       if (unsubAttendance) unsubAttendance();
     };
   }, [Boolean(user)]);
+
+  // Real-time synchronization for In-App Admin Popup Notices ('popup_notices')
+  useEffect(() => {
+    if (!user) return;
+    let unsubPopupNotices: (() => void) | null = null;
+    try {
+      unsubPopupNotices = onSnapshot(
+        collection(db, 'popup_notices'),
+        (snapshot) => {
+          const list: PopupNotice[] = [];
+          snapshot.forEach((dSnap) => {
+            const item = dSnap.data() as PopupNotice;
+            if (item && (item.id || dSnap.id) && item.title && item.message) {
+              list.push({ ...item, id: String(item.id || dSnap.id) });
+            }
+          });
+          list.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+          setPopupNotices(list);
+          try {
+            safeStorage.setItem('protyasha_popup_notices', JSON.stringify(list));
+          } catch {}
+        },
+        (err) => {
+          handleFirestoreError(err, OperationType.LIST, 'popup_notices');
+        }
+      );
+    } catch (e) {
+      console.warn('Popup notices Firestore listener notice:', e);
+    }
+    return () => {
+      if (unsubPopupNotices) unsubPopupNotices();
+    };
+  }, [Boolean(user)]);
+
+  // Reload per-user local popup acknowledgements & verify against Firestore cross-device
+  useEffect(() => {
+    const storageKey = `protyasha_popup_acks_${popupAckUserKey}`;
+    try {
+      const saved = safeStorage.getItem(storageKey);
+      setAcknowledgedPopupIds(saved ? JSON.parse(saved) : []);
+    } catch {
+      setAcknowledgedPopupIds([]);
+    }
+
+    if (!user || popupNotices.length === 0) return;
+    let cancelled = false;
+    const activeIds = popupNotices.filter((n) => n.isActive).map((n) => n.id);
+    if (activeIds.length === 0) return;
+
+    Promise.all(
+      activeIds.map(async (noticeId) => {
+        try {
+          const ackSnap = await getDoc(doc(db, 'popup_notices', noticeId, 'acknowledgements', popupAckUserKey));
+          return ackSnap.exists() ? noticeId : null;
+        } catch {
+          return null;
+        }
+      })
+    ).then((confirmedIds) => {
+      if (cancelled) return;
+      const validIds = confirmedIds.filter((id): id is string => Boolean(id));
+      if (validIds.length > 0) {
+        setAcknowledgedPopupIds((prev) => {
+          const merged = Array.from(new Set([...prev, ...validIds]));
+          if (merged.length !== prev.length) {
+            try {
+              safeStorage.setItem(storageKey, JSON.stringify(merged));
+            } catch {}
+          }
+          return merged;
+        });
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [Boolean(user), popupAckUserKey, popupNotices]);
+
+  // Admin: Live listener on acknowledgements for all popup notices when Admin Popup Manager is open
+  useEffect(() => {
+    if (user?.role !== 'admin' || !isPopupNoticeManagerOpen || popupNotices.length === 0) return;
+    const unsubs: (() => void)[] = [];
+    popupNotices.forEach((notice) => {
+      try {
+        const unsub = onSnapshot(
+          collection(db, 'popup_notices', notice.id, 'acknowledgements'),
+          (snap) => {
+            const list: PopupNoticeAcknowledgement[] = [];
+            snap.forEach((d) => {
+              const ack = d.data() as PopupNoticeAcknowledgement;
+              if (ack && ack.userName) {
+                list.push({ ...ack, id: String(ack.id || d.id) });
+              }
+            });
+            list.sort((a, b) => String(b.acknowledgedAt || '').localeCompare(String(a.acknowledgedAt || '')));
+            setPopupAcksByNotice((prev) => ({ ...prev, [notice.id]: list }));
+          },
+          () => {}
+        );
+        unsubs.push(unsub);
+      } catch {}
+    });
+    return () => {
+      unsubs.forEach((u) => u());
+    };
+  }, [user?.role, isPopupNoticeManagerOpen, popupNotices]);
 
   const isNotifReadForUser = useCallback((notif: NotificationItem) => {
     if (readNotifIds.includes(notif.id)) return true;
@@ -1811,6 +1971,7 @@ export default function App() {
   const isDriveBackupSubViewActiveRef = useRef(false);
   const isBannerSubViewActiveRef = useRef(false);
   const isLoginSubViewActiveRef = useRef(false);
+  const isPopupManagerSubViewActiveRef = useRef(false);
 
   const pushHistoryStep = useCallback(() => {
     if (!isNavigatingBackRef.current) {
@@ -1821,17 +1982,19 @@ export default function App() {
   }, []);
 
   const closeOverlayViaBack = useCallback((fallbackClose: () => void) => {
-    try {
-      if (
-        window.history.state?.appOverlay ||
-        window.history.state?.appSubView ||
-        window.history.state?.ayByayPortal ||
-        window.history.state?.billManagerPortal
-      ) {
-        window.history.back();
-        return;
-      }
-    } catch {}
+    if (!isNavigatingBackRef.current) {
+      try {
+        if (
+          window.history.state?.appOverlay ||
+          window.history.state?.appSubView ||
+          window.history.state?.ayByayPortal ||
+          window.history.state?.billManagerPortal
+        ) {
+          window.history.back();
+          return;
+        }
+      } catch {}
+    }
     fallbackClose();
   }, []);
 
@@ -1871,7 +2034,9 @@ export default function App() {
     isServiceManagerOpen,
     isDriveBackupOpen,
     isSupportTicketsOpen,
-    isStaffAttendanceOpen
+    isStaffAttendanceOpen,
+    isPopupNoticeManagerOpen,
+    previewPopupNotice
   });
 
   stateRef.current = {
@@ -1902,7 +2067,9 @@ export default function App() {
     isServiceManagerOpen,
     isDriveBackupOpen,
     isSupportTicketsOpen,
-    isStaffAttendanceOpen
+    isStaffAttendanceOpen,
+    isPopupNoticeManagerOpen,
+    previewPopupNotice
   };
 
   // Popstate Listener: Handlers respond to device hardware/browser back button in strict LIFO order
@@ -1923,6 +2090,8 @@ export default function App() {
       if (s.publicTrackTicketId) {
         isPublicPreviewOverlayRef.current = false;
         setPublicTrackTicketId(null);
+      } else if (s.previewPopupNotice) {
+        setPreviewPopupNotice(null);
       } else if (s.deleteTrx) {
         setDeleteTrx(null);
       } else if (s.activeServiceNotice) {
@@ -1973,6 +2142,12 @@ export default function App() {
         setIsStaffManagerOpen(false);
       } else if (s.isServiceManagerOpen) {
         setIsServiceManagerOpen(false);
+      } else if (s.isPopupNoticeManagerOpen) {
+        if (isPopupManagerSubViewActiveRef.current) {
+          releaseBackLock();
+          return;
+        }
+        setIsPopupNoticeManagerOpen(false);
       } else if (s.isRecycleBinOpen) {
         setIsRecycleBinOpen(false);
       } else if (s.isAuditLogOpen) {
@@ -2462,35 +2637,6 @@ export default function App() {
     }).catch(err => console.error('Service control sync error:', err));
   };
 
-  const handleToggleVisitorMode = (enabled: boolean) => {
-    const current = serviceStatuses.visitorMode || { isActive: true };
-    const updated: Record<string, ServiceStatusConfig> = {
-      ...serviceStatuses,
-      visitorMode: {
-        ...current,
-        isActive: enabled
-      }
-    };
-    handleSaveServiceStatuses(updated);
-    logAction(
-      enabled ? 'Enabled Visitor Mode' : 'Disabled Visitor Mode',
-      enabled ? 'সরাসরি ভিজিটর মোড চালু' : 'সরাসরি ভিজিটর মোড বন্ধ',
-      enabled
-        ? 'লগইন পেইজে সরাসরি ভিজিটর মোড চালু করা হয়েছে'
-        : 'লগইন পেইজে সরাসরি ভিজিটর মোড বন্ধ করা হয়েছে (একাউন্ট বাধ্যতামূলক)'
-    );
-    showToast(
-      lang === 'bn'
-        ? enabled
-          ? 'সরাসরি ভিজিটর মোড চালু করা হয়েছে'
-          : 'সরাসরি ভিজিটর মোড বন্ধ করা হয়েছে'
-        : enabled
-        ? 'Direct Visitor Mode enabled'
-        : 'Direct Visitor Mode disabled',
-      enabled ? 'success' : 'info'
-    );
-  };
-
   const checkServiceAccess = (serviceId: string, displayName: string): boolean => {
     const status = serviceStatuses[serviceId];
     if (status && (status.isActive === false || String(status.isActive) === 'false')) {
@@ -2903,6 +3049,8 @@ export default function App() {
     setIsEntryModalOpen(false);
     setReceiptTransaction(null);
     setSelectedNotificationDetail(null);
+    setIsPopupNoticeManagerOpen(false);
+    setPreviewPopupNotice(null);
     setIsLoginOpen(true);
     // Push fresh history state so back button cannot navigate back to visitor mode
     window.history.pushState({ screen: 'login' }, '', window.location.pathname);
@@ -3149,6 +3297,196 @@ export default function App() {
     });
 
     logAction('Deleted Attendance Record', 'হাজিরা/ছুটি রেকর্ড মোছা হয়েছে', `আইডি: ${recordId}`);
+  };
+
+  // In-App Popup Notice & User Consent Handlers
+  const pendingUserPopupNotices = useMemo(() => {
+    if (!user || isLoginOpen || user.role === 'admin') return [];
+    const uPhone = normalizePhoneNumber(user.phone);
+    const uName = (user.name || '').trim().toLowerCase();
+    const isMatchedStaffUser =
+      user.role === 'sub-admin' ||
+      staffAccounts.some((s) => {
+        if (s.isActive === false) return false;
+        if (user.id && s.id === user.id) return true;
+        if (uPhone.length >= 6 && normalizePhoneNumber(s.phone) === uPhone) return true;
+        if (uName && (s.name || '').trim().toLowerCase() === uName) return true;
+        return false;
+      });
+
+    return popupNotices.filter((n) => {
+      if (!n.isActive) return false;
+      if (acknowledgedPopupIds.includes(n.id)) return false;
+      if (n.audience === 'all') return true;
+      if (n.audience === 'users') return user.role === 'user' || user.role === 'sub-admin';
+      if (n.audience === 'staff') return isMatchedStaffUser;
+      return false;
+    });
+  }, [user, isLoginOpen, popupNotices, acknowledgedPopupIds, staffAccounts]);
+
+  const handleSavePopupNotice = async (notice: PopupNotice, alsoSendToNotifCenter?: boolean) => {
+    const cleanId =
+      String(notice.id || `popup_${Date.now()}`)
+        .replace(/[^a-zA-Z0-9_-]/g, '_')
+        .slice(0, 128) || `popup_${Date.now()}`;
+    const cleanNotice: PopupNotice = {
+      ...notice,
+      id: cleanId,
+      title: String(notice.title || '').trim().slice(0, 200),
+      message: String(notice.message || '').trim().slice(0, 3000),
+      consentLabel: String(notice.consentLabel || 'আমি এই নোটিশটি সম্পূর্ণ পড়েছি এবং এতে সম্মতি জানাচ্ছি।').trim().slice(0, 300),
+      requiresConsent: notice.requiresConsent !== false,
+      isActive: notice.isActive !== false,
+      createdBy: String(notice.createdBy || user?.name || 'Admin').slice(0, 128),
+      createdAt: notice.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    setPopupNotices((prev) => {
+      const exists = prev.some((n) => n.id === cleanNotice.id);
+      const next = exists
+        ? prev.map((n) => (n.id === cleanNotice.id ? cleanNotice : n))
+        : [cleanNotice, ...prev];
+      try {
+        safeStorage.setItem('protyasha_popup_notices', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+
+    await safeSetDoc(doc(db, 'popup_notices', cleanId), cleanNotice).catch((err) => {
+      handleFirestoreError(err, OperationType.WRITE, `popup_notices/${cleanId}`);
+      throw err;
+    });
+
+    if (alsoSendToNotifCenter) {
+      const now = new Date();
+      const monthsBnMap: Record<string, string> = {
+        Jan: 'জানুয়ারি', Feb: 'ফেব্রুয়ারি', Mar: 'মার্চ', Apr: 'এপ্রিল', May: 'মে', Jun: 'জুন',
+        Jul: 'জুলাই', Aug: 'আগস্ট', Sep: 'সেপ্টেম্বর', Oct: 'অক্টোবর', Nov: 'নভেম্বর', Dec: 'ডিসেম্বর'
+      };
+      const monthEn = now.toLocaleString('en-US', { month: 'short' });
+      const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+      handleSendNotification({
+        titleBn: cleanNotice.title,
+        titleEn: cleanNotice.title,
+        bodyBn: cleanNotice.message,
+        bodyEn: cleanNotice.message,
+        timeBn: `${now.getDate()} ${monthsBnMap[monthEn] || monthEn}, ${timeStr}`,
+        timeEn: `${monthEn} ${now.getDate()}, ${timeStr}`,
+        type: cleanNotice.priority === 'urgent' ? 'alert' : 'info',
+        image: cleanNotice.imageUrl
+      });
+    }
+
+    logAction('Popup Notice Published', 'পপ-আপ নোটিশ প্রকাশ', cleanNotice.title);
+  };
+
+  const handleTogglePopupNoticeActive = async (notice: PopupNotice) => {
+    const updated: PopupNotice = {
+      ...notice,
+      isActive: !notice.isActive,
+      updatedAt: new Date().toISOString()
+    };
+    setPopupNotices((prev) => {
+      const next = prev.map((n) => (n.id === updated.id ? updated : n));
+      try {
+        safeStorage.setItem('protyasha_popup_notices', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    await safeSetDoc(doc(db, 'popup_notices', updated.id), updated).catch((err) => {
+      handleFirestoreError(err, OperationType.WRITE, `popup_notices/${updated.id}`);
+    });
+    logAction(
+      'Popup Notice Toggled',
+      updated.isActive ? 'পপ-আপ নোটিশ সক্রিয়' : 'পপ-আপ নোটিশ বিরতি',
+      updated.title
+    );
+  };
+
+  const handleDeletePopupNotice = async (noticeId: string) => {
+    setPopupNotices((prev) => {
+      const next = prev.filter((n) => n.id !== noticeId);
+      try {
+        safeStorage.setItem('protyasha_popup_notices', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    await safeDeleteDoc(doc(db, 'popup_notices', noticeId)).catch((err) => {
+      handleFirestoreError(err, OperationType.DELETE, `popup_notices/${noticeId}`);
+    });
+    logAction('Deleted Popup Notice', 'পপ-আপ নোটিশ মুছে ফেলা হয়েছে', `ID: ${noticeId}`);
+  };
+
+  const handleAcknowledgePopupNotice = async (notice: PopupNotice) => {
+    if (previewPopupNotice) {
+      setPreviewPopupNotice(null);
+      return;
+    }
+    setIsSubmittingPopupAck(true);
+    try {
+      const ackId = popupAckUserKey;
+      const nowIso = new Date().toISOString();
+      const ackPayload: PopupNoticeAcknowledgement = {
+        id: ackId,
+        noticeId: notice.id,
+        userKey: ackId,
+        userName: String(user?.name || (lang === 'bn' ? 'অতিথি / ভিজিটর' : 'Visitor')).slice(0, 150),
+        userPhone: String(user?.phone || '').slice(0, 32),
+        userRole: String(user?.role || 'visitor').slice(0, 32),
+        consentText: String(notice.consentLabel || 'সম্মতি দেওয়া হয়েছে').slice(0, 300),
+        deviceLabel: String(getDeviceLabel() || '').slice(0, 150),
+        acknowledgedAt: nowIso
+      };
+
+      const storageKey = `protyasha_popup_acks_${ackId}`;
+      setAcknowledgedPopupIds((prev) => {
+        const next = Array.from(new Set([...prev, notice.id]));
+        try {
+          safeStorage.setItem(storageKey, JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+
+      await safeSetDoc(
+        doc(db, 'popup_notices', notice.id, 'acknowledgements', ackId),
+        ackPayload
+      ).catch((err) => {
+        handleFirestoreError(err, OperationType.WRITE, `popup_notices/${notice.id}/acknowledgements/${ackId}`);
+      });
+
+      sounds.playSuccess();
+      showAppToast(
+        lang === 'bn' ? 'সম্মতি নিশ্চিত হয়েছে' : 'Consent Confirmed',
+        notice.title,
+        'emerald',
+        3500
+      );
+    } finally {
+      setIsSubmittingPopupAck(false);
+    }
+  };
+
+  const handlePublishQuickPopupFromNotifModal = async (data: {
+    title: string;
+    message: string;
+    priority: 'info' | 'important' | 'urgent' | 'policy';
+  }) => {
+    const nowIso = new Date().toISOString();
+    const newNotice: PopupNotice = {
+      id: `popup_${Date.now()}`,
+      title: data.title,
+      message: data.message,
+      priority: data.priority,
+      audience: 'all',
+      consentLabel: 'আমি এই নোটিশটি সম্পূর্ণ পড়েছি এবং এতে সম্মতি জানাচ্ছি।',
+      requiresConsent: true,
+      isActive: true,
+      createdBy: user?.name || 'Admin',
+      createdAt: nowIso,
+      updatedAt: nowIso
+    };
+    await handleSavePopupNotice(newNotice, false);
   };
 
   const handleDeleteStaffTransaction = (staffId: string, txId: string) => {
@@ -3628,6 +3966,14 @@ export default function App() {
                     setIsServiceManagerOpen(true);
                     pushHistoryStep();
                   }}
+                  onOpenPopupNoticeManager={() => {
+                    if (user?.role === 'admin') {
+                      setIsPopupNoticeManagerOpen(true);
+                      pushHistoryStep();
+                    } else {
+                      openLoginView();
+                    }
+                  }}
                   onOpenBannerManager={() => {
                     if (user?.role === 'admin') {
                       setIsBannerManagerOpen(true);
@@ -3658,8 +4004,6 @@ export default function App() {
                     }
                   }}
                   onUpdateChecked={(res) => handleUpdateCheckResult(res, false)}
-                  visitorModeEnabled={isVisitorModeEnabled}
-                  onToggleVisitorMode={handleToggleVisitorMode}
                   onSubViewChange={(isSubView) => {
                     isProfileSubViewActiveRef.current = isSubView;
                   }}
@@ -3944,6 +4288,7 @@ export default function App() {
               saveNotificationsToCloud(updatedNotifications);
               setEditingNotification(null);
             }}
+            onPublishPopupNotice={user?.role === 'admin' ? handlePublishQuickPopupFromNotifModal : undefined}
             initialEditingNotif={editingNotification}
           />
         )}
@@ -4044,9 +4389,19 @@ export default function App() {
                 openLoginView();
               }
             }}
+            onOpenServiceManager={() => {
+              setIsServiceManagerOpen(true);
+              pushHistoryStep();
+            }}
+            onOpenPopupNoticeManager={() => {
+              if (user?.role === 'admin') {
+                setIsPopupNoticeManagerOpen(true);
+                pushHistoryStep();
+              } else {
+                openLoginView();
+              }
+            }}
             onUpdateChecked={(res) => handleUpdateCheckResult(res, false)}
-            visitorModeEnabled={isVisitorModeEnabled}
-            onToggleVisitorMode={handleToggleVisitorMode}
             onSubViewChange={(isSubView) => {
               isProfileSubViewActiveRef.current = isSubView;
             }}
@@ -4195,12 +4550,49 @@ export default function App() {
             lang={lang}
             user={user}
             staffAccounts={staffAccounts}
+            onSaveStaffAccounts={handleSaveStaffAccounts}
             quickHisabOwners={quickHisabOwners}
             onSaveOwners={handleSaveQuickHisabOwners}
             onClose={() => closeOverlayViaBack(() => setIsQuickHisabOpen(false))}
             onSubViewChange={(isSubView) => {
               isQuickHisabSubViewActiveRef.current = isSubView;
             }}
+          />
+        )}
+
+        {/* Admin In-App Popup Notice & User Consent Manager Modal */}
+        {user?.role === 'admin' && isPopupNoticeManagerOpen && (
+          <AdminPopupNoticeModal
+            isOpen={isPopupNoticeManagerOpen}
+            notices={popupNotices}
+            acknowledgementsByNotice={popupAcksByNotice}
+            lang={lang}
+            currentAdminName={user?.name || 'Admin'}
+            onClose={() => closeOverlayViaBack(() => setIsPopupNoticeManagerOpen(false))}
+            onSaveNotice={handleSavePopupNotice}
+            onToggleNoticeActive={handleTogglePopupNoticeActive}
+            onDeleteNotice={handleDeletePopupNotice}
+            onPreviewNotice={(notice) => {
+              setPreviewPopupNotice(notice);
+              pushHistoryStep();
+            }}
+            onSubViewChange={(hasSubView) => {
+              isPopupManagerSubViewActiveRef.current = hasSubView;
+            }}
+          />
+        )}
+
+        {/* User In-App Consent Notice Popup Box (Or Admin Preview) */}
+        {!isLoginOpen && (previewPopupNotice || pendingUserPopupNotices.length > 0) && (
+          <UserPopupNoticeModal
+            notice={previewPopupNotice || pendingUserPopupNotices[0]}
+            queueIndex={1}
+            queueTotal={previewPopupNotice ? 1 : pendingUserPopupNotices.length}
+            isPreviewMode={Boolean(previewPopupNotice)}
+            isSubmitting={isSubmittingPopupAck}
+            lang={lang}
+            onAcknowledge={handleAcknowledgePopupNotice}
+            onClosePreview={() => closeOverlayViaBack(() => setPreviewPopupNotice(null))}
           />
         )}
         </React.Suspense>

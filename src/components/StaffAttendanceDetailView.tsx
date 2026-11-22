@@ -5,9 +5,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
-  Download,
   FileSpreadsheet,
   Phone,
+  Printer,
   RotateCcw,
   ShieldCheck,
   UserCheck,
@@ -35,6 +35,7 @@ interface StaffAttendanceDetailViewProps {
   canDeleteDate: (dateStr: string) => boolean;
   onChangeMonth: (monthIdx: number, year: number) => void;
   onDeleteAttendance: (recordId: string) => Promise<void>;
+  onOpenPrintPreview?: () => void;
   onClose: () => void;
 }
 
@@ -212,6 +213,7 @@ export const StaffAttendanceDetailView: React.FC<StaffAttendanceDetailViewProps>
   canDeleteDate,
   onChangeMonth,
   onDeleteAttendance,
+  onOpenPrintPreview,
   onClose
 }) => {
   const isBn = lang === 'bn';
@@ -640,14 +642,20 @@ export const StaffAttendanceDetailView: React.FC<StaffAttendanceDetailViewProps>
           </div>
         </div>
 
-        {/* Quick PDF Download Button */}
+        {/* Quick PDF / Print Preview Button */}
         <button
           type="button"
-          onClick={handleDownloadIndividualPdf}
+          onClick={() => {
+            if (onOpenPrintPreview) {
+              onOpenPrintPreview();
+            } else {
+              handleDownloadIndividualPdf();
+            }
+          }}
           className="h-9 px-3 rounded-xl bg-[#E52E2E] hover:bg-rose-700 text-white text-xs font-extrabold inline-flex items-center gap-1.5 shadow-sm shadow-rose-600/20 active:scale-95 transition-all shrink-0 cursor-pointer"
         >
-          <Download className="w-3.5 h-3.5" />
-          <span>{isBn ? 'PDF' : 'PDF'}</span>
+          <Printer className="w-3.5 h-3.5" />
+          <span>{isBn ? 'PDF / প্রিন্ট' : 'PDF / Print'}</span>
         </button>
       </div>
 
@@ -726,14 +734,20 @@ export const StaffAttendanceDetailView: React.FC<StaffAttendanceDetailViewProps>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
             <button
               type="button"
-              onClick={handleDownloadIndividualPdf}
+              onClick={() => {
+                if (onOpenPrintPreview) {
+                  onOpenPrintPreview();
+                } else {
+                  handleDownloadIndividualPdf();
+                }
+              }}
               className="h-10 rounded-xl bg-[#E52E2E] hover:bg-rose-700 text-white text-xs font-extrabold flex items-center justify-center gap-2 shadow-sm shadow-rose-600/20 active:scale-[0.99] transition-all cursor-pointer"
             >
-              <Download className="w-4 h-4" />
+              <Printer className="w-4 h-4" />
               <span>
                 {isBn
-                  ? `মাসিক রিপোর্ট PDF ডাউনলোড (${MONTHS_BN[selectedMonthIdx]})`
-                  : `Download Monthly PDF (${MONTHS_EN[selectedMonthIdx]})`}
+                  ? `মাসিক হাজিরা শীট PDF / প্রিন্ট (${MONTHS_BN[selectedMonthIdx]})`
+                  : `Monthly Attendance PDF / Print (${MONTHS_EN[selectedMonthIdx]})`}
               </span>
             </button>
             <button

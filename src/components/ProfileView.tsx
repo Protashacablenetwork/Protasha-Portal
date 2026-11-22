@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Sparkles,
   Bell,
+  BellRing,
   ShieldCheck,
   Check,
   Camera,
@@ -69,6 +70,7 @@ interface ProfileViewProps {
   onOpenNotifications: () => void;
   onOpenUserManagement?: () => void;
   onOpenServiceManager?: () => void;
+  onOpenPopupNoticeManager?: () => void;
   onOpenDriveBackup?: () => void;
   onLogout: () => void;
   onClose: () => void;
@@ -80,8 +82,6 @@ interface ProfileViewProps {
   onUpdateChecked?: (result: UpdateCheckResult) => void;
   onSubViewChange?: (isSubView: boolean) => void;
   isTabMode?: boolean;
-  visitorModeEnabled?: boolean;
-  onToggleVisitorMode?: (enabled: boolean) => void;
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
@@ -98,6 +98,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onOpenNotifications,
   onOpenUserManagement,
   onOpenServiceManager,
+  onOpenPopupNoticeManager,
   onOpenDriveBackup,
   onLogout,
   onClose,
@@ -108,9 +109,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onOpenFooterSettings,
   onUpdateChecked,
   onSubViewChange,
-  isTabMode = false,
-  visitorModeEnabled = true,
-  onToggleVisitorMode
+  isTabMode = false
 }) => {
   const t = translations[lang];
   const isBn = lang === 'bn';
@@ -829,6 +828,35 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 <ChevronRight className="w-5 h-5 text-slate-400" />
               </button>
 
+              {/* In-App Popup Notice & User Consent Manager Row */}
+              <button
+                onClick={() => {
+                  sounds.playTap();
+                  onOpenPopupNoticeManager?.();
+                }}
+                className="w-full p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors text-left cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+                    <BellRing className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                      <span>{isBn ? 'পপ-আপ নোটিশ ও ইউজার সম্মতি' : 'Popup Notice & User Consent'}</span>
+                      <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300">
+                        {isBn ? 'নতুন' : 'New'}
+                      </span>
+                    </h4>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      {isBn
+                        ? 'ইউজারদের অ্যাপে পপ-আপ নোটিশ দিন ও সম্মতি (Acknowledgement) দেখুন'
+                        : 'Publish popup notices and track user acknowledgements'}
+                    </p>
+                  </div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-slate-400" />
+              </button>
+
               {/* Banner Ads Manager Row */}
               <button
                 onClick={() => {
@@ -924,66 +952,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </div>
                 <ChevronRight className="w-5 h-5 text-slate-400" />
               </button>
-
-              {/* Direct Visitor Mode Control Row (Admin Only) */}
-              {onToggleVisitorMode && (
-                <div className="p-4 flex items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 bg-gradient-to-r from-rose-50/40 to-amber-50/30 dark:from-rose-950/15 dark:to-amber-950/10">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div
-                      className={`w-10 h-10 rounded-2xl flex items-center justify-center shrink-0 ${
-                        visitorModeEnabled
-                          ? 'bg-emerald-600 text-white shadow-xs'
-                          : 'bg-rose-600 text-white shadow-xs'
-                      }`}
-                    >
-                      {visitorModeEnabled ? <Users className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
-                    </div>
-                    <div className="min-w-0">
-                      <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 flex-wrap">
-                        <span>{isBn ? 'সরাসরি ভিজিটর মোড (লগইন পেইজ)' : 'Direct Visitor Mode (Login Page)'}</span>
-                        <span
-                          className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
-                            visitorModeEnabled
-                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300'
-                              : 'bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-300'
-                          }`}
-                        >
-                          {visitorModeEnabled ? (isBn ? 'চালু' : 'ON') : (isBn ? 'বন্ধ' : 'OFF')}
-                        </span>
-                      </h4>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 leading-snug mt-0.5">
-                        {visitorModeEnabled
-                          ? (isBn
-                              ? 'লগইন পেইজে লগইন ছাড়া ভিজিটর হিসেবে প্রবেশ চালু আছে'
-                              : 'Guests can browse directly from Login page without account')
-                          : (isBn
-                              ? 'বন্ধ আছে — ভিজিটর অপশনে চাপ দিলে একাউন্ট খুলতে বলবে'
-                              : 'Disabled — tapping Visitor Mode prompts users to create an account')}
-                      </p>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      sounds.playTap();
-                      onToggleVisitorMode(!visitorModeEnabled);
-                    }}
-                    aria-label={
-                      isBn ? 'সরাসরি ভিজিটর মোড চালু বা বন্ধ করুন' : 'Toggle direct visitor mode'
-                    }
-                    className={`w-12 h-7 rounded-full transition-colors relative p-1 cursor-pointer shrink-0 ${
-                      visitorModeEnabled ? 'bg-emerald-600' : 'bg-rose-500 dark:bg-rose-600'
-                    }`}
-                  >
-                    <div
-                      className={`w-5 h-5 rounded-full bg-white shadow-md transition-transform ${
-                        visitorModeEnabled ? 'translate-x-5' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
-                </div>
-              )}
 
               {/* Audit Log Row */}
               <button

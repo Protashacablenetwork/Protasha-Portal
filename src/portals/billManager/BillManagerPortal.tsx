@@ -266,19 +266,6 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
     setIsDuplicateModalOpen(false);
   }, []);
 
-  const handleBackAction = useCallback(() => {
-    try {
-      if (
-        window.history.state?.billManagerPortal &&
-        window.history.state?.appStep !== 'bm-root'
-      ) {
-        window.history.back();
-        return;
-      }
-    } catch {}
-    onExit();
-  }, [onExit]);
-
   // Load current sheet data
   const loadData = useCallback(
     async (netType: BillServiceType, month: string, notifySuccess = true) => {
@@ -774,20 +761,6 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
             </svg>
             <span className="bm-side-label">{dict.dueBills}</span>
           </button>
-
-          {/* Main portal exit inside sidebar */}
-          <button
-            type="button"
-            className="bm-sidebar-item"
-            onClick={onExit}
-            title="মূল অ্যাপে ফিরুন"
-          >
-            <svg className="bm-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path d="m12 19-7-7 7-7" />
-              <path d="M19 12H5" />
-            </svg>
-            <span className="bm-side-label">{dict.backHome}</span>
-          </button>
         </nav>
 
         <div className="bm-sidebar-bottom">
@@ -820,16 +793,6 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
                 aria-label="Menu"
               >
                 ☰
-              </button>
-              <button
-                type="button"
-                className="bm-header-btn"
-                style={{ padding: '6px 9px' }}
-                onClick={handleBackAction}
-                title="পেছনে যান"
-                aria-label="Back"
-              >
-                ←
               </button>
               <div className="bm-header-title">
                 <h1>

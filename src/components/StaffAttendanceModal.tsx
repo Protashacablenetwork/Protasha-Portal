@@ -21,7 +21,8 @@ import {
   LogOut,
   ShieldCheck,
   X,
-  FileText
+  FileText,
+  Printer
 } from 'lucide-react';
 import { collection, doc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../utils/firebase';
@@ -38,6 +39,7 @@ import { toBengaliNumber } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import { normalizePhoneNumber } from '../utils/permissions';
 import { StaffAttendanceDetailView } from './StaffAttendanceDetailView';
+import { StaffMonthlyPrintPreviewModal } from './StaffMonthlyPrintPreviewModal';
 import { findMatchedStaffForUser } from '../utils/staffSync';
 
 interface StaffAttendanceModalProps {
@@ -163,6 +165,7 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
   const todayIso = getLocalTodayIso();
   const [activeTab, setActiveTab] = useState<'daily' | 'monthly' | 'leaves'>('daily');
   const [selectedDetailStaffId, setSelectedDetailStaffId] = useState<string | null>(null);
+  const [printPreviewStaffId, setPrintPreviewStaffId] = useState<string | null>(null);
   const [confirmDeleteDailyStaffId, setConfirmDeleteDailyStaffId] = useState<string | null>(null);
   const [isDeletingDailyId, setIsDeletingDailyId] = useState<string | null>(null);
   const [dailyFeedback, setDailyFeedback] = useState<{
@@ -192,11 +195,13 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
   const subViewRef = useRef({
     activeTab,
     selectedDetailStaffId,
+    printPreviewStaffId,
     isStaffLoginOpen
   });
   subViewRef.current = {
     activeTab,
     selectedDetailStaffId,
+    printPreviewStaffId,
     isStaffLoginOpen
   };
 
@@ -216,17 +221,22 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
 
   useEffect(() => {
     const isSub =
-      isOpen && (activeTab !== 'daily' || Boolean(selectedDetailStaffId) || isStaffLoginOpen);
+      isOpen &&
+      (activeTab !== 'daily' ||
+        Boolean(selectedDetailStaffId) ||
+        Boolean(printPreviewStaffId) ||
+        isStaffLoginOpen);
     onSubViewChange?.(isSub);
     return () => {
       onSubViewChange?.(false);
     };
-  }, [isOpen, activeTab, selectedDetailStaffId, isStaffLoginOpen, onSubViewChange]);
+  }, [isOpen, activeTab, selectedDetailStaffId, printPreviewStaffId, isStaffLoginOpen, onSubViewChange]);
 
   useEffect(() => {
     if (!isOpen) {
       setActiveTab('daily');
       setSelectedDetailStaffId(null);
+      setPrintPreviewStaffId(null);
       setIsStaffLoginOpen(false);
       setConfirmDeleteDailyStaffId(null);
       setDailyFeedback(null);
@@ -242,7 +252,9 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
     const handleSubViewPop = () => {
       const s = subViewRef.current;
       subViewHistoryDepthRef.current = Math.max(0, subViewHistoryDepthRef.current - 1);
-      if (s.isStaffLoginOpen) {
+      if (s.printPreviewStaffId) {
+        setPrintPreviewStaffId(null);
+      } else if (s.isStaffLoginOpen) {
         setIsStaffLoginOpen(false);
       } else if (s.selectedDetailStaffId) {
         setSelectedDetailStaffId(null);
@@ -401,6 +413,14 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
     [staffAccounts, selectedDetailStaffId]
   );
 
+  const printPreviewStaff = useMemo(
+    () =>
+      printPreviewStaffId
+        ? staffAccounts.find((s) => s.id === printPreviewStaffId) || null
+        : null,
+    [staffAccounts, printPreviewStaffId]
+  );
+
   const canModifyStaffOnDate = (staffId: string, dateStr: string): boolean => {
     if (isAdmin) return true;
     if (!matchedOwnStaff) return false;
@@ -543,6 +563,12 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
     sounds.playTap();
     pushSubViewHistory();
     setSelectedDetailStaffId(staffId);
+  };
+
+  const openStaffPrintPreview = (staffId: string) => {
+    sounds.playTap();
+    pushSubViewHistory();
+    setPrintPreviewStaffId(staffId);
   };
 
   const openStaffLoginModal = () => {
@@ -1686,20 +1712,27 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
               </div>
             </div>
 
-            {/* Per-Staff Summary Cards (Click any card for full Monthly Detail & Individual PDF) */}
+            {/* Per-Staff Summary Cards (Click any card for full Monthly Detail or direct PDF / Print) */}
             <div className="space-y-3">
               <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400 px-1">
                 {isBn
-                  ? 'প্রতিটি স্টাফের মাসিক বিস্তারিত ও ব্যক্তিগত PDF ডাউনলোড করতে কার্ডে ক্লিক করুন'
-                  : 'Click any staff card to view detailed monthly report & download PDF'}
+                  ? 'প্রতিটি স্টাফের মাসিক বিস্তারিত দেখতে কার্ডে ট্যাপ করুন অথবা সরাসরি PDF / প্রিন্ট বাটনে চাপ দিন'
+                  : 'Tap any staff card for full monthly detail or press PDF / Print directly'}
               </p>
               {monthlyStats.map((item) => {
                 const showSalaryForItem = isAdmin || isOwnStaffId(item.staff.id);
                 return (
-                  <button
+                  <div
                     key={item.staff.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => openStaffDetail(item.staff.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        openStaffDetail(item.staff.id);
+                      }
+                    }}
                     className="w-full text-left p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-teal-400 dark:hover:border-teal-600 shadow-xs space-y-3 transition-all active:scale-[0.99] cursor-pointer"
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -1776,7 +1809,7 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
                       </div>
                     </div>
 
-                    {/* Payroll Preview & Detail CTA Bar */}
+                    {/* Payroll Preview & Direct Print/PDF + Detail CTA Bar */}
                     <div className="flex items-center justify-between pt-2.5 border-t border-slate-100 dark:border-slate-800 text-xs gap-2 flex-wrap">
                       {showSalaryForItem ? (
                         <div className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
@@ -1800,12 +1833,25 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
                             : `Marked: ${item.markedDays} days`}
                         </span>
                       )}
-                      <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-teal-700 dark:text-teal-400">
-                        <FileText className="w-3.5 h-3.5" />
-                        <span>{isBn ? 'বিস্তারিত ও PDF রিপোর্ট' : 'Details & PDF'}</span>
-                      </span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="inline-flex items-center gap-1 px-2.5 h-8 rounded-xl bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 text-[11px] font-extrabold">
+                          <FileText className="w-3.5 h-3.5" />
+                          <span>{isBn ? 'বিস্তারিত' : 'Details'}</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openStaffPrintPreview(item.staff.id);
+                          }}
+                          className="px-2.5 h-8 rounded-xl bg-[#E52E2E] hover:bg-rose-700 text-white text-[11px] font-extrabold inline-flex items-center gap-1 shadow-xs active:scale-95 transition-all cursor-pointer"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          <span>{isBn ? 'PDF / প্রিন্ট' : 'PDF / Print'}</span>
+                        </button>
+                      </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -2108,9 +2154,26 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
             setSelectedYear(yr);
           }}
           onDeleteAttendance={onDeleteAttendance}
+          onOpenPrintPreview={() => openStaffPrintPreview(selectedDetailStaff.id)}
           onClose={() => closeSubViewViaBack(() => setSelectedDetailStaffId(null))}
         />
       )}
+
+      {/* ============================================================ */}
+      {/* PER-STAFF MONTHLY A4 HARDCOPY PRINT / PDF PREVIEW MODAL       */}
+      {/* ============================================================ */}
+      <StaffMonthlyPrintPreviewModal
+        isOpen={Boolean(printPreviewStaff)}
+        staff={printPreviewStaff}
+        attendanceRecords={attendanceRecords}
+        selectedMonthIdx={selectedMonthIdx}
+        selectedYear={selectedYear}
+        canViewSalary={Boolean(
+          printPreviewStaff && (isAdmin || isOwnStaffId(printPreviewStaff.id))
+        )}
+        lang={lang}
+        onClose={() => closeSubViewViaBack(() => setPrintPreviewStaffId(null))}
+      />
 
       {/* ============================================================ */}
       {/* STAFF LOGIN MODAL (UNLOCKS ONLY OWN ATTENDANCE CARD)         */}

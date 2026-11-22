@@ -68,17 +68,36 @@ export const ServiceManagerModal: React.FC<ServiceManagerModalProps> = ({
   if (!isOpen) return null;
   const isBn = lang === 'bn';
 
-  const SUGGESTED_TITLES = [
-    { bn: 'সার্ভার আপগ্রেড চলছে', en: 'Server Upgrade in Progress' },
-    { bn: 'রক্ষণাবেক্ষণ কাজ চলছে', en: 'Maintenance Work Underway' },
-    { bn: 'সেবা সাময়িকভাবে বন্ধ', en: 'Service Temporarily Offline' }
-  ];
+  const SUGGESTED_TITLES =
+    editingServiceId === 'visitorMode'
+      ? [
+          { bn: 'নতুন একাউন্ট তৈরি করুন', en: 'Create an Account' },
+          { bn: 'ভিজিটর মোড বন্ধ রয়েছে', en: 'Visitor Mode Disabled' },
+          { bn: 'একাউন্ট খুলে প্রবেশ করুন', en: 'Register to Continue' }
+        ]
+      : [
+          { bn: 'সার্ভার আপগ্রেড চলছে', en: 'Server Upgrade in Progress' },
+          { bn: 'রক্ষণাবেক্ষণ কাজ চলছে', en: 'Maintenance Work Underway' },
+          { bn: 'সেবা সাময়িকভাবে বন্ধ', en: 'Service Temporarily Offline' }
+        ];
 
-  const SUGGESTED_MESSAGES = [
-    { bn: 'আমাদের এই সেবাটিকে আরও উন্নত ও গতিশীল করার লক্ষ্যে রক্ষণাবেক্ষণ কাজ চলছে। খুব শীঘ্রই আমরা নতুন ফিচার নিয়ে ফিরে আসছি।', en: 'System maintenance and upgrades are underway to deliver a better experience.' },
-    { bn: 'সিস্টেমের নিরাপত্তার স্বার্থে বর্তমানে এই সেবাটি বন্ধ রাখা হয়েছে। শীঘ্রই চালু করা হবে।', en: 'This service is temporarily disabled for security maintenance. We will be back soon.' },
-    { bn: 'সার্ভারে যান্ত্রিক ত্রুটির কারণে সেবাটি সাময়িকভাবে ব্যাহত হচ্ছে। দুঃখিত।', en: 'Service is temporarily interrupted due to a server error. We apologize for the inconvenience.' }
-  ];
+  const SUGGESTED_MESSAGES =
+    editingServiceId === 'visitorMode'
+      ? [
+          {
+            bn: 'অ্যাডমিন বর্তমানে সরাসরি ভিজিটর মোড বন্ধ রেখেছেন। অ্যাপের তথ্য দেখতে ও সেবা ব্যবহার করতে অনুগ্রহ করে নতুন একাউন্ট তৈরি করুন অথবা লগইন করুন।',
+            en: 'Direct Visitor Mode is currently disabled by admin. Please create an account or sign in to continue.'
+          },
+          {
+            bn: 'নিরাপত্তার স্বার্থে লগইন ছাড়া প্রবেশ বন্ধ করা হয়েছে। অনুগ্রহ করে আপনার মোবাইল নাম্বার দিয়ে একাউন্ট খুলুন।',
+            en: 'Guest access is disabled for security. Please create an account with your mobile number.'
+          }
+        ]
+      : [
+          { bn: 'আমাদের এই সেবাটিকে আরও উন্নত ও গতিশীল করার লক্ষ্যে রক্ষণাবেক্ষণ কাজ চলছে। খুব শীঘ্রই আমরা নতুন ফিচার নিয়ে ফিরে আসছি।', en: 'System maintenance and upgrades are underway to deliver a better experience.' },
+          { bn: 'সিস্টেমের নিরাপত্তার স্বার্থে বর্তমানে এই সেবাটি বন্ধ রাখা হয়েছে। শীঘ্রই চালু করা হবে।', en: 'This service is temporarily disabled for security maintenance. We will be back soon.' },
+          { bn: 'সার্ভারে যান্ত্রিক ত্রুটির কারণে সেবাটি সাময়িকভাবে ব্যাহত হচ্ছে। দুঃখিত।', en: 'Service is temporarily interrupted due to a server error. We apologize for the inconvenience.' }
+        ];
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -354,6 +373,17 @@ export const ServiceManagerModal: React.FC<ServiceManagerModalProps> = ({
                           {isActive ? (isBn ? 'সক্রিয় (চালু)' : 'Active') : (isBn ? 'নিষ্ক্রিয় (বন্ধ)' : 'Inactive')}
                         </span>
                       </div>
+                      {svc.id === 'visitorMode' && (
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+                          {isActive
+                            ? (isBn
+                                ? 'লগইন পেইজে লগইন ছাড়া ভিজিটর হিসেবে প্রবেশ চালু আছে'
+                                : 'Guests can browse directly from Login page without account')
+                            : (isBn
+                                ? 'বন্ধ আছে — ভিজিটর অপশনে চাপ দিলে একাউন্ট খুলতে বলবে'
+                                : 'Disabled — tapping Visitor Mode prompts users to create an account')}
+                        </p>
+                      )}
                       {status.customMessage && (
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-2 break-words leading-relaxed">
                           <span className="font-semibold text-slate-600 dark:text-slate-300">নোটিশ: </span>
