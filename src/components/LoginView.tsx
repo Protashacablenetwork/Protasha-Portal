@@ -20,15 +20,13 @@ import {
   Phone,
   Fingerprint
 } from 'lucide-react';
-import { db, staffDb, safeSetDoc } from '../utils/firebase';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { loadFirebase, loadFirestore, loadDeviceSession, warmCloudCore } from '../utils/cloudBridge';
 import { Language, FooterConfig, UserSession, BannerAd, StaffAccount, StaffSupportSession, UserRole } from '../types';
 import { translations } from '../utils/formatters';
 import { safeStorage } from '../utils/safeStorage';
 import { sounds } from '../utils/audio';
 import { compressImage } from '../utils/imageCompressor';
 import { saveStoredUser, findStoredUserByPhone } from '../utils/userStorage';
-import { claimDeviceSession } from '../utils/deviceSession';
 import { normalizePhoneNumber } from '../utils/permissions';
 import { readCachedStaffAccounts } from '../utils/staffSync';
 import { useSubViewBack } from '../utils/useSubViewBack';
@@ -126,6 +124,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
   useEffect(() => {
     let active = true;
+    const warmTimer = setTimeout(() => {
+      warmCloudCore();
+      void loadDeviceSession();
+    }, 120);
     checkBiometricCapability()
       .then((cap) => {
         if (active) setBiometricSupported(cap.available);
@@ -135,6 +137,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
       });
     return () => {
       active = false;
+      clearTimeout(warmTimer);
     };
   }, []);
 
@@ -205,6 +208,9 @@ export const LoginView: React.FC<LoginViewProps> = ({
     };
 
     try {
+      const [{ db, staffDb }, { collection, query, where, getDocs, doc, getDoc }, { claimDeviceSession }] =
+        await Promise.all([loadFirebase(), loadFirestore(), loadDeviceSession()]);
+
       // 1. Master Admin Check (only for explicit master admin IDs: 'admin' or '01777877207')
       const isMasterAdminId =
         cleanId === 'admin' ||
@@ -632,6 +638,9 @@ export const LoginView: React.FC<LoginViewProps> = ({
     setErrorMsg('');
 
     try {
+      const [{ db, safeSetDoc }, { collection, query, where, getDocs, doc }, { claimDeviceSession }] =
+        await Promise.all([loadFirebase(), loadFirestore(), loadDeviceSession()]);
+
       const cleanPhone = regPhone.trim();
 
       // Check duplicate locally first

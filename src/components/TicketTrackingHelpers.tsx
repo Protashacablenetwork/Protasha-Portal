@@ -15,8 +15,7 @@ import {
   ExternalLink,
   Settings2
 } from 'lucide-react';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db, safeSetDoc } from '../utils/firebase';
+import { cloudSet, loadFirebase, loadFirestore } from '../utils/cloudBridge';
 import {
   Language,
   SupportTicket,
@@ -132,7 +131,7 @@ export const savePublicTrackingBaseUrl = async (rawUrl: string): Promise<string>
   } catch {}
 
   try {
-    await safeSetDoc(doc(db, 'settings', 'public_tracking_config'), {
+    await cloudSet(['settings', 'public_tracking_config'], {
       id: 'public_tracking_config',
       customBaseUrl: clean,
       updatedAt: new Date().toISOString()
@@ -577,25 +576,30 @@ export const PublicTrackingShareCard: React.FC<PublicTrackingShareCardProps> = (
 
   // Sync optional custom domain config live from Firestore across all devices/hosts
   useEffect(() => {
+    let active = true;
     let unsub: (() => void) | null = null;
-    try {
-      unsub = onSnapshot(
-        doc(db, 'settings', 'public_tracking_config'),
-        (snap) => {
-          if (snap.exists()) {
-            const remoteBase = sanitizePublicBaseUrl((snap.data() as any)?.customBaseUrl);
-            setCustomBaseUrl(remoteBase);
-            setDomainInput(remoteBase);
-            try {
-              if (remoteBase) safeStorage.setItem(PUBLIC_TRACKING_BASE_URL_KEY, remoteBase);
-              else safeStorage.removeItem(PUBLIC_TRACKING_BASE_URL_KEY);
-            } catch {}
-          }
-        },
-        () => {}
-      );
-    } catch {}
+    Promise.all([loadFirebase(), loadFirestore()])
+      .then(([{ db }, { doc, onSnapshot }]) => {
+        if (!active) return;
+        unsub = onSnapshot(
+          doc(db, 'settings', 'public_tracking_config'),
+          (snap) => {
+            if (snap.exists()) {
+              const remoteBase = sanitizePublicBaseUrl((snap.data() as any)?.customBaseUrl);
+              setCustomBaseUrl(remoteBase);
+              setDomainInput(remoteBase);
+              try {
+                if (remoteBase) safeStorage.setItem(PUBLIC_TRACKING_BASE_URL_KEY, remoteBase);
+                else safeStorage.removeItem(PUBLIC_TRACKING_BASE_URL_KEY);
+              } catch {}
+            }
+          },
+          () => {}
+        );
+      })
+      .catch(() => {});
     return () => {
+      active = false;
       if (unsub) unsub();
     };
   }, []);

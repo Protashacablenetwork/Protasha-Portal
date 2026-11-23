@@ -1,5 +1,4 @@
-import { doc, getDocFromServer } from 'firebase/firestore';
-import { db } from './firebase';
+import { loadFirebase, loadFirestore } from './cloudBridge';
 import { NotificationItem } from '../types';
 import { safeStorage } from './safeStorage';
 
@@ -159,6 +158,7 @@ async function fetchCloudReleaseInfo(): Promise<AppVersionInfo | null> {
   if (safeStorage.getItem('protyasha_offline_mode') === 'true') return null;
 
   try {
+    const [{ db }, { doc, getDocFromServer }] = await Promise.all([loadFirebase(), loadFirestore()]);
     const snap = await getDocFromServer(doc(db, 'settings', 'app_version'));
     if (snap.exists()) {
       return normalizeVersionInfo(snap.data());

@@ -59,7 +59,6 @@ let sessionQuotaExceeded = false;
 try {
   safeStorage.removeItem(QUOTA_KEY);
   safeStorage.removeItem(QUOTA_RESET_KEY);
-  enableNetwork(db).catch(() => {});
 } catch {}
 
 export function isFirestoreQuotaExceeded(): boolean {

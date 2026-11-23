@@ -297,6 +297,8 @@ export class ErrorOverlay {}
         } else if (filePath.endsWith('.css')) {
             res.setHeader('Content-Type', 'text/css; charset=utf-8');
             res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+        } else if (/\.(jpg|jpeg|png|webp|svg|ico|woff2?)$/i.test(filePath)) {
+            res.setHeader('Cache-Control', 'public, max-age=86400');
         }
     };
     app.use(express.static(staticRoot, {

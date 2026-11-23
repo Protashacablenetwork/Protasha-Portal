@@ -56,6 +56,11 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const isSubAdmin = checkIsSubAdmin(user);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [visibleCount, setVisibleCount] = useState(40);
+
+  useEffect(() => {
+    setVisibleCount(40);
+  }, [filterType, searchQuery, selectedMethodFilter, currentMonthIndex, currentYear]);
 
   useEffect(() => {
     if (!isSubAdmin) return;
@@ -125,6 +130,8 @@ export const TransactionList: React.FC<TransactionListProps> = ({
     if (a.created && b.created) return a.created - b.created;
     return 0;
   });
+  const visibleList = displayList.slice(0, visibleCount);
+  const hasMore = displayList.length > visibleCount;
 
   return (
     <div className="px-4 py-2 select-none">
@@ -270,7 +277,8 @@ export const TransactionList: React.FC<TransactionListProps> = ({
             </p>
           </div>
         ) : (
-          displayList.map((trx) => {
+          <>
+          {visibleList.map((trx) => {
             const isIncome = trx.type === 'income';
             const modCheck = canModifyTransaction(trx, user, nowMs);
             const minsLeft = modCheck.allowed && Number.isFinite(modCheck.remainingMs)
@@ -380,7 +388,24 @@ export const TransactionList: React.FC<TransactionListProps> = ({
                 </div>
               </div>
             );
-          })
+          })}
+          {hasMore && (
+            <div className="pt-3 pb-2 flex justify-center">
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playTap();
+                  setVisibleCount((prev) => prev + 40);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700 transition-colors cursor-pointer"
+              >
+                {lang === 'bn'
+                  ? `আরও দেখুন (${toBengaliNumber(displayList.length - visibleCount)}টি বাকি)`
+                  : `Load More (${displayList.length - visibleCount} remaining)`}
+              </button>
+            </div>
+          )}
+          </>
         )}
       </div>
     </div>

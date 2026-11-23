@@ -1,6 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { db, staffDb, handleFirestoreError, OperationType, safeSetDoc, safeDeleteDoc } from './utils/firebase';
-import { collection, doc, onSnapshot, getDoc, getDocs } from 'firebase/firestore';
+import {
+  cloudDelete,
+  CloudOperationType,
+  cloudSet,
+  loadDeviceSession,
+  loadFirebase,
+  loadFirestore,
+  reportCloudError,
+  warmCloudCore
+} from './utils/cloudBridge';
 import { 
   Language, 
   Transaction, 
@@ -39,10 +47,13 @@ import { BalanceCard } from './components/BalanceCard';
 import { PrimaryFeatureCards, OperationsHubCards } from './components/PrimaryFeatureCards';
 import { PromoCarousel } from './components/PromoCarousel';
 import { QuickChannels } from './components/QuickChannels';
-import { TransactionList } from './components/TransactionList';
 import { BottomNav, TabId } from './components/BottomNav';
 import { clearTrackFromCurrentUrl, extractTrackTicketIdFromLocation } from './components/TicketTrackingHelpers';
 import { showConfirm, showToast } from './utils/uiFeedback';
+
+const TransactionList = React.lazy(() =>
+  import('./components/TransactionList').then((m) => ({ default: m.TransactionList }))
+);
 
 const LoginView = React.lazy(() =>
   import('./components/LoginView').then((m) => ({ default: m.LoginView }))
@@ -165,12 +176,6 @@ import {
   syncStaffPinEverywhere
 } from './utils/staffSync';
 import { isActualStaffAccount } from './utils/ownerDueSync';
-import {
-  startDeviceSessionGuard,
-  releaseDeviceSession,
-  claimDeviceSession,
-  getDeviceLabel
-} from './utils/deviceSession';
 import type { UpdateCheckResult } from './utils/appVersion';
 
 const DEFAULT_BOOT_DISTRICT: DistrictInfo = {
@@ -273,6 +278,14 @@ export default function App() {
 
   useEffect(() => {
     document.body.classList.add('app-ready');
+    const rafId = typeof requestAnimationFrame !== 'undefined'
+      ? requestAnimationFrame(() => setTimeout(warmCloudCore, 0))
+      : window.setTimeout(warmCloudCore, 0);
+    return () => {
+      if (typeof rafId === 'number' && typeof cancelAnimationFrame !== 'undefined') {
+        cancelAnimationFrame(rafId);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -584,90 +597,104 @@ export default function App() {
     }
 
     if (user?.id) {
-      const unsub = onSnapshot(doc(db, 'users', user.id), (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          if (data?.status === 'suspended' && user.id !== 'admin-master') {
-            setSessionNotice(
-              lang === 'bn'
-                ? 'আপনার অ্যাকাউন্টটি সাময়িকভাবে স্থগিত করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।'
-                : 'Your account has been suspended. Please contact admin.'
-            );
-            safeStorage.removeItem('protyasha_user');
-            sessionStorage.removeItem('protyasha_session_active');
-            setUser(null);
-            setIsLoginOpen(true);
-            return;
-          }
-          if (Array.isArray(data.readNotifications)) {
-            setReadNotifIds(prev => {
-              const combined = Array.from(new Set([...prev, ...data.readNotifications]));
-              try {
-                safeStorage.setItem(key, JSON.stringify(combined));
-              } catch {}
-              return combined;
+      const uid = user.id;
+      let active = true;
+      let unsub: (() => void) | null = null;
+      const timer = setTimeout(() => {
+        Promise.all([loadFirebase(), loadFirestore()])
+          .then(([{ db, handleFirestoreError, OperationType }, { doc, onSnapshot }]) => {
+            if (!active) return;
+            unsub = onSnapshot(doc(db, 'users', uid), (docSnap) => {
+              if (docSnap.exists()) {
+                const data = docSnap.data();
+                if (data?.status === 'suspended' && uid !== 'admin-master') {
+                  setSessionNotice(
+                    lang === 'bn'
+                      ? 'আপনার অ্যাকাউন্টটি সাময়িকভাবে স্থগিত করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।'
+                      : 'Your account has been suspended. Please contact admin.'
+                  );
+                  safeStorage.removeItem('protyasha_user');
+                  sessionStorage.removeItem('protyasha_session_active');
+                  setUser(null);
+                  setIsLoginOpen(true);
+                  return;
+                }
+                if (Array.isArray(data.readNotifications)) {
+                  setReadNotifIds(prev => {
+                    const combined = Array.from(new Set([...prev, ...data.readNotifications]));
+                    try {
+                      safeStorage.setItem(key, JSON.stringify(combined));
+                    } catch {}
+                    return combined;
+                  });
+                }
+
+                const remoteAvatar =
+                  typeof data.avatarUrl === 'string' && data.avatarUrl && !data.avatarUrl.startsWith('/uploads/')
+                    ? data.avatarUrl
+                    : '';
+
+                if (remoteAvatar) {
+                  savePersistentImage(`avatar_user_${uid}`, remoteAvatar);
+                  if (user.role === 'admin') {
+                    setAdminAvatar(prev => prev || remoteAvatar);
+                  }
+                }
+
+                setUser(prev => {
+                  if (!prev || prev.id !== uid) return prev;
+                  const nextName = data.name || prev.name;
+                  const nextPhone = data.phone || prev.phone;
+                  const nextAvatar = remoteAvatar || prev.avatarUrl;
+                  const nextGmail = data.gmail !== undefined ? (data.gmail || undefined) : prev.gmail;
+                  const nextBound = Array.isArray(data.boundMethods) ? data.boundMethods : prev.boundMethods;
+                  const nextRole = data.role || prev.role;
+                  const nextPermissions =
+                    nextRole === 'sub-admin'
+                      ? data.permissions && typeof data.permissions === 'object'
+                        ? (data.permissions as SubAdminPermissions)
+                        : prev.permissions
+                      : undefined;
+
+                  if (
+                    nextName === prev.name &&
+                    nextPhone === prev.phone &&
+                    nextAvatar === prev.avatarUrl &&
+                    nextGmail === prev.gmail &&
+                    nextRole === prev.role &&
+                    JSON.stringify(nextPermissions || null) === JSON.stringify(prev.permissions || null) &&
+                    JSON.stringify(nextBound || []) === JSON.stringify(prev.boundMethods || [])
+                  ) {
+                    return prev;
+                  }
+
+                  const nextSession: UserSession = {
+                    ...prev,
+                    name: nextName,
+                    phone: nextPhone,
+                    avatarUrl: nextAvatar,
+                    gmail: nextGmail,
+                    boundMethods: nextBound,
+                    role: nextRole,
+                    permissions: nextPermissions
+                  };
+                  try {
+                    safeStorage.setItem('protyasha_user', JSON.stringify(nextSession));
+                  } catch {}
+                  return nextSession;
+                });
+              }
+            }, (err) => {
+              handleFirestoreError(err, OperationType.GET, `users/${uid}`);
             });
-          }
-
-          const remoteAvatar =
-            typeof data.avatarUrl === 'string' && data.avatarUrl && !data.avatarUrl.startsWith('/uploads/')
-              ? data.avatarUrl
-              : '';
-
-          if (remoteAvatar) {
-            savePersistentImage(`avatar_user_${user.id}`, remoteAvatar);
-            if (user.role === 'admin') {
-              setAdminAvatar(prev => prev || remoteAvatar);
-            }
-          }
-
-          setUser(prev => {
-            if (!prev || prev.id !== user.id) return prev;
-            const nextName = data.name || prev.name;
-            const nextPhone = data.phone || prev.phone;
-            const nextAvatar = remoteAvatar || prev.avatarUrl;
-            const nextGmail = data.gmail !== undefined ? (data.gmail || undefined) : prev.gmail;
-            const nextBound = Array.isArray(data.boundMethods) ? data.boundMethods : prev.boundMethods;
-            const nextRole = data.role || prev.role;
-            const nextPermissions =
-              nextRole === 'sub-admin'
-                ? data.permissions && typeof data.permissions === 'object'
-                  ? (data.permissions as SubAdminPermissions)
-                  : prev.permissions
-                : undefined;
-
-            if (
-              nextName === prev.name &&
-              nextPhone === prev.phone &&
-              nextAvatar === prev.avatarUrl &&
-              nextGmail === prev.gmail &&
-              nextRole === prev.role &&
-              JSON.stringify(nextPermissions || null) === JSON.stringify(prev.permissions || null) &&
-              JSON.stringify(nextBound || []) === JSON.stringify(prev.boundMethods || [])
-            ) {
-              return prev;
-            }
-
-            const nextSession: UserSession = {
-              ...prev,
-              name: nextName,
-              phone: nextPhone,
-              avatarUrl: nextAvatar,
-              gmail: nextGmail,
-              boundMethods: nextBound,
-              role: nextRole,
-              permissions: nextPermissions
-            };
-            try {
-              safeStorage.setItem('protyasha_user', JSON.stringify(nextSession));
-            } catch {}
-            return nextSession;
-          });
-        }
-      }, (err) => {
-        handleFirestoreError(err, OperationType.GET, `users/${user.id}`);
-      });
-      return () => unsub();
+          })
+          .catch(() => {});
+      }, 60);
+      return () => {
+        active = false;
+        clearTimeout(timer);
+        if (unsub) unsub();
+      };
     }
   }, [user?.id, userKey, lang]);
 
@@ -675,130 +702,156 @@ export default function App() {
   useEffect(() => {
     if (!user || user.role === 'visitor') return;
 
-    const stopGuard = startDeviceSessionGuard(user, (reason, otherDeviceLabel) => {
-      const notice =
-        reason === 'other_device'
-          ? (lang === 'bn'
-              ? `এই অ্যাকাউন্টটি ইতিমধ্যে অন্য একটি ডিভাইসে (${otherDeviceLabel || 'অন্য ডিভাইস'}) সক্রিয় থাকায় আপনার সেশন স্বয়ংক্রিয়ভাবে লগআউট হয়েছে। প্রতিটি আইডি একসাথে শুধুমাত্র ১টি ডিভাইসে ব্যবহার করা যাবে।`
-              : `This account is active on another device (${otherDeviceLabel || 'other device'}), so this session was signed out. Only 1 device is allowed per account.`)
-          : (lang === 'bn'
-              ? 'অ্যাডমিন বা অন্য সেশন থেকে আপনার ডিভাইস লগআউট করা হয়েছে। পুনরায় লগইন করুন।'
-              : 'Your device session was logged out remotely. Please sign in again.');
+    let active = true;
+    let stopGuard: (() => void) | null = null;
+    const timer = setTimeout(() => {
+      loadDeviceSession()
+        .then(({ startDeviceSessionGuard }) => {
+          if (!active) return;
+          stopGuard = startDeviceSessionGuard(user, (reason, otherDeviceLabel) => {
+            const notice =
+              reason === 'other_device'
+                ? (lang === 'bn'
+                    ? `এই অ্যাকাউন্টটি ইতিমধ্যে অন্য একটি ডিভাইসে (${otherDeviceLabel || 'অন্য ডিভাইস'}) সক্রিয় থাকায় আপনার সেশন স্বয়ংক্রিয়ভাবে লগআউট হয়েছে। প্রতিটি আইডি একসাথে শুধুমাত্র ১টি ডিভাইসে ব্যবহার করা যাবে।`
+                    : `This account is active on another device (${otherDeviceLabel || 'other device'}), so this session was signed out. Only 1 device is allowed per account.`)
+                : (lang === 'bn'
+                    ? 'অ্যাডমিন বা অন্য সেশন থেকে আপনার ডিভাইস লগআউট করা হয়েছে। পুনরায় লগইন করুন।'
+                    : 'Your device session was logged out remotely. Please sign in again.');
 
-      setSessionNotice(notice);
-      safeStorage.removeItem('protyasha_user');
-      sessionStorage.removeItem('protyasha_session_active');
-      setUser(null);
-      setActiveTab('home');
-      setIsProfileOpen(false);
-      setSelectedTransaction(null);
-      setActivePortal(null);
-      setIsNotificationsOpen(false);
-      setIsAuditLogOpen(false);
-      setIsUserManagementOpen(false);
-      setIsBannerManagerOpen(false);
-      setIsChannelManagerOpen(false);
-      setIsRecycleBinOpen(false);
-      setIsChangePinOpen(false);
-      setIsFooterSettingsOpen(false);
-      setIsEntryModalOpen(false);
-      setReceiptTransaction(null);
-      setSelectedNotificationDetail(null);
-      setIsPopupNoticeManagerOpen(false);
-      setPreviewPopupNotice(null);
-      setIsLoginOpen(true);
-      if (!stateRef.current.publicTrackTicketId) {
-        window.history.pushState({ screen: 'login' }, '', window.location.pathname);
-      }
-    });
+            setSessionNotice(notice);
+            safeStorage.removeItem('protyasha_user');
+            sessionStorage.removeItem('protyasha_session_active');
+            setUser(null);
+            setActiveTab('home');
+            setIsProfileOpen(false);
+            setSelectedTransaction(null);
+            setActivePortal(null);
+            setIsNotificationsOpen(false);
+            setIsAuditLogOpen(false);
+            setIsUserManagementOpen(false);
+            setIsBannerManagerOpen(false);
+            setIsChannelManagerOpen(false);
+            setIsRecycleBinOpen(false);
+            setIsChangePinOpen(false);
+            setIsFooterSettingsOpen(false);
+            setIsEntryModalOpen(false);
+            setReceiptTransaction(null);
+            setSelectedNotificationDetail(null);
+            setIsPopupNoticeManagerOpen(false);
+            setPreviewPopupNotice(null);
+            setIsLoginOpen(true);
+            if (!stateRef.current.publicTrackTicketId) {
+              window.history.pushState({ screen: 'login' }, '', window.location.pathname);
+            }
+          });
+        })
+        .catch(() => {});
+    }, 150);
 
-    return () => stopGuard();
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      if (stopGuard) stopGuard();
+    };
   }, [user?.id, user?.phone, user?.role, lang]);
 
   // Real-time synchronization with Cloud Firestore for Staff Accounts (deferred after login for fast boot)
   useEffect(() => {
     if (!user) return;
+    let active = true;
     let unsubscribe: (() => void) | null = null;
     const timer = setTimeout(() => {
-      try {
-        unsubscribe = onSnapshot(collection(staffDb, 'staff'), async (snapshot) => {
-          if (snapshot.empty) {
-            try {
-              const metaSnap = await getDoc(doc(db, 'settings', 'staff_meta'));
-              if (metaSnap.exists() && metaSnap.data()?.initialized) {
-                setStaffAccounts([]);
-                broadcastStaffAccounts([]);
-              }
-            } catch {}
-            return;
-          }
-          const cloudStaff: StaffAccount[] = [];
-          snapshot.forEach(docSnap => {
-            const data = docSnap.data() as StaffAccount;
-            if (data && (data.id || docSnap.id) && data.name) {
-              cloudStaff.push({
-                ...data,
-                id: String(data.id || docSnap.id),
-                phone: data.phone || '',
-                role: data.role || 'লাইন টেকনিশিয়ান',
-                isActive: data.isActive !== false,
-                transactions: Array.isArray(data.transactions) ? data.transactions : []
-              });
+      Promise.all([loadFirebase(), loadFirestore()])
+        .then(([{ db, staffDb, handleFirestoreError, OperationType }, { collection, doc, onSnapshot, getDoc }]) => {
+          if (!active) return;
+          unsubscribe = onSnapshot(collection(staffDb, 'staff'), async (snapshot) => {
+            if (snapshot.empty) {
+              try {
+                const metaSnap = await getDoc(doc(db, 'settings', 'staff_meta'));
+                if (metaSnap.exists() && metaSnap.data()?.initialized) {
+                  setStaffAccounts([]);
+                  broadcastStaffAccounts([]);
+                }
+              } catch {}
+              return;
             }
+            const cloudStaff: StaffAccount[] = [];
+            snapshot.forEach(docSnap => {
+              const data = docSnap.data() as StaffAccount;
+              if (data && (data.id || docSnap.id) && data.name) {
+                cloudStaff.push({
+                  ...data,
+                  id: String(data.id || docSnap.id),
+                  phone: data.phone || '',
+                  role: data.role || 'লাইন টেকনিশিয়ান',
+                  isActive: data.isActive !== false,
+                  transactions: Array.isArray(data.transactions) ? data.transactions : []
+                });
+              }
+            });
+            setStaffAccounts(cloudStaff);
+            broadcastStaffAccounts(cloudStaff);
+          }, (err) => {
+            handleFirestoreError(err, OperationType.LIST, 'staff');
           });
-          setStaffAccounts(cloudStaff);
-          broadcastStaffAccounts(cloudStaff);
-        }, (err) => {
-          handleFirestoreError(err, OperationType.LIST, 'staff');
+        })
+        .catch((e) => {
+          console.warn('Staff Firestore listener setup notice:', e);
         });
-      } catch (e) {
-        console.warn('Staff Firestore listener setup notice:', e);
-      }
-    }, 500);
+    }, 700);
     return () => {
+      active = false;
       clearTimeout(timer);
       if (unsubscribe) unsubscribe();
     };
   }, [Boolean(user)]);
 
-  // Real-time synchronization for Banners (Ads) from dedicated 'banners' collection
+  // Real-time synchronization for Banners (Ads) from dedicated 'banners' collection (deferred after first paint)
   useEffect(() => {
+    let active = true;
     let unsubColl: (() => void) | null = null;
-    try {
-      unsubColl = onSnapshot(collection(db, 'banners'), async (snapshot) => {
-        if (snapshot.empty) {
-          try {
-            const metaSnap = await getDoc(doc(db, 'settings', 'banners_meta'));
-            if (metaSnap.exists() && metaSnap.data()?.initialized) {
-              setBanners([]);
-              safeStorage.setItem('protyasha_banners', JSON.stringify([]));
+    const timer = setTimeout(() => {
+      Promise.all([loadFirebase(), loadFirestore()])
+        .then(([{ db, handleFirestoreError, OperationType }, { collection, doc, onSnapshot, getDoc }]) => {
+          if (!active) return;
+          unsubColl = onSnapshot(collection(db, 'banners'), async (snapshot) => {
+            if (snapshot.empty) {
+              try {
+                const metaSnap = await getDoc(doc(db, 'settings', 'banners_meta'));
+                if (metaSnap.exists() && metaSnap.data()?.initialized) {
+                  setBanners([]);
+                  safeStorage.setItem('protyasha_banners', JSON.stringify([]));
+                }
+              } catch {}
+              return;
             }
-          } catch {}
-          return;
-        }
-        const cloudBanners: BannerAd[] = [];
-        snapshot.forEach(docSnap => {
-          const b = docSnap.data() as BannerAd;
-          if (b && (b.id || docSnap.id) && b.imageUrl) {
-            cloudBanners.push({
-              ...b,
-              id: String(b.id || docSnap.id),
-              isActive: b.isActive !== false
+            const cloudBanners: BannerAd[] = [];
+            snapshot.forEach(docSnap => {
+              const b = docSnap.data() as BannerAd;
+              if (b && (b.id || docSnap.id) && b.imageUrl) {
+                cloudBanners.push({
+                  ...b,
+                  id: String(b.id || docSnap.id),
+                  isActive: b.isActive !== false
+                });
+              }
             });
-          }
+            cloudBanners.sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
+            setBanners(cloudBanners);
+            try {
+              safeStorage.setItem('protyasha_banners', JSON.stringify(cloudBanners));
+            } catch {}
+          }, (err) => {
+            handleFirestoreError(err, OperationType.LIST, 'banners');
+          });
+        })
+        .catch((e) => {
+          console.warn('Banners Firestore listener setup notice:', e);
         });
-        cloudBanners.sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
-        setBanners(cloudBanners);
-        try {
-          safeStorage.setItem('protyasha_banners', JSON.stringify(cloudBanners));
-        } catch {}
-      }, (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'banners');
-      });
-    } catch (e) {
-      console.warn('Banners Firestore listener setup notice:', e);
-    }
+    }, 350);
     return () => {
+      active = false;
+      clearTimeout(timer);
       if (unsubColl) unsubColl();
     };
   }, []);
@@ -806,39 +859,47 @@ export default function App() {
   // Real-time synchronization for Payment Channels from dedicated 'channels' collection
   useEffect(() => {
     if (!user) return;
+    let active = true;
     let unsubColl: (() => void) | null = null;
-    try {
-      unsubColl = onSnapshot(collection(db, 'channels'), async (snapshot) => {
-        if (snapshot.empty) {
-          try {
-            const metaSnap = await getDoc(doc(db, 'settings', 'channels_meta'));
-            if (metaSnap.exists() && metaSnap.data()?.initialized) {
-              setChannels([]);
-              safeStorage.setItem('protyasha_channels', JSON.stringify([]));
+    const timer = setTimeout(() => {
+      Promise.all([loadFirebase(), loadFirestore()])
+        .then(([{ db, handleFirestoreError, OperationType }, { collection, doc, onSnapshot, getDoc }]) => {
+          if (!active) return;
+          unsubColl = onSnapshot(collection(db, 'channels'), async (snapshot) => {
+            if (snapshot.empty) {
+              try {
+                const metaSnap = await getDoc(doc(db, 'settings', 'channels_meta'));
+                if (metaSnap.exists() && metaSnap.data()?.initialized) {
+                  setChannels([]);
+                  safeStorage.setItem('protyasha_channels', JSON.stringify([]));
+                }
+              } catch {}
+              return;
             }
-          } catch {}
-          return;
-        }
-        const cloudChannels: (PaymentChannel & { order?: number })[] = [];
-        snapshot.forEach(docSnap => {
-          const ch = docSnap.data() as PaymentChannel & { order?: number };
-          if (ch && (ch.id || docSnap.id) && ch.name) {
-            cloudChannels.push({ ...ch, id: String(ch.id || docSnap.id) });
-          }
+            const cloudChannels: (PaymentChannel & { order?: number })[] = [];
+            snapshot.forEach(docSnap => {
+              const ch = docSnap.data() as PaymentChannel & { order?: number };
+              if (ch && (ch.id || docSnap.id) && ch.name) {
+                cloudChannels.push({ ...ch, id: String(ch.id || docSnap.id) });
+              }
+            });
+            cloudChannels.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+            const cleaned = cleanChannelLogos(cloudChannels);
+            setChannels(cleaned);
+            try {
+              safeStorage.setItem('protyasha_channels', JSON.stringify(cleaned));
+            } catch {}
+          }, (err) => {
+            handleFirestoreError(err, OperationType.LIST, 'channels');
+          });
+        })
+        .catch((e) => {
+          console.warn('Channels Firestore listener setup notice:', e);
         });
-        cloudChannels.sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
-        const cleaned = cleanChannelLogos(cloudChannels);
-        setChannels(cleaned);
-        try {
-          safeStorage.setItem('protyasha_channels', JSON.stringify(cleaned));
-        } catch {}
-      }, (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'channels');
-      });
-    } catch (e) {
-      console.warn('Channels Firestore listener setup notice:', e);
-    }
+    }, 220);
     return () => {
+      active = false;
+      clearTimeout(timer);
       if (unsubColl) unsubColl();
     };
   }, [Boolean(user)]);
@@ -846,39 +907,44 @@ export default function App() {
   // Real-time synchronization for Quick Hisab Owners (deferred after login)
   useEffect(() => {
     if (!user) return;
+    let active = true;
     let unsubColl: (() => void) | null = null;
     const timer = setTimeout(() => {
-      try {
-        unsubColl = onSnapshot(collection(db, 'quick_hisab_owners'), async (snapshot) => {
-          if (snapshot.empty) {
-            try {
-              const metaSnap = await getDoc(doc(db, 'settings', 'owners_meta'));
-              if (metaSnap.exists() && metaSnap.data()?.initialized) {
-                setQuickHisabOwners([]);
-                safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify([]));
-              }
-            } catch {}
-            return;
-          }
-          const cloudOwners: QuickHisabOwner[] = [];
-          snapshot.forEach(dSnap => {
-            const o = dSnap.data() as QuickHisabOwner;
-            if (o && o.name) {
-              cloudOwners.push({ ...o, id: String(o.id || dSnap.id) });
+      Promise.all([loadFirebase(), loadFirestore()])
+        .then(([{ db, handleFirestoreError, OperationType }, { collection, doc, onSnapshot, getDoc }]) => {
+          if (!active) return;
+          unsubColl = onSnapshot(collection(db, 'quick_hisab_owners'), async (snapshot) => {
+            if (snapshot.empty) {
+              try {
+                const metaSnap = await getDoc(doc(db, 'settings', 'owners_meta'));
+                if (metaSnap.exists() && metaSnap.data()?.initialized) {
+                  setQuickHisabOwners([]);
+                  safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify([]));
+                }
+              } catch {}
+              return;
             }
+            const cloudOwners: QuickHisabOwner[] = [];
+            snapshot.forEach(dSnap => {
+              const o = dSnap.data() as QuickHisabOwner;
+              if (o && o.name) {
+                cloudOwners.push({ ...o, id: String(o.id || dSnap.id) });
+              }
+            });
+            setQuickHisabOwners(cloudOwners);
+            try {
+              safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(cloudOwners));
+            } catch {}
+          }, (err) => {
+            handleFirestoreError(err, OperationType.LIST, 'quick_hisab_owners');
           });
-          setQuickHisabOwners(cloudOwners);
-          try {
-            safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(cloudOwners));
-          } catch {}
-        }, (err) => {
-          handleFirestoreError(err, OperationType.LIST, 'quick_hisab_owners');
+        })
+        .catch((e) => {
+          console.warn('Quick Hisab Owners listener setup notice:', e);
         });
-      } catch (e) {
-        console.warn('Quick Hisab Owners listener setup notice:', e);
-      }
-    }, 650);
+    }, 900);
     return () => {
+      active = false;
       clearTimeout(timer);
       if (unsubColl) unsubColl();
     };
@@ -887,29 +953,34 @@ export default function App() {
   // Real-time synchronization for Customer Support Tickets (deferred after login)
   useEffect(() => {
     if (!user) return;
+    let active = true;
     let unsubTickets: (() => void) | null = null;
     const timer = setTimeout(() => {
-      try {
-        unsubTickets = onSnapshot(collection(db, 'support_tickets'), (snapshot) => {
-          const list: SupportTicket[] = [];
-          snapshot.forEach((dSnap) => {
-            const item = dSnap.data() as SupportTicket;
-            if (item && (item.id || dSnap.id) && item.customerName) {
-              list.push({ ...item, id: String(item.id || dSnap.id) });
-            }
+      Promise.all([loadFirebase(), loadFirestore()])
+        .then(([{ db, handleFirestoreError, OperationType }, { collection, onSnapshot }]) => {
+          if (!active) return;
+          unsubTickets = onSnapshot(collection(db, 'support_tickets'), (snapshot) => {
+            const list: SupportTicket[] = [];
+            snapshot.forEach((dSnap) => {
+              const item = dSnap.data() as SupportTicket;
+              if (item && (item.id || dSnap.id) && item.customerName) {
+                list.push({ ...item, id: String(item.id || dSnap.id) });
+              }
+            });
+            setSupportTickets(list);
+            try {
+              safeStorage.setItem('protyasha_support_tickets', JSON.stringify(list));
+            } catch {}
+          }, (err) => {
+            handleFirestoreError(err, OperationType.LIST, 'support_tickets');
           });
-          setSupportTickets(list);
-          try {
-            safeStorage.setItem('protyasha_support_tickets', JSON.stringify(list));
-          } catch {}
-        }, (err) => {
-          handleFirestoreError(err, OperationType.LIST, 'support_tickets');
+        })
+        .catch((e) => {
+          console.warn('Support tickets Firestore listener notice:', e);
         });
-      } catch (e) {
-        console.warn('Support tickets Firestore listener notice:', e);
-      }
-    }, 750);
+    }, 1050);
     return () => {
+      active = false;
       clearTimeout(timer);
       if (unsubTickets) unsubTickets();
     };
@@ -918,106 +989,129 @@ export default function App() {
   // Real-time synchronization for Staff Attendance & Leave (deferred after login)
   useEffect(() => {
     if (!user) return;
+    let active = true;
     let unsubAttendance: (() => void) | null = null;
     const timer = setTimeout(() => {
-      try {
-        unsubAttendance = onSnapshot(collection(db, 'staff_attendance'), (snapshot) => {
-          const list: StaffAttendanceRecord[] = [];
-          snapshot.forEach((dSnap) => {
-            const item = dSnap.data() as StaffAttendanceRecord;
-            if (item && (item.id || dSnap.id) && item.staffId && item.date) {
-              list.push({ ...item, id: String(item.id || dSnap.id) });
-            }
+      Promise.all([loadFirebase(), loadFirestore()])
+        .then(([{ db, handleFirestoreError, OperationType }, { collection, onSnapshot }]) => {
+          if (!active) return;
+          unsubAttendance = onSnapshot(collection(db, 'staff_attendance'), (snapshot) => {
+            const list: StaffAttendanceRecord[] = [];
+            snapshot.forEach((dSnap) => {
+              const item = dSnap.data() as StaffAttendanceRecord;
+              if (item && (item.id || dSnap.id) && item.staffId && item.date) {
+                list.push({ ...item, id: String(item.id || dSnap.id) });
+              }
+            });
+            setAttendanceRecords(list);
+            try {
+              safeStorage.setItem('protyasha_staff_attendance', JSON.stringify(list));
+            } catch {}
+          }, (err) => {
+            handleFirestoreError(err, OperationType.LIST, 'staff_attendance');
           });
-          setAttendanceRecords(list);
-          try {
-            safeStorage.setItem('protyasha_staff_attendance', JSON.stringify(list));
-          } catch {}
-        }, (err) => {
-          handleFirestoreError(err, OperationType.LIST, 'staff_attendance');
+        })
+        .catch((e) => {
+          console.warn('Staff attendance Firestore listener notice:', e);
         });
-      } catch (e) {
-        console.warn('Staff attendance Firestore listener notice:', e);
-      }
-    }, 850);
+    }, 1150);
     return () => {
+      active = false;
       clearTimeout(timer);
       if (unsubAttendance) unsubAttendance();
     };
   }, [Boolean(user)]);
 
-  // Real-time synchronization for In-App Admin Popup Notices ('popup_notices')
+  // Real-time synchronization for In-App Admin Popup Notices ('popup_notices', deferred after login)
   useEffect(() => {
     if (!user) return;
+    let active = true;
     let unsubPopupNotices: (() => void) | null = null;
-    try {
-      unsubPopupNotices = onSnapshot(
-        collection(db, 'popup_notices'),
-        (snapshot) => {
-          const list: PopupNotice[] = [];
-          snapshot.forEach((dSnap) => {
-            const item = dSnap.data() as PopupNotice;
-            if (item && (item.id || dSnap.id) && item.title && item.message) {
-              list.push({ ...item, id: String(item.id || dSnap.id) });
+    const timer = setTimeout(() => {
+      Promise.all([loadFirebase(), loadFirestore()])
+        .then(([{ db, handleFirestoreError, OperationType }, { collection, onSnapshot }]) => {
+          if (!active) return;
+          unsubPopupNotices = onSnapshot(
+            collection(db, 'popup_notices'),
+            (snapshot) => {
+              const list: PopupNotice[] = [];
+              snapshot.forEach((dSnap) => {
+                const item = dSnap.data() as PopupNotice;
+                if (item && (item.id || dSnap.id) && item.title && item.message) {
+                  list.push({ ...item, id: String(item.id || dSnap.id) });
+                }
+              });
+              list.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+              setPopupNotices(list);
+              try {
+                safeStorage.setItem('protyasha_popup_notices', JSON.stringify(list));
+              } catch {}
+            },
+            (err) => {
+              handleFirestoreError(err, OperationType.LIST, 'popup_notices');
             }
-          });
-          list.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
-          setPopupNotices(list);
-          try {
-            safeStorage.setItem('protyasha_popup_notices', JSON.stringify(list));
-          } catch {}
-        },
-        (err) => {
-          handleFirestoreError(err, OperationType.LIST, 'popup_notices');
-        }
-      );
-    } catch (e) {
-      console.warn('Popup notices Firestore listener notice:', e);
-    }
+          );
+        })
+        .catch((e) => {
+          console.warn('Popup notices Firestore listener notice:', e);
+        });
+    }, 1250);
     return () => {
+      active = false;
+      clearTimeout(timer);
       if (unsubPopupNotices) unsubPopupNotices();
     };
   }, [Boolean(user)]);
 
-  // Reload per-user local popup acknowledgements & verify against Firestore cross-device
+  // Reload per-user local popup acknowledgements & verify unacknowledged ones against Firestore cross-device
   useEffect(() => {
     const storageKey = `protyasha_popup_acks_${popupAckUserKey}`;
+    let localIds: string[] = [];
     try {
       const saved = safeStorage.getItem(storageKey);
-      setAcknowledgedPopupIds(saved ? JSON.parse(saved) : []);
+      localIds = saved ? JSON.parse(saved) : [];
+      setAcknowledgedPopupIds(localIds);
     } catch {
       setAcknowledgedPopupIds([]);
     }
 
     if (!user || popupNotices.length === 0) return;
-    let cancelled = false;
-    const activeIds = popupNotices.filter((n) => n.isActive).map((n) => n.id);
+    const activeIds = popupNotices
+      .filter((n) => n.isActive && !localIds.includes(n.id))
+      .map((n) => n.id);
     if (activeIds.length === 0) return;
 
-    Promise.all(
-      activeIds.map(async (noticeId) => {
-        try {
-          const ackSnap = await getDoc(doc(db, 'popup_notices', noticeId, 'acknowledgements', popupAckUserKey));
-          return ackSnap.exists() ? noticeId : null;
-        } catch {
-          return null;
+    let cancelled = false;
+    Promise.all([loadFirebase(), loadFirestore()])
+      .then(([{ db }, { doc, getDoc }]) => {
+        if (cancelled) return;
+        return Promise.all(
+          activeIds.map(async (noticeId) => {
+            try {
+              const ackSnap = await getDoc(doc(db, 'popup_notices', noticeId, 'acknowledgements', popupAckUserKey));
+              return ackSnap.exists() ? noticeId : null;
+            } catch {
+              return null;
+            }
+          })
+        );
+      })
+      .then((confirmedIds) => {
+        if (cancelled || !confirmedIds) return;
+        const validIds = confirmedIds.filter((id): id is string => Boolean(id));
+        if (validIds.length > 0) {
+          setAcknowledgedPopupIds((prev) => {
+            const merged = Array.from(new Set([...prev, ...validIds]));
+            if (merged.length !== prev.length) {
+              try {
+                safeStorage.setItem(storageKey, JSON.stringify(merged));
+              } catch {}
+            }
+            return merged;
+          });
         }
       })
-    ).then((confirmedIds) => {
-      if (cancelled) return;
-      const validIds = confirmedIds.filter((id): id is string => Boolean(id));
-      if (validIds.length > 0) {
-        setAcknowledgedPopupIds((prev) => {
-          const merged = Array.from(new Set([...prev, ...validIds]));
-          if (merged.length !== prev.length) {
-            try {
-              safeStorage.setItem(storageKey, JSON.stringify(merged));
-            } catch {}
-          }
-          return merged;
-        });
-      }
-    });
+      .catch(() => {});
 
     return () => {
       cancelled = true;
@@ -1027,28 +1121,35 @@ export default function App() {
   // Admin: Live listener on acknowledgements for all popup notices when Admin Popup Manager is open
   useEffect(() => {
     if (user?.role !== 'admin' || !isPopupNoticeManagerOpen || popupNotices.length === 0) return;
+    let active = true;
     const unsubs: (() => void)[] = [];
-    popupNotices.forEach((notice) => {
-      try {
-        const unsub = onSnapshot(
-          collection(db, 'popup_notices', notice.id, 'acknowledgements'),
-          (snap) => {
-            const list: PopupNoticeAcknowledgement[] = [];
-            snap.forEach((d) => {
-              const ack = d.data() as PopupNoticeAcknowledgement;
-              if (ack && ack.userName) {
-                list.push({ ...ack, id: String(ack.id || d.id) });
-              }
-            });
-            list.sort((a, b) => String(b.acknowledgedAt || '').localeCompare(String(a.acknowledgedAt || '')));
-            setPopupAcksByNotice((prev) => ({ ...prev, [notice.id]: list }));
-          },
-          () => {}
-        );
-        unsubs.push(unsub);
-      } catch {}
-    });
+    Promise.all([loadFirebase(), loadFirestore()])
+      .then(([{ db }, { collection, onSnapshot }]) => {
+        if (!active) return;
+        popupNotices.forEach((notice) => {
+          try {
+            const unsub = onSnapshot(
+              collection(db, 'popup_notices', notice.id, 'acknowledgements'),
+              (snap) => {
+                const list: PopupNoticeAcknowledgement[] = [];
+                snap.forEach((d) => {
+                  const ack = d.data() as PopupNoticeAcknowledgement;
+                  if (ack && ack.userName) {
+                    list.push({ ...ack, id: String(ack.id || d.id) });
+                  }
+                });
+                list.sort((a, b) => String(b.acknowledgedAt || '').localeCompare(String(a.acknowledgedAt || '')));
+                setPopupAcksByNotice((prev) => ({ ...prev, [notice.id]: list }));
+              },
+              () => {}
+            );
+            unsubs.push(unsub);
+          } catch {}
+        });
+      })
+      .catch(() => {});
     return () => {
+      active = false;
       unsubs.forEach((u) => u());
     };
   }, [user?.role, isPopupNoticeManagerOpen, popupNotices]);
@@ -1105,39 +1206,44 @@ export default function App() {
     return legacy && !legacy.startsWith('/uploads/') ? legacy : '';
   });
 
-  // Asynchronously retrieve avatar from IndexedDB on startup (without overwriting newer server avatar)
+  // Asynchronously retrieve avatar & service logos from IndexedDB after boot only when missing
   useEffect(() => {
-    getPersistentImage('avatar_admin').then((savedImg) => {
-      if (savedImg && savedImg.startsWith('data:image/')) {
-        setAdminAvatar(prev => prev || savedImg);
-      }
-    });
-  }, []);
-
-  // Restore service logos from IndexedDB on startup - BATCEDED to reduce re-renders
-  useEffect(() => {
-    const serviceIds = ['billManager', 'ayByay', 'staffManager', 'transactions', 'ledger'];
-    const restoreLogos = async () => {
-      const updates: Record<string, string> = {};
-      for (const id of serviceIds) {
-        const img = await getPersistentImage(`service_logo_${id}`);
-        if (img && img.startsWith('data:image/')) {
-          updates[id] = img;
-        }
-      }
-      if (Object.keys(updates).length > 0) {
-        setServiceStatuses(prev => {
-          const next = { ...prev };
-          Object.keys(updates).forEach(id => {
-            if (next[id] && !next[id].logoUrl) {
-              next[id] = { ...next[id], logoUrl: updates[id] };
-            }
-          });
-          return next;
+    const timer = setTimeout(() => {
+      if (!adminAvatar) {
+        getPersistentImage('avatar_admin').then((savedImg) => {
+          if (savedImg && savedImg.startsWith('data:image/')) {
+            setAdminAvatar(prev => prev || savedImg);
+          }
         });
       }
-    };
-    restoreLogos();
+
+      const serviceIds = ['billManager', 'ayByay', 'staffManager', 'transactions', 'ledger'];
+      Promise.all(
+        serviceIds.map(async (id) => {
+          const img = await getPersistentImage(`service_logo_${id}`);
+          return img && img.startsWith('data:image/') ? ([id, img] as const) : null;
+        })
+      ).then((entries) => {
+        const updates: Record<string, string> = {};
+        for (const entry of entries) {
+          if (entry) updates[entry[0]] = entry[1];
+        }
+        if (Object.keys(updates).length > 0) {
+          setServiceStatuses(prev => {
+            let changed = false;
+            const next = { ...prev };
+            Object.keys(updates).forEach(id => {
+              if (next[id] && !next[id].logoUrl) {
+                next[id] = { ...next[id], logoUrl: updates[id] };
+                changed = true;
+              }
+            });
+            return changed ? next : prev;
+          });
+        }
+      });
+    }, 250);
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -1202,6 +1308,10 @@ export default function App() {
       const bootstrapNewDatabase = async () => {
         const nowIso = new Date().toISOString();
         try {
+          const [{ db, staffDb, safeSetDoc }, { collection, doc, getDoc, getDocs }] = await Promise.all([
+            loadFirebase(),
+            loadFirestore()
+          ]);
           const ensureCollectionSeeded = async <T extends { id: string | number }>(
             metaDocId: string,
             colName: string,
@@ -1269,13 +1379,17 @@ export default function App() {
       };
 
       void bootstrapNewDatabase();
-    }, 1500);
+    }, 1800);
 
     return () => clearTimeout(timer);
   }, []);
 
   const refreshAllData = useCallback(async () => {
     try {
+      const [{ db, staffDb }, { collection, doc, getDoc, getDocs }] = await Promise.all([
+        loadFirebase(),
+        loadFirestore()
+      ]);
       const [
         txSnap,
         staffSnap,
@@ -1424,10 +1538,10 @@ export default function App() {
       avatarUrl: cleanAvatar,
       updatedAt: nowIso
     };
-    await safeSetDoc(doc(db, 'settings', 'admin_profile'), adminProfilePayload, { merge: true }).catch(() => {});
+    await cloudSet(['settings', 'admin_profile'], adminProfilePayload, { merge: true }).catch(() => {});
     if (user?.id) {
-      await safeSetDoc(
-        doc(db, 'users', user.id),
+      await cloudSet(
+        ['users', user.id],
         {
           id: user.id,
           name,
@@ -1471,7 +1585,7 @@ export default function App() {
         updatedAt: nowIso
       };
 
-      await safeSetDoc(doc(db, 'users', targetId), userData, { merge: true });
+      await cloudSet(['users', targetId], userData, { merge: true });
 
       if (user.role === 'staff' && updatedData.pin) {
         const matchedStaff = findMatchedStaffForUser(user, staffAccounts);
@@ -1484,8 +1598,8 @@ export default function App() {
 
       // Critical: For Admin accounts, also persist to settings/admin_profile so all devices & logins sync in real time
       if (user.role === 'admin') {
-        await safeSetDoc(
-          doc(db, 'settings', 'admin_profile'),
+        await cloudSet(
+          ['settings', 'admin_profile'],
           {
             name: updatedData.name,
             phone: updatedData.phone || '01777877207',
@@ -1500,6 +1614,7 @@ export default function App() {
 
       // If phone number changed, transfer single-device lock to the new phone number
       if (updatedData.phone && updatedData.phone !== user.phone) {
+        const { releaseDeviceSession, claimDeviceSession } = await loadDeviceSession();
         await releaseDeviceSession(user).catch(() => {});
         await claimDeviceSession({
           id: targetId,
@@ -1561,7 +1676,7 @@ export default function App() {
         updatedAt: new Date().toISOString()
       };
 
-      await safeSetDoc(doc(db, 'users', targetId), updates, { merge: true });
+      await cloudSet(['users', targetId], updates, { merge: true });
 
       const updatedSession: UserSession = { ...user, ...updates };
       setUser(updatedSession);
@@ -1890,34 +2005,42 @@ export default function App() {
     [lang, showAppToast]
   );
 
-  // One-time startup check + Real-time Cloud Firestore listener for genuine new app updates
+  // One-time startup check + Real-time Cloud Firestore listener for genuine new app updates (deferred)
   useEffect(() => {
+    let active = true;
     const timer = setTimeout(async () => {
       try {
         const { checkForAppUpdates } = await import('./utils/appVersion');
         const res = await checkForAppUpdates();
-        if (res.status === 'update_available') {
+        if (active && res.status === 'update_available') {
           void handleUpdateCheckResult(res, true);
         }
       } catch {}
     }, 3500);
 
     let unsubscribeVersion: (() => void) | null = null;
-    try {
-      unsubscribeVersion = onSnapshot(doc(db, 'settings', 'app_version'), async (snap) => {
-        if (!snap.exists()) return;
-        try {
-          const { buildCloudUpdateResult } = await import('./utils/appVersion');
-          const res = buildCloudUpdateResult(snap.data());
-          if (res) {
-            void handleUpdateCheckResult(res, true);
-          }
-        } catch {}
-      });
-    } catch {}
+    const versionTimer = setTimeout(() => {
+      Promise.all([loadFirebase(), loadFirestore()])
+        .then(([{ db }, { doc, onSnapshot }]) => {
+          if (!active) return;
+          unsubscribeVersion = onSnapshot(doc(db, 'settings', 'app_version'), async (snap) => {
+            if (!snap.exists()) return;
+            try {
+              const { buildCloudUpdateResult } = await import('./utils/appVersion');
+              const res = buildCloudUpdateResult(snap.data());
+              if (res) {
+                void handleUpdateCheckResult(res, true);
+              }
+            } catch {}
+          });
+        })
+        .catch(() => {});
+    }, 1500);
 
     return () => {
+      active = false;
       clearTimeout(timer);
+      clearTimeout(versionTimer);
       if (unsubscribeVersion) unsubscribeVersion();
     };
   }, [handleUpdateCheckResult]);
@@ -2385,151 +2508,169 @@ export default function App() {
     safeStorage.setItem('protyasha_lang', lang);
   }, [lang]);
 
-  // Real-time Cloud Synchronization with Google Cloud Firestore (active once logged in)
+  // Real-time Cloud Synchronization with Google Cloud Firestore (active once logged in, non-blocking boot)
   useEffect(() => {
     if (!user) return;
-    // 1. Listen to Transaction Collection directly for instant updates from all portals
+    let active = true;
     let unsubscribeTransactions: (() => void) | null = null;
-    try {
-      const q = collection(db, 'transactions');
-      unsubscribeTransactions = onSnapshot(q, (snapshot) => {
-        const cloudTxs: Transaction[] = [];
-        snapshot.forEach(docSnap => {
-          const data = docSnap.data() as Transaction;
-          const docId = data?.id || docSnap.id;
-          if (data && docId && !String(docId).startsWith('txn-init-')) {
-            cloudTxs.push({ ...data, id: String(docId) });
-          }
+    const timer = setTimeout(() => {
+      Promise.all([loadFirebase(), loadFirestore()])
+        .then(([{ db, handleFirestoreError, OperationType }, { collection, onSnapshot }]) => {
+          if (!active) return;
+          const q = collection(db, 'transactions');
+          unsubscribeTransactions = onSnapshot(q, (snapshot) => {
+            const cloudTxs: Transaction[] = [];
+            snapshot.forEach(docSnap => {
+              const data = docSnap.data() as Transaction;
+              const docId = data?.id || docSnap.id;
+              if (data && docId && !String(docId).startsWith('txn-init-')) {
+                cloudTxs.push({ ...data, id: String(docId) });
+              }
+            });
+
+            // Separate main dashboard transactions (preserve isDeleted: true for RecycleBin sync)
+            const mainTxs = cloudTxs.filter(t => t.source !== 'ay-byay');
+            const activeMainTxs = mainTxs.filter(t => !t.isDeleted && (t as any).isDeleted !== 'true');
+            setTransactions(mainTxs);
+
+            // Compute totals from active non-deleted collection for Dashboard Balance Card
+            const income = activeMainTxs.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+            const expense = activeMainTxs.filter(t => t.type === 'expense').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+
+            setServerTotals({
+              income,
+              expense,
+              balance: income - expense,
+              totalCount: activeMainTxs.length
+            });
+            setHasMoreTransactions(activeMainTxs.length > 50);
+
+            // Sync to safeStorage
+            try {
+              safeStorage.setItem('protyasha_transactions', JSON.stringify(mainTxs));
+            } catch {}
+          }, (err) => {
+            handleFirestoreError(err, OperationType.LIST, 'transactions');
+          });
+        })
+        .catch((e) => {
+          console.warn('Transaction collection listener error:', e);
         });
-
-        // Separate main dashboard transactions (preserve isDeleted: true for RecycleBin sync)
-        const mainTxs = cloudTxs.filter(t => t.source !== 'ay-byay');
-        const activeMainTxs = mainTxs.filter(t => !t.isDeleted && (t as any).isDeleted !== 'true');
-        setTransactions(mainTxs);
-
-        // Compute totals from active non-deleted collection for Dashboard Balance Card
-        const income = activeMainTxs.filter(t => t.type === 'income').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-        const expense = activeMainTxs.filter(t => t.type === 'expense').reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
-
-        setServerTotals({
-          income,
-          expense,
-          balance: income - expense,
-          totalCount: activeMainTxs.length
-        });
-        setHasMoreTransactions(activeMainTxs.length > 50);
-
-        // Sync to safeStorage
-        try {
-          safeStorage.setItem('protyasha_transactions', JSON.stringify(mainTxs));
-        } catch {}
-      }, (err) => {
-        handleFirestoreError(err, OperationType.LIST, 'transactions');
-      });
-    } catch (e) {
-      console.warn('Transaction collection listener error:', e);
-    }
+    }, 30);
 
     return () => {
+      active = false;
+      clearTimeout(timer);
       if (unsubscribeTransactions) unsubscribeTransactions();
     };
   }, [Boolean(user), userKey]);
 
-  // Real-time listeners for settings documents (critical UI settings immediately, notifications & audit logs deferred after login)
+  // Real-time listeners for settings documents (deferred non-blockingly after initial paint)
   useEffect(() => {
+    let active = true;
     let unsubServices: (() => void) | null = null;
-    try {
-      unsubServices = onSnapshot(
-        doc(db, 'settings', 'service_control'),
-        (snapshot) => {
-          if (!snapshot.exists()) return;
-          const data = snapshot.data();
-          if (data && typeof data.statuses === 'object' && Object.keys(data.statuses).length > 0) {
-            setServiceStatuses(prev => {
-              const merged: Record<string, ServiceStatusConfig> = { ...prev };
-              Object.keys(data.statuses).forEach(key => {
-                const incoming = data.statuses[key];
-                const fallbackLogo = key === 'ayByay' ? 'https://i.ibb.co/0jZfwH1s/file-0000000079b4821185e81949d65e68d5.png' : key === 'billManager' ? 'https://bill-manager.ai.studio/logo.jpg' : '';
-                merged[key] = {
-                  ...merged[key],
-                  ...incoming,
-                  logoUrl: incoming?.logoUrl || merged[key]?.logoUrl || fallbackLogo
-                };
-              });
-              try {
-                safeStorage.setItem('protyasha_service_statuses', JSON.stringify(merged));
-              } catch {}
-              return merged;
-            });
-          }
-        },
-        (err) => {
-          handleFirestoreError(err, OperationType.GET, 'settings/service_control');
-        }
-      );
-    } catch {}
-
     let unsubFooter: (() => void) | null = null;
-    try {
-      unsubFooter = onSnapshot(
-        doc(db, 'settings', 'footer_config'),
-        (snapshot) => {
-          if (!snapshot.exists()) return;
-          const data = snapshot.data();
-          if (data && data.config && Object.keys(data.config).length > 0) {
-            setFooterConfig(data.config);
-            try {
-              safeStorage.setItem('protyasha_footer', JSON.stringify(data.config));
-            } catch {}
-          }
-        },
-        (err) => {
-          handleFirestoreError(err, OperationType.GET, 'settings/footer_config');
-        }
-      );
-    } catch {}
-
     let unsubAdminProfile: (() => void) | null = null;
-    try {
-      unsubAdminProfile = onSnapshot(
-        doc(db, 'settings', 'admin_profile'),
-        (snapshot) => {
-          if (!snapshot.exists()) return;
-          const ap = snapshot.data();
-          const serverAvatar =
-            typeof ap.avatarUrl === 'string' && ap.avatarUrl && !ap.avatarUrl.startsWith('/uploads/')
-              ? ap.avatarUrl
-              : '';
-          if (serverAvatar) {
-            setAdminAvatar(serverAvatar);
-            safeStorage.setItem('protyasha_admin_avatar', serverAvatar);
-            if (serverAvatar.startsWith('data:image/')) {
-              savePersistentImage('avatar_admin', serverAvatar);
-            }
-          }
-          setUser(prev => {
-            if (!prev || prev.role !== 'admin') return prev;
-            const nextName = ap.name || prev.name;
-            const nextPhone = ap.phone || prev.phone;
-            const nextAvatar = serverAvatar || prev.avatarUrl;
-            if (nextName === prev.name && nextPhone === prev.phone && nextAvatar === prev.avatarUrl) {
-              return prev;
-            }
-            return {
-              ...prev,
-              name: nextName,
-              phone: nextPhone,
-              avatarUrl: nextAvatar
-            };
-          });
-        },
-        (err) => {
-          handleFirestoreError(err, OperationType.GET, 'settings/admin_profile');
-        }
-      );
-    } catch {}
+
+    const timer = setTimeout(() => {
+      Promise.all([loadFirebase(), loadFirestore()])
+        .then(([{ db, handleFirestoreError, OperationType }, { doc, onSnapshot }]) => {
+          if (!active) return;
+          try {
+            unsubServices = onSnapshot(
+              doc(db, 'settings', 'service_control'),
+              (snapshot) => {
+                if (!snapshot.exists()) return;
+                const data = snapshot.data();
+                if (data && typeof data.statuses === 'object' && Object.keys(data.statuses).length > 0) {
+                  setServiceStatuses(prev => {
+                    const merged: Record<string, ServiceStatusConfig> = { ...prev };
+                    Object.keys(data.statuses).forEach(key => {
+                      const incoming = data.statuses[key];
+                      const fallbackLogo = key === 'ayByay' ? 'https://i.ibb.co/0jZfwH1s/file-0000000079b4821185e81949d65e68d5.png' : key === 'billManager' ? 'https://bill-manager.ai.studio/logo.jpg' : '';
+                      merged[key] = {
+                        ...merged[key],
+                        ...incoming,
+                        logoUrl: incoming?.logoUrl || merged[key]?.logoUrl || fallbackLogo
+                      };
+                    });
+                    try {
+                      safeStorage.setItem('protyasha_service_statuses', JSON.stringify(merged));
+                    } catch {}
+                    return merged;
+                  });
+                }
+              },
+              (err) => {
+                handleFirestoreError(err, OperationType.GET, 'settings/service_control');
+              }
+            );
+          } catch {}
+
+          try {
+            unsubFooter = onSnapshot(
+              doc(db, 'settings', 'footer_config'),
+              (snapshot) => {
+                if (!snapshot.exists()) return;
+                const data = snapshot.data();
+                if (data && data.config && Object.keys(data.config).length > 0) {
+                  setFooterConfig(data.config);
+                  try {
+                    safeStorage.setItem('protyasha_footer', JSON.stringify(data.config));
+                  } catch {}
+                }
+              },
+              (err) => {
+                handleFirestoreError(err, OperationType.GET, 'settings/footer_config');
+              }
+            );
+          } catch {}
+
+          try {
+            unsubAdminProfile = onSnapshot(
+              doc(db, 'settings', 'admin_profile'),
+              (snapshot) => {
+                if (!snapshot.exists()) return;
+                const ap = snapshot.data();
+                const serverAvatar =
+                  typeof ap.avatarUrl === 'string' && ap.avatarUrl && !ap.avatarUrl.startsWith('/uploads/')
+                    ? ap.avatarUrl
+                    : '';
+                if (serverAvatar) {
+                  setAdminAvatar(serverAvatar);
+                  safeStorage.setItem('protyasha_admin_avatar', serverAvatar);
+                  if (serverAvatar.startsWith('data:image/')) {
+                    savePersistentImage('avatar_admin', serverAvatar);
+                  }
+                }
+                setUser(prev => {
+                  if (!prev || prev.role !== 'admin') return prev;
+                  const nextName = ap.name || prev.name;
+                  const nextPhone = ap.phone || prev.phone;
+                  const nextAvatar = serverAvatar || prev.avatarUrl;
+                  if (nextName === prev.name && nextPhone === prev.phone && nextAvatar === prev.avatarUrl) {
+                    return prev;
+                  }
+                  return {
+                    ...prev,
+                    name: nextName,
+                    phone: nextPhone,
+                    avatarUrl: nextAvatar
+                  };
+                });
+              },
+              (err) => {
+                handleFirestoreError(err, OperationType.GET, 'settings/admin_profile');
+              }
+            );
+          } catch {}
+        })
+        .catch(() => {});
+    }, 180);
 
     return () => {
+      active = false;
+      clearTimeout(timer);
       if (unsubServices) unsubServices();
       if (unsubFooter) unsubFooter();
       if (unsubAdminProfile) unsubAdminProfile();
@@ -2539,60 +2680,67 @@ export default function App() {
   // Notifications & Audit Logs listeners (only needed once logged in / browsing)
   useEffect(() => {
     if (!user) return;
+    let active = true;
     let unsubNotifs: (() => void) | null = null;
     let unsubAudit: (() => void) | null = null;
     const timer = setTimeout(() => {
-      try {
-        unsubNotifs = onSnapshot(
-          doc(db, 'settings', 'broadcast_notifications'),
-          (snapshot) => {
-            if (!snapshot.exists()) return;
-            const data = snapshot.data();
-            if (Array.isArray(data.list)) {
-              const sorted = [...(data.list as NotificationItem[])].sort((a, b) => {
-                const timeA = typeof a.id === 'string' && a.id.includes('-') ? parseInt(a.id.split('-').pop() || '0', 10) : 0;
-                const timeB = typeof b.id === 'string' && b.id.includes('-') ? parseInt(b.id.split('-').pop() || '0', 10) : 0;
-                return timeB - timeA;
-              });
-              const cleaned = cleanDemoNotifications(sorted);
-              setNotifications(prev => {
-                const merged = mergeCloudAndLocalNotifications(cleaned, prev);
-                try {
-                  safeStorage.setItem('protyasha_notifications', JSON.stringify(merged));
-                } catch {}
-                return merged;
-              });
-            }
-          },
-          (err) => {
-            handleFirestoreError(err, OperationType.GET, 'settings/broadcast_notifications');
+      Promise.all([loadFirebase(), loadFirestore()])
+        .then(([{ db, handleFirestoreError, OperationType }, { doc, onSnapshot }]) => {
+          if (!active) return;
+          try {
+            unsubNotifs = onSnapshot(
+              doc(db, 'settings', 'broadcast_notifications'),
+              (snapshot) => {
+                if (!snapshot.exists()) return;
+                const data = snapshot.data();
+                if (Array.isArray(data.list)) {
+                  const sorted = [...(data.list as NotificationItem[])].sort((a, b) => {
+                    const timeA = typeof a.id === 'string' && a.id.includes('-') ? parseInt(a.id.split('-').pop() || '0', 10) : 0;
+                    const timeB = typeof b.id === 'string' && b.id.includes('-') ? parseInt(b.id.split('-').pop() || '0', 10) : 0;
+                    return timeB - timeA;
+                  });
+                  const cleaned = cleanDemoNotifications(sorted);
+                  setNotifications(prev => {
+                    const merged = mergeCloudAndLocalNotifications(cleaned, prev);
+                    try {
+                      safeStorage.setItem('protyasha_notifications', JSON.stringify(merged));
+                    } catch {}
+                    return merged;
+                  });
+                }
+              },
+              (err) => {
+                handleFirestoreError(err, OperationType.GET, 'settings/broadcast_notifications');
+              }
+            );
+          } catch (e) {
+            console.warn('Broadcast notification listener error:', e);
           }
-        );
-      } catch (e) {
-        console.warn('Broadcast notification listener error:', e);
-      }
 
-      try {
-        unsubAudit = onSnapshot(
-          doc(db, 'settings', 'audit_logs'),
-          (snapshot) => {
-            if (!snapshot.exists()) return;
-            const data = snapshot.data();
-            if (data && Array.isArray(data.logs)) {
-              setAuditLogs(data.logs);
-              try {
-                safeStorage.setItem('protyasha_audit', JSON.stringify(data.logs));
-              } catch {}
-            }
-          },
-          (err) => {
-            handleFirestoreError(err, OperationType.GET, 'settings/audit_logs');
-          }
-        );
-      } catch {}
-    }, 450);
+          try {
+            unsubAudit = onSnapshot(
+              doc(db, 'settings', 'audit_logs'),
+              (snapshot) => {
+                if (!snapshot.exists()) return;
+                const data = snapshot.data();
+                if (data && Array.isArray(data.logs)) {
+                  setAuditLogs(data.logs);
+                  try {
+                    safeStorage.setItem('protyasha_audit', JSON.stringify(data.logs));
+                  } catch {}
+                }
+              },
+              (err) => {
+                handleFirestoreError(err, OperationType.GET, 'settings/audit_logs');
+              }
+            );
+          } catch {}
+        })
+        .catch(() => {});
+    }, 600);
 
     return () => {
+      active = false;
       clearTimeout(timer);
       if (unsubNotifs) unsubNotifs();
       if (unsubAudit) unsubAudit();
@@ -2759,7 +2907,7 @@ export default function App() {
     };
     const updatedLogs = [newLog, ...auditLogs].slice(0, 100);
     setAuditLogs(updatedLogs);
-    safeSetDoc(doc(db, 'settings', 'audit_logs'), {
+    cloudSet(['settings', 'audit_logs'], {
       logs: updatedLogs,
       updatedAt: new Date().toISOString()
     }).catch(() => {});
@@ -2777,7 +2925,7 @@ export default function App() {
       }
     });
 
-    safeSetDoc(doc(db, 'settings', 'service_control'), {
+    cloudSet(['settings', 'service_control'], {
       id: 'service_control',
       statuses: updated,
       updatedAt: new Date().toISOString()
@@ -2872,7 +3020,7 @@ export default function App() {
   const saveNotificationsToCloud = (list: NotificationItem[]) => {
     // Only persist global/admin broadcasts to Firestore; per-district auto notifications stay strictly on each user's device
     const cloudBroadcasts = list.filter(n => n && !isLocalAutoNotification(n)).slice(0, 50);
-    safeSetDoc(doc(db, 'settings', 'broadcast_notifications'), {
+    cloudSet(['settings', 'broadcast_notifications'], {
       list: cloudBroadcasts,
       updatedAt: new Date().toISOString()
     }).catch(() => {});
@@ -2908,8 +3056,8 @@ export default function App() {
     } catch {}
 
     if (user?.id) {
-      safeSetDoc(
-        doc(db, 'users', user.id),
+      cloudSet(
+        ['users', user.id],
         {
           id: user.id,
           role: user.role || 'user',
@@ -2943,8 +3091,8 @@ export default function App() {
     } catch {}
 
     if (user?.id) {
-      safeSetDoc(
-        doc(db, 'users', user.id),
+      cloudSet(
+        ['users', user.id],
         {
           id: user.id,
           role: user.role || 'user',
@@ -3058,8 +3206,8 @@ export default function App() {
 
     setTransactions(updatedTransactions);
 
-    // Direct Cloud Firestore Sync (safeSetDoc strips undefined fields cleanly)
-    safeSetDoc(doc(db, 'transactions', savedTrx.id), savedTrx).catch((e) => {
+    // Direct Cloud Firestore Sync (cloudSet strips undefined fields cleanly)
+    cloudSet(['transactions', savedTrx.id], savedTrx).catch((e) => {
       console.warn('Firestore transaction save error:', e);
     });
 
@@ -3110,7 +3258,7 @@ export default function App() {
     logAction('Deleted Transaction', 'লেনদেন রিসাইকেল বিনে পাঠানো হয়েছে', `${deleteTrx.person} - #${deleteTrx.trxId}`);
 
     // Write complete validated document with isDeleted: true to Cloud Firestore
-    safeSetDoc(doc(db, 'transactions', deleteTrx.id), softDeletedTrx).catch(() => {});
+    cloudSet(['transactions', deleteTrx.id], softDeletedTrx).catch(() => {});
     setDeleteTrx(null);
   };
 
@@ -3140,7 +3288,7 @@ export default function App() {
     const updatedTransactions = transactions.map(t => (t.id === id ? { ...t, isDeleted: false } : t));
     setTransactions(updatedTransactions);
     if (targetTrx) {
-      safeSetDoc(doc(db, 'transactions', id), { ...targetTrx, isDeleted: false }).catch(() => {});
+      cloudSet(['transactions', id], { ...targetTrx, isDeleted: false }).catch(() => {});
     }
     logAction('Restored Transaction', 'লেনদেন পুনরুদ্ধার', `ID: ${id}`);
   };
@@ -3162,7 +3310,7 @@ export default function App() {
       try {
         safeStorage.setItem('protyasha_transactions', JSON.stringify(updatedTransactions));
       } catch {}
-      safeDeleteDoc(doc(db, 'transactions', id)).catch(() => {});
+      cloudDelete(['transactions', id]).catch(() => {});
       if (selectedTransaction?.id === id) {
         setSelectedTransaction(null);
       }
@@ -3179,7 +3327,7 @@ export default function App() {
       safeStorage.setItem('protyasha_transactions', JSON.stringify(updatedTransactions));
     } catch {}
     deletedItems.forEach(t => {
-      safeDeleteDoc(doc(db, 'transactions', t.id)).catch(() => {});
+      cloudDelete(['transactions', t.id]).catch(() => {});
     });
     logAction('Emptied Trash', 'রিসাইকেল বিন সম্পূর্ণ খালি', 'All trash cleared');
   };
@@ -3224,7 +3372,7 @@ export default function App() {
     }
     if (currentSessionUser && currentSessionUser.role !== 'visitor') {
       await Promise.race([
-        releaseDeviceSession(currentSessionUser),
+        loadDeviceSession().then(({ releaseDeviceSession }) => releaseDeviceSession(currentSessionUser)),
         new Promise<void>((resolve) => setTimeout(resolve, 1500))
       ]).catch(() => {});
     }
@@ -3288,12 +3436,12 @@ export default function App() {
     } catch {}
 
     normalizedOwners.forEach(o => {
-      safeSetDoc(doc(db, 'quick_hisab_owners', String(o.id)), o).catch(() => {});
+      cloudSet(['quick_hisab_owners', String(o.id)], o).catch(() => {});
     });
     removedIds.forEach(id => {
-      safeDeleteDoc(doc(db, 'quick_hisab_owners', id)).catch(() => {});
+      cloudDelete(['quick_hisab_owners', id]).catch(() => {});
     });
-    safeSetDoc(doc(db, 'settings', 'owners_meta'), { initialized: true, updatedAt: nowIso }).catch(() => {});
+    cloudSet(['settings', 'owners_meta'], { initialized: true, updatedAt: nowIso }).catch(() => {});
 
     logAction('Updated Owners', 'মালিকানা তালিকা হালনাগাদ', `মোট অংশীদার: ${normalizedOwners.length}`);
   };
@@ -3322,12 +3470,12 @@ export default function App() {
     }
 
     cleanBanners.forEach(b => {
-      safeSetDoc(doc(db, 'banners', b.id), b).catch((e) => console.error('Firestore banner update error:', b.id, e));
+      cloudSet(['banners', b.id], b).catch((e) => console.error('Firestore banner update error:', b.id, e));
     });
     removedIds.forEach(id => {
-      safeDeleteDoc(doc(db, 'banners', id)).catch(() => {});
+      cloudDelete(['banners', id]).catch(() => {});
     });
-    safeSetDoc(doc(db, 'settings', 'banners_meta'), { initialized: true, updatedAt: nowIso }).catch(() => {});
+    cloudSet(['settings', 'banners_meta'], { initialized: true, updatedAt: nowIso }).catch(() => {});
 
     logAction('Updated Banners', 'বিজ্ঞাপন ব্যানার পরিবর্তন', `মোট বিজ্ঞাপন: ${cleanBanners.length}`);
   };
@@ -3341,8 +3489,8 @@ export default function App() {
       safeStorage.setItem('protyasha_banners', JSON.stringify(updated));
     } catch {}
 
-    safeDeleteDoc(doc(db, 'banners', targetId)).catch(() => {});
-    safeSetDoc(doc(db, 'settings', 'banners_meta'), { initialized: true, updatedAt: nowIso }).catch(() => {});
+    cloudDelete(['banners', targetId]).catch(() => {});
+    cloudSet(['settings', 'banners_meta'], { initialized: true, updatedAt: nowIso }).catch(() => {});
 
     logAction('Deleted Banner', 'বিজ্ঞাপন ব্যানার মুছে ফেলা হয়েছে', `ব্যানার আইডি: ${bannerId}`);
   };
@@ -3361,16 +3509,16 @@ export default function App() {
     broadcastStaffAccounts(cleanUpdated);
 
     cleanUpdated.forEach(staff => {
-      safeSetDoc(doc(staffDb, 'staff', String(staff.id)), staff).catch((err) => {
-        handleFirestoreError(err, OperationType.WRITE, `staff/${staff.id}`);
+      cloudSet(['staff', String(staff.id)], staff, undefined, true).catch((err) => {
+        void reportCloudError(err, CloudOperationType.WRITE, `staff/${staff.id}`);
       });
     });
     removedIds.forEach(id => {
-      safeDeleteDoc(doc(staffDb, 'staff', id)).catch((err) => {
-        handleFirestoreError(err, OperationType.DELETE, `staff/${id}`);
+      cloudDelete(['staff', id], true).catch((err) => {
+        void reportCloudError(err, CloudOperationType.DELETE, `staff/${id}`);
       });
     });
-    safeSetDoc(doc(db, 'settings', 'staff_meta'), { initialized: true, updatedAt: nowIso }).catch(() => {});
+    cloudSet(['settings', 'staff_meta'], { initialized: true, updatedAt: nowIso }).catch(() => {});
 
     logAction('Updated Staff Accounts', 'স্টাফ হিসাব হালনাগাদ', `মোট স্টাফ: ${cleanUpdated.length}`);
   };
@@ -3381,10 +3529,10 @@ export default function App() {
     setStaffAccounts(remaining);
     broadcastStaffAccounts(remaining);
 
-    safeDeleteDoc(doc(staffDb, 'staff', String(staffId))).catch((err) => {
-      handleFirestoreError(err, OperationType.DELETE, `staff/${staffId}`);
+    cloudDelete(['staff', String(staffId)], true).catch((err) => {
+      void reportCloudError(err, CloudOperationType.DELETE, `staff/${staffId}`);
     });
-    safeSetDoc(doc(db, 'settings', 'staff_meta'), { initialized: true, updatedAt: nowIso }).catch(() => {});
+    cloudSet(['settings', 'staff_meta'], { initialized: true, updatedAt: nowIso }).catch(() => {});
 
     logAction('Deleted Staff Account', 'স্টাফ অ্যাকাউন্ট মোছা হয়েছে', `স্টাফ আইডি: ${staffId}`);
   };
@@ -3400,8 +3548,8 @@ export default function App() {
       return next;
     });
 
-    await safeSetDoc(doc(db, 'support_tickets', String(ticket.id)), ticket).catch((err) => {
-      handleFirestoreError(err, OperationType.WRITE, `support_tickets/${ticket.id}`);
+    await cloudSet(['support_tickets', String(ticket.id)], ticket).catch((err) => {
+      void reportCloudError(err, CloudOperationType.WRITE, `support_tickets/${ticket.id}`);
       throw err;
     });
 
@@ -3421,8 +3569,8 @@ export default function App() {
       return next;
     });
 
-    await safeDeleteDoc(doc(db, 'support_tickets', String(ticketId))).catch((err) => {
-      handleFirestoreError(err, OperationType.DELETE, `support_tickets/${ticketId}`);
+    await cloudDelete(['support_tickets', String(ticketId)]).catch((err) => {
+      void reportCloudError(err, CloudOperationType.DELETE, `support_tickets/${ticketId}`);
     });
 
     logAction('Deleted Support Ticket', 'সাপোর্ট টিকেট মোছা হয়েছে', `টিকেট আইডি: ${ticketId}`);
@@ -3439,8 +3587,8 @@ export default function App() {
       return next;
     });
 
-    await safeSetDoc(doc(db, 'staff_attendance', String(record.id)), record).catch((err) => {
-      handleFirestoreError(err, OperationType.WRITE, `staff_attendance/${record.id}`);
+    await cloudSet(['staff_attendance', String(record.id)], record).catch((err) => {
+      void reportCloudError(err, CloudOperationType.WRITE, `staff_attendance/${record.id}`);
       throw err;
     });
 
@@ -3465,8 +3613,8 @@ export default function App() {
 
     await Promise.all(
       records.map((rec) =>
-        safeSetDoc(doc(db, 'staff_attendance', String(rec.id)), rec).catch((err) => {
-          handleFirestoreError(err, OperationType.WRITE, `staff_attendance/${rec.id}`);
+        cloudSet(['staff_attendance', String(rec.id)], rec).catch((err) => {
+          void reportCloudError(err, CloudOperationType.WRITE, `staff_attendance/${rec.id}`);
         })
       )
     );
@@ -3487,8 +3635,8 @@ export default function App() {
       return next;
     });
 
-    await safeDeleteDoc(doc(db, 'staff_attendance', String(recordId))).catch((err) => {
-      handleFirestoreError(err, OperationType.DELETE, `staff_attendance/${recordId}`);
+    await cloudDelete(['staff_attendance', String(recordId)]).catch((err) => {
+      void reportCloudError(err, CloudOperationType.DELETE, `staff_attendance/${recordId}`);
     });
 
     logAction('Deleted Attendance Record', 'হাজিরা/ছুটি রেকর্ড মোছা হয়েছে', `আইডি: ${recordId}`);
@@ -3549,8 +3697,8 @@ export default function App() {
       return next;
     });
 
-    await safeSetDoc(doc(db, 'popup_notices', cleanId), cleanNotice).catch((err) => {
-      handleFirestoreError(err, OperationType.WRITE, `popup_notices/${cleanId}`);
+    await cloudSet(['popup_notices', cleanId], cleanNotice).catch((err) => {
+      void reportCloudError(err, CloudOperationType.WRITE, `popup_notices/${cleanId}`);
       throw err;
     });
 
@@ -3590,8 +3738,8 @@ export default function App() {
       } catch {}
       return next;
     });
-    await safeSetDoc(doc(db, 'popup_notices', updated.id), updated).catch((err) => {
-      handleFirestoreError(err, OperationType.WRITE, `popup_notices/${updated.id}`);
+    await cloudSet(['popup_notices', updated.id], updated).catch((err) => {
+      void reportCloudError(err, CloudOperationType.WRITE, `popup_notices/${updated.id}`);
     });
     logAction(
       'Popup Notice Toggled',
@@ -3608,8 +3756,8 @@ export default function App() {
       } catch {}
       return next;
     });
-    await safeDeleteDoc(doc(db, 'popup_notices', noticeId)).catch((err) => {
-      handleFirestoreError(err, OperationType.DELETE, `popup_notices/${noticeId}`);
+    await cloudDelete(['popup_notices', noticeId]).catch((err) => {
+      void reportCloudError(err, CloudOperationType.DELETE, `popup_notices/${noticeId}`);
     });
     logAction('Deleted Popup Notice', 'পপ-আপ নোটিশ মুছে ফেলা হয়েছে', `ID: ${noticeId}`);
   };
@@ -3623,6 +3771,7 @@ export default function App() {
     try {
       const ackId = popupAckUserKey;
       const nowIso = new Date().toISOString();
+      const { getDeviceLabel } = await loadDeviceSession();
       const ackPayload: PopupNoticeAcknowledgement = {
         id: ackId,
         noticeId: notice.id,
@@ -3644,11 +3793,11 @@ export default function App() {
         return next;
       });
 
-      await safeSetDoc(
-        doc(db, 'popup_notices', notice.id, 'acknowledgements', ackId),
+      await cloudSet(
+        ['popup_notices', notice.id, 'acknowledgements', ackId],
         ackPayload
       ).catch((err) => {
-        handleFirestoreError(err, OperationType.WRITE, `popup_notices/${notice.id}/acknowledgements/${ackId}`);
+        void reportCloudError(err, CloudOperationType.WRITE, `popup_notices/${notice.id}/acknowledgements/${ackId}`);
       });
 
       sounds.playSuccess();
@@ -3708,7 +3857,7 @@ export default function App() {
             remainingDue: newRemaining,
             transactions: updatedTxs
           };
-          safeSetDoc(doc(staffDb, 'staff', String(staffId)), updatedStaff).catch(() => {});
+          cloudSet(['staff', String(staffId)], updatedStaff, undefined, true).catch(() => {});
           return updatedStaff;
         }
         return staff;
@@ -4099,37 +4248,46 @@ export default function App() {
                   </h1>
                 </div>
 
-                <TransactionList
-                  transactions={transactionsForList}
-                  lang={lang}
-                  user={user}
-                  onSelectTransaction={(trx) => {
-                    setSelectedTransaction(trx);
-                    pushHistoryStep();
-                  }}
-                  onEdit={handleStartEdit}
-                  onDelete={handleDeleteTransaction}
-                  selectedMethodFilter={selectedMethodFilter}
-                  onClearMethodFilter={() => setSelectedMethodFilter(null)}
-                  currentMonthIndex={currentMonthIndex}
-                  currentYear={currentYear}
-                  onPrevMonth={() => {
-                    if (currentMonthIndex === 0) {
-                      setCurrentMonthIndex(11);
-                      setCurrentYear((y) => y - 1);
-                    } else {
-                      setCurrentMonthIndex((m) => m - 1);
-                    }
-                  }}
-                  onNextMonth={() => {
-                    if (currentMonthIndex === 11) {
-                      setCurrentMonthIndex(0);
-                      setCurrentYear((y) => y + 1);
-                    } else {
-                      setCurrentMonthIndex((m) => m + 1);
-                    }
-                  }}
-                />
+                <React.Suspense
+                  fallback={
+                    <div className="py-20 flex flex-col items-center justify-center gap-2 text-slate-500">
+                      <div className="w-8 h-8 rounded-full border-3 border-rose-500/25 border-t-[#E52E2E] animate-spin" />
+                      <span className="text-xs font-bold">{lang === 'bn' ? 'লেনদেন তালিকা লোড হচ্ছে...' : 'Loading transactions...'}</span>
+                    </div>
+                  }
+                >
+                  <TransactionList
+                    transactions={transactionsForList}
+                    lang={lang}
+                    user={user}
+                    onSelectTransaction={(trx) => {
+                      setSelectedTransaction(trx);
+                      pushHistoryStep();
+                    }}
+                    onEdit={handleStartEdit}
+                    onDelete={handleDeleteTransaction}
+                    selectedMethodFilter={selectedMethodFilter}
+                    onClearMethodFilter={() => setSelectedMethodFilter(null)}
+                    currentMonthIndex={currentMonthIndex}
+                    currentYear={currentYear}
+                    onPrevMonth={() => {
+                      if (currentMonthIndex === 0) {
+                        setCurrentMonthIndex(11);
+                        setCurrentYear((y) => y - 1);
+                      } else {
+                        setCurrentMonthIndex((m) => m - 1);
+                      }
+                    }}
+                    onNextMonth={() => {
+                      if (currentMonthIndex === 11) {
+                        setCurrentMonthIndex(0);
+                        setCurrentYear((y) => y + 1);
+                      } else {
+                        setCurrentMonthIndex((m) => m + 1);
+                      }
+                    }}
+                  />
+                </React.Suspense>
               </div>
             )}
 
@@ -4311,8 +4469,8 @@ export default function App() {
                 if (updatedUser.avatarUrl) {
                   setAdminAvatar(updatedUser.avatarUrl);
                 }
-                safeSetDoc(
-                  doc(db, 'settings', 'admin_profile'),
+                cloudSet(
+                  ['settings', 'admin_profile'],
                   {
                     name: updatedUser.name,
                     phone: updatedUser.phone,
@@ -4402,14 +4560,14 @@ export default function App() {
               }
 
               normalized.forEach(ch => {
-                safeSetDoc(doc(db, 'channels', ch.id), ch).catch((err) => {
-                  handleFirestoreError(err, OperationType.WRITE, `channels/${ch.id}`);
+                cloudSet(['channels', ch.id], ch).catch((err) => {
+                  void reportCloudError(err, CloudOperationType.WRITE, `channels/${ch.id}`);
                 });
               });
               removedIds.forEach(id => {
-                safeDeleteDoc(doc(db, 'channels', id)).catch(() => {});
+                cloudDelete(['channels', id]).catch(() => {});
               });
-              safeSetDoc(doc(db, 'settings', 'channels_meta'), { initialized: true, updatedAt: nowIso }).catch(() => {});
+              cloudSet(['settings', 'channels_meta'], { initialized: true, updatedAt: nowIso }).catch(() => {});
 
               logAction('Updated Channels', 'পেমেন্ট চ্যানেল হালনাগাদ', `মোট চ্যানেল সংখ্যা: ${normalized.length}`);
             }}
@@ -4715,7 +4873,7 @@ export default function App() {
             onSave={(newCfg) => {
               setFooterConfig(newCfg);
               safeStorage.setItem('protyasha_footer', JSON.stringify(newCfg));
-              safeSetDoc(doc(db, 'settings', 'footer_config'), {
+              cloudSet(['settings', 'footer_config'], {
                 config: newCfg,
                 updatedAt: new Date().toISOString()
               }).catch(() => {});
@@ -4734,7 +4892,7 @@ export default function App() {
             onClose={() => closeOverlayViaBack(() => setIsChangePinOpen(false))}
             onPinChanged={(newPin) => {
               safeStorage.setItem('protyasha_admin_pin', newPin);
-              safeSetDoc(doc(db, 'settings', 'admin_security'), {
+              cloudSet(['settings', 'admin_security'], {
                 pin: newPin,
                 updatedAt: new Date().toISOString()
               }).catch(() => {});

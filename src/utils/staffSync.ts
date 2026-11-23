@@ -1,6 +1,5 @@
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { AppUser, StaffAccount, StaffSupportSession, UserSession } from '../types';
-import { db, staffDb, safeSetDoc, safeDeleteDoc, handleFirestoreError, OperationType } from './firebase';
+import { loadFirebase, loadFirestore, reportCloudError, CloudOperationType } from './cloudBridge';
 import { safeStorage } from './safeStorage';
 import { normalizePhoneNumber } from './permissions';
 import { isActualStaffAccount } from './ownerDueSync';
@@ -100,8 +99,10 @@ export async function upsertSingleStaffToCloud(
   const sanitized = sanitizeStaffForFirestore(staffInput);
   const nowIso = new Date().toISOString();
 
+  const [{ db, staffDb, safeSetDoc }, { doc }] = await Promise.all([loadFirebase(), loadFirestore()]);
+
   await safeSetDoc(doc(staffDb, 'staff', sanitized.id), sanitized).catch((err) => {
-    handleFirestoreError(err, OperationType.WRITE, `staff/${sanitized.id}`);
+    void reportCloudError(err, CloudOperationType.WRITE, `staff/${sanitized.id}`);
   });
   await safeSetDoc(doc(db, 'settings', 'staff_meta'), {
     initialized: true,
@@ -126,8 +127,10 @@ export async function deleteSingleStaffFromCloud(
   const cleanId = String(staffId);
   const nowIso = new Date().toISOString();
 
+  const [{ db, staffDb, safeDeleteDoc, safeSetDoc }, { doc }] = await Promise.all([loadFirebase(), loadFirestore()]);
+
   await safeDeleteDoc(doc(staffDb, 'staff', cleanId)).catch((err) => {
-    handleFirestoreError(err, OperationType.DELETE, `staff/${cleanId}`);
+    void reportCloudError(err, CloudOperationType.DELETE, `staff/${cleanId}`);
   });
   await safeSetDoc(doc(db, 'settings', 'staff_meta'), {
     initialized: true,
@@ -150,6 +153,7 @@ export async function syncStaffOrSubAdminUserToDirectory(appUser: AppUser): Prom
 
   let existingStaffList = readCachedStaffAccounts();
   try {
+    const [{ staffDb }, { collection, getDocs }] = await Promise.all([loadFirebase(), loadFirestore()]);
     const snap = await getDocs(collection(staffDb, 'staff'));
     const cloudRows: StaffAccount[] = [];
     snap.forEach((docSnap) => {
@@ -307,6 +311,11 @@ export async function syncStaffPinEverywhere(params: {
   const targetId = String(params.staffId || '').trim();
   const targetPhoneNorm = normalizePhoneNumber(params.phone);
 
+  const [{ db, safeSetDoc }, { collection, doc, getDoc, getDocs }] = await Promise.all([
+    loadFirebase(),
+    loadFirestore()
+  ]);
+
   // 1. Update `settings/staff_support_auth`
   try {
     const authRef = doc(db, 'settings', 'staff_support_auth');
@@ -325,7 +334,7 @@ export async function syncStaffPinEverywhere(params: {
       updatedAt: nowIso
     });
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, 'settings/staff_support_auth');
+    void reportCloudError(err, CloudOperationType.WRITE, 'settings/staff_support_auth');
   }
 
   // 2. Sync matching `users` docs where `role === 'staff'`
@@ -348,7 +357,7 @@ export async function syncStaffPinEverywhere(params: {
         };
         updates.push(
           safeSetDoc(doc(db, 'users', docSnap.id), nextDoc).catch((err) => {
-            handleFirestoreError(err, OperationType.WRITE, `users/${docSnap.id}`);
+            void reportCloudError(err, CloudOperationType.WRITE, `users/${docSnap.id}`);
           })
         );
       }

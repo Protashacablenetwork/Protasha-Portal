@@ -287,6 +287,8 @@ export const PromoCarousel: React.FC<PromoCarouselProps> = ({
                 <img
                   src={banner.imageUrl || FALLBACK_BANNER_IMAGE}
                   alt={banner.titleBn || 'বিজ্ঞাপন'}
+                  loading={index <= 1 ? 'eager' : 'lazy'}
+                  decoding="async"
                   referrerPolicy="no-referrer"
                   draggable={false}
                   onError={(e) => {
