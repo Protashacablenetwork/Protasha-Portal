@@ -13,6 +13,7 @@ import {
 import { Language, Transaction, PaymentChannel, UserSession, StaffAccount } from '../types';
 import { formatCurrency } from '../utils/formatters';
 import { sounds } from '../utils/audio';
+import { canAddTransactions, hasSubAdminPermission } from '../utils/permissions';
 import { SmartChannelIcon, getChannelGradient } from './SmartChannelIcon';
 
 interface QuickChannelsProps {
@@ -49,9 +50,12 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
   currentYear
 }) => {
   const isBn = lang === 'bn';
+  const canAddTrx = canAddTransactions(user);
+  const isTrxRestricted = user?.role === 'staff' || (user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'transactions'));
+  const isStaffManagerRestricted = user?.role === 'staff' || (user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'staffManager'));
 
-  const isTrxLocked = serviceStatuses.transactions?.isActive === false || String(serviceStatuses.transactions?.isActive) === 'false';
-  const isStaffLocked = serviceStatuses.staffManager?.isActive === false || String(serviceStatuses.staffManager?.isActive) === 'false';
+  const isTrxLocked = isTrxRestricted || serviceStatuses.transactions?.isActive === false || String(serviceStatuses.transactions?.isActive) === 'false';
+  const isStaffLocked = isStaffManagerRestricted || serviceStatuses.staffManager?.isActive === false || String(serviceStatuses.staffManager?.isActive) === 'false';
   const isLedgerLocked = serviceStatuses.ledger?.isActive === false || String(serviceStatuses.ledger?.isActive) === 'false';
 
   const normalizeMethodName = (rawMethod: string | undefined): string => {
@@ -125,7 +129,7 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
           <span>{isBn ? 'পেমেন্ট চ্যানেল ও ব্যালেন্স হিসাব' : 'Payment Channels & Balance'}</span>
         </h3>
         
-        {(user?.role === 'admin' || user?.role === 'sub-admin') && (
+        {canAddTrx && (
           <div className="flex items-center gap-1.5 flex-wrap">
             {/* Direct Income / Money Addition Button - ADMIN & SUB-ADMIN */}
             <button
@@ -250,7 +254,7 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
                       {formatCurrency(bal, lang)}
                     </h4>
                     <div className="flex items-center gap-1">
-                      {(user?.role === 'admin' || user?.role === 'sub-admin') && (
+                      {canAddTrx && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -296,14 +300,14 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h4 className="text-sm font-black text-white">
-                  {isBn ? 'স্টাফ কালেকশন ও কোম্পানি পাওনা' : 'Staff Collection & Company Dues'}
+                  {isBn ? 'কালেকশন ও কোম্পানি পাওনা' : 'Collection & Company Dues'}
                 </h4>
                 <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-400/30 uppercase tracking-wider">
-                  {isBn ? 'ব্যক্তি হিসাব' : 'Staff Ledger'}
+                  {isBn ? 'ব্যক্তি হিসাব' : 'Due Ledger'}
                 </span>
               </div>
               <p className="text-[11px] text-slate-300 mt-0.5">
-                {isBn ? 'ফিল্ড কালেকশন জমা, ব্যক্তি হিসাব খাতা ও পিডিএফ রিপোর্ট' : 'Field Collections, Staff Ledgers & PDF Reports'}
+                {isBn ? 'স্টাফ, মালিক ও সদস্যদের পাওনা, কালেকশন ও পিডিএফ রিপোর্ট' : 'Staff, Owner & Member Dues, Collections & PDF'}
               </p>
             </div>
           </div>

@@ -89,9 +89,13 @@ app.get('/api/ay-byay/external/summary', async (req: express.Request, res: expre
     }
 });
 
-// API: CORS-free Google Sheet XLSX Proxy for Bill Manager Pro
+// API: CORS-free Google Sheet CSV/XLSX Proxy for Bill Manager Pro (with fast in-memory micro-cache)
+const sheetProxyCache = new Map<string, { buffer: Buffer; contentType: string; expiresAt: number }>();
+const SHEET_CACHE_TTL_MS = 45 * 1000;
+
 app.get('/api/fetch-sheet', async (req: express.Request, res: express.Response) => {
     const targetUrl = String(req.query.url || '').trim();
+    const forceFresh = req.query.fresh === '1' || req.query.fresh === 'true';
     if (!targetUrl) {
         return res.status(400).json({ error: 'URL parameter is required' });
     }
@@ -110,12 +114,33 @@ app.get('/api/fetch-sheet', async (req: express.Request, res: express.Response) 
             return res.status(403).json({ error: 'Host not permitted' });
         }
 
-        const response = await fetch(parsed.toString(), {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            },
-            redirect: 'follow'
-        });
+        const cacheKey = parsed.toString();
+        const now = Date.now();
+        if (!forceFresh) {
+            const cached = sheetProxyCache.get(cacheKey);
+            if (cached && cached.expiresAt > now) {
+                res.setHeader('Content-Type', cached.contentType);
+                res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+                res.setHeader('X-Sheet-Cache', 'HIT');
+                return res.send(cached.buffer);
+            }
+        }
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        let response: Response;
+        try {
+            response = await fetch(cacheKey, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept-Encoding': 'gzip, deflate, br'
+                },
+                redirect: 'follow',
+                signal: controller.signal
+            });
+        } finally {
+            clearTimeout(timeoutId);
+        }
 
         if (!response.ok) {
             return res.status(response.status).json({ error: `Failed to fetch from source: ${response.statusText}` });
@@ -123,11 +148,29 @@ app.get('/api/fetch-sheet', async (req: express.Request, res: express.Response) 
 
         const arrayBuffer = await response.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
+        const upstreamCt = (response.headers.get('content-type') || '').toLowerCase();
+        const isCsv =
+            upstreamCt.includes('text/csv') ||
+            upstreamCt.includes('text/plain') ||
+            parsed.searchParams.get('format') === 'csv' ||
+            parsed.searchParams.get('tqx')?.includes('out:csv');
+        const contentType = isCsv
+            ? 'text/csv; charset=utf-8'
+            : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        if (buffer.length > 0 && !upstreamCt.includes('text/html')) {
+            if (sheetProxyCache.size >= 60) {
+                const oldestKey = sheetProxyCache.keys().next().value;
+                if (oldestKey) sheetProxyCache.delete(oldestKey);
+            }
+            sheetProxyCache.set(cacheKey, { buffer, contentType, expiresAt: now + SHEET_CACHE_TTL_MS });
+        }
+
+        res.setHeader('Content-Type', contentType);
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.setHeader('Pragma', 'no-cache');
         res.setHeader('Expires', '0');
+        res.setHeader('X-Sheet-Cache', 'MISS');
         return res.send(buffer);
     } catch (err: any) {
         console.error('Error proxying sheet:', err);
@@ -169,9 +212,77 @@ app.get('/api/app-version', (_req: express.Request, res: express.Response) => {
 
 // Vite integration
 if (!isProd) {
+    const isHmrDisabled = process.env.DISABLE_HMR === 'true';
+    if (isHmrDisabled) {
+        app.get('/@vite/client', (_req: express.Request, res: express.Response) => {
+            res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-store');
+            res.send(`
+const sheetsMap = new Map();
+const linkSheetsMap = new Map();
+if (typeof document !== 'undefined') {
+  document.querySelectorAll('style[data-vite-dev-id]').forEach((el) => {
+    sheetsMap.set(el.getAttribute('data-vite-dev-id'), el);
+  });
+  document.querySelectorAll('link[rel="stylesheet"][data-vite-dev-id]').forEach((el) => {
+    linkSheetsMap.set(el.getAttribute('data-vite-dev-id'), el);
+  });
+}
+export function updateStyle(id, content) {
+  if (linkSheetsMap.has(id)) return;
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement('style');
+    style.setAttribute('type', 'text/css');
+    style.setAttribute('data-vite-dev-id', id);
+    style.textContent = content;
+    document.head.appendChild(style);
+  } else if (style.textContent !== content) {
+    style.textContent = content;
+  }
+  sheetsMap.set(id, style);
+}
+export function removeStyle(id) {
+  if (linkSheetsMap.has(id)) {
+    document.querySelectorAll('link[rel="stylesheet"][data-vite-dev-id="' + CSS.escape(id) + '"]').forEach((el) => el.remove());
+    linkSheetsMap.delete(id);
+  }
+  const style = sheetsMap.get(id);
+  if (style) {
+    style.remove();
+    sheetsMap.delete(id);
+  }
+}
+export function createHotContext() {
+  return {
+    data: {},
+    accept() {},
+    acceptExports() {},
+    dispose() {},
+    prune() {},
+    decline() {},
+    invalidate() {},
+    on() {},
+    off() {},
+    send() {},
+  };
+}
+export function injectQuery(url, queryToInject) {
+  if (url[0] !== '.' && url[0] !== '/') return url;
+  const pathname = url.replace(/[?#].*$/, '');
+  const { search, hash } = new URL(url, 'http://vite.dev');
+  return pathname + '?' + queryToInject + (search ? '&' + search.slice(1) : '') + (hash || '');
+}
+export class ErrorOverlay {}
+`);
+        });
+    }
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-        server: { middlewareMode: true },
+        server: {
+            middlewareMode: true,
+            ...(isHmrDisabled ? { hmr: false, ws: false } : { hmr: { server: httpServer } }),
+        },
         appType: 'spa'
     });
     app.use(vite.middlewares);

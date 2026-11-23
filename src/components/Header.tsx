@@ -4,7 +4,7 @@ import { Language, UserSession } from '../types';
 import { getGreeting, toBengaliNumber } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import { safeStorage } from '../utils/safeStorage';
-import { fetchLiveWeather, WeatherData, ALL_BANGLADESH_DISTRICTS } from '../utils/weatherService';
+import type { WeatherData } from '../utils/weatherService';
 import scenicLandscape from '../assets/images/scenic_river_bridge_landscape_1792226647109.jpg';
 
 interface HeaderProps {
@@ -35,6 +35,7 @@ export const Header: React.FC<HeaderProps> = ({
   const greeting = getGreeting(lang);
   const isAdmin = user?.role === 'admin';
   const isSubAdmin = user?.role === 'sub-admin';
+  const isStaff = user?.role === 'staff';
   const rawAvatar =
     user?.avatarUrl ||
     adminAvatar ||
@@ -56,7 +57,8 @@ export const Header: React.FC<HeaderProps> = ({
   }, [displayAvatar]);
 
   const loadWeather = () => {
-    fetchLiveWeather()
+    import('../utils/weatherService')
+      .then(({ fetchLiveWeather }) => fetchLiveWeather())
       .then((data) => {
         if (data) setInternalWeather(data);
       })
@@ -64,7 +66,8 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   useEffect(() => {
-    const initialWeatherTimer = setTimeout(loadWeather, 2200);
+    // Only fetch from Header if parent hasn't already provided propWeatherData after 4.5s
+    const initialWeatherTimer = propWeatherData ? undefined : setTimeout(loadWeather, 4500);
     const interval = setInterval(loadWeather, 10 * 60 * 1000);
 
     let rafId = 0;
@@ -96,7 +99,6 @@ export const Header: React.FC<HeaderProps> = ({
   const isScrolled = scrollProgress > 0.08;
   const blurPx = isScrolled ? Number((scrollProgress * 20).toFixed(1)) : 0;
   const saturatePct = isScrolled ? Math.round(115 + scrollProgress * 65) : 100;
-  const bannerBlurPx = isScrolled ? Number((scrollProgress * 4).toFixed(1)) : 0;
   const roleLabel = isAdmin
     ? lang === 'bn'
       ? 'এডমিন'
@@ -105,13 +107,17 @@ export const Header: React.FC<HeaderProps> = ({
       ? lang === 'bn'
         ? 'সাব-এডমিন'
         : 'Sub-Admin'
-      : user?.role === 'user'
+      : isStaff
         ? lang === 'bn'
-          ? 'সদস্য'
-          : 'Member'
-        : lang === 'bn'
-          ? 'ভিজিটর'
-          : 'Visitor';
+          ? 'স্টাফ'
+          : 'Staff'
+        : user?.role === 'user'
+          ? lang === 'bn'
+            ? 'সদস্য'
+            : 'Member'
+          : lang === 'bn'
+            ? 'ভিজিটর'
+            : 'Visitor';
 
   return (
     <div className="relative w-full select-none">
@@ -194,19 +200,23 @@ export const Header: React.FC<HeaderProps> = ({
                           ? 'text-emerald-700 dark:text-emerald-400'
                           : isSubAdmin
                             ? 'text-amber-700 dark:text-amber-400'
-                            : user?.role === 'user'
-                              ? 'text-blue-700 dark:text-blue-400'
-                              : 'text-slate-600 dark:text-slate-400'
+                            : isStaff
+                              ? 'text-teal-700 dark:text-teal-400'
+                              : user?.role === 'user'
+                                ? 'text-blue-700 dark:text-blue-400'
+                                : 'text-slate-600 dark:text-slate-400'
                         : isAdmin
                           ? 'text-emerald-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]'
                           : isSubAdmin
                             ? 'text-amber-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]'
-                            : user?.role === 'user'
-                              ? 'text-sky-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]'
-                              : 'text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]'
+                            : isStaff
+                              ? 'text-teal-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]'
+                              : user?.role === 'user'
+                                ? 'text-sky-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]'
+                                : 'text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]'
                     }`}
                   >
-                    {(isAdmin || isSubAdmin || user?.role === 'user') && (
+                    {(isAdmin || isSubAdmin || isStaff || user?.role === 'user') && (
                       <ShieldCheck className="w-3 h-3 shrink-0" />
                     )}
                     <span>{roleLabel}</span>
@@ -279,7 +289,7 @@ export const Header: React.FC<HeaderProps> = ({
                       isScrolled ? 'text-rose-600 dark:text-rose-400' : 'text-white/95'
                     }`}
                   >
-                    {weatherData?.cityBn || ALL_BANGLADESH_DISTRICTS.find((d) => d.nameBn === 'জামালপুর')?.nameBn || 'জামালপুর'}
+                    {weatherData?.cityBn || 'জামালপুর'}
                   </span>
                 </div>
               </button>
@@ -307,22 +317,16 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </header>
 
-      {/* Scenic Watercolor Landscape Banner Area (clear when unscrolled, smooth blur on scroll) */}
+      {/* Scenic Watercolor Landscape Banner Area (always sharp on scroll) */}
       <div className="relative w-full overflow-hidden">
         <div className="h-56 sm:h-64 w-full">
           <img
             src={scenicLandscape}
             alt="Scenic Bangladeshi Landscape"
+            decoding="async"
+            fetchPriority="high"
             referrerPolicy="no-referrer"
-            style={
-              bannerBlurPx > 0
-                ? {
-                    filter: `blur(${bannerBlurPx}px)`,
-                    transform: `scale(${1 + scrollProgress * 0.03})`
-                  }
-                : undefined
-            }
-            className="w-full h-full object-cover object-center transition-[filter,transform] duration-200 ease-out motion-reduce:transition-none"
+            className="w-full h-full object-cover object-center"
           />
 
           {/* Dynamic Night Overlay */}

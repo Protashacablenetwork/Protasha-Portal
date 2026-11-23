@@ -1,5 +1,6 @@
 export const INCOME_CATEGORIES = [
   'মাসিক ইন্টারনেট বিল',
+  'নেট সংযোগ',
   'ডিস বিল',
   'বকেয়া বিল',
   'নতুন সংযোগ ফি',
@@ -46,6 +47,7 @@ export const PAYMENT_METHODS = [
 
 export const QUICK_TEMPLATES = [
   { label: 'মাসিক ইন্টারনেট বিল', type: 'income' as const, category: 'মাসিক ইন্টারনেট বিল', amount: 25000 },
+  { label: 'নেট সংযোগ', type: 'income' as const, category: 'নেট সংযোগ', amount: 5000 },
   { label: 'ডিস বিল কালেকশন', type: 'income' as const, category: 'ডিস বিল', amount: 8000 },
   { label: 'বকেয়া বিল আদায়', type: 'income' as const, category: 'বকেয়া বিল', amount: 3500 },
   { label: 'নতুন সংযোগ ফি', type: 'income' as const, category: 'নতুন সংযোগ ফি', amount: 2000 },
@@ -152,4 +154,40 @@ export function getMonthBengaliName(monthString?: string): string {
   } catch {
     return String(monthString);
   }
+}
+
+/**
+ * Returns previous YYYY-MM month key (e.g., "2026-01" -> "2025-12", "2026-11" -> "2026-10")
+ */
+export function getPrevMonthKey(ym: string): string {
+  const m = String(ym || '').match(/^(\d{4})-(\d{2})$/);
+  if (!m) {
+    const now = new Date();
+    const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+  const year = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10);
+  if (month <= 1) {
+    return `${year - 1}-12`;
+  }
+  return `${year}-${String(month - 1).padStart(2, '0')}`;
+}
+
+/**
+ * Returns next YYYY-MM month key (e.g., "2026-12" -> "2027-01", "2026-11" -> "2026-12")
+ */
+export function getNextMonthKey(ym: string): string {
+  const m = String(ym || '').match(/^(\d{4})-(\d{2})$/);
+  if (!m) {
+    const now = new Date();
+    const d = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+  const year = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10);
+  if (month >= 12) {
+    return `${year + 1}-01`;
+  }
+  return `${year}-${String(month + 1).padStart(2, '0')}`;
 }

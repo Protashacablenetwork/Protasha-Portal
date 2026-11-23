@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { SalaryPayment, AppConfig } from '../types';
 import { formatCurrency, formatEnglishCurrency, getMonthBengaliName } from '../data/categories';
-import { Printer, X, CheckCircle2, Building2, User, Calendar, CreditCard, FileText, ArrowLeft } from 'lucide-react';
+import { generateSalaryReceiptPdf } from '../utils/salaryPdfGenerator';
+import { showToast } from '../../../utils/uiFeedback';
+import { Printer, X, CheckCircle2, Building2, User, Calendar, CreditCard, FileText, ArrowLeft, Download, Loader2 } from 'lucide-react';
 
 interface SalarySlipModalProps {
   salary: SalaryPayment | null;
@@ -16,10 +18,37 @@ export const SalarySlipModal: React.FC<SalarySlipModalProps> = ({
   onClose,
   config
 }) => {
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   if (!isOpen || !salary) return null;
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleDownloadPdf = async () => {
+    if (isDownloadingPdf) return;
+    setIsDownloadingPdf(true);
+    try {
+      await generateSalaryReceiptPdf({
+        staff: {
+          id: salary.staffId,
+          name: salary.staffName,
+          designation: salary.staffDesignation,
+          phone: '',
+          joinDate: '',
+          baseSalary: salary.baseSalary,
+          status: 'active',
+          createdAt: salary.createdAt
+        },
+        salary,
+        config
+      });
+      showToast('✅ বেতন রশিদ PDF ডাউনলোড হয়েছে', 'success');
+    } catch {
+      showToast('❌ PDF তৈরি করতে সমস্যা হয়েছে', 'error');
+    } finally {
+      setIsDownloadingPdf(false);
+    }
   };
 
   return (
@@ -34,6 +63,15 @@ export const SalarySlipModal: React.FC<SalarySlipModalProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleDownloadPdf}
+              disabled={isDownloadingPdf}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium shadow-xs transition-colors cursor-pointer disabled:opacity-60"
+            >
+              {isDownloadingPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              <span>PDF</span>
+            </button>
             <button
               onClick={handlePrint}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium shadow-xs transition-colors cursor-pointer"

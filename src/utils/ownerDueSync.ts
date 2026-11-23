@@ -3,8 +3,8 @@ import { toEnglishNumber } from './formatters';
 import { normalizePhoneNumber } from './permissions';
 import { broadcastStaffAccounts, upsertSingleStaffToCloud } from './staffSync';
 
-export const isOwnerRoleAccount = (acc?: StaffAccount | null): boolean => {
-  if (!acc || acc.isActive === false) return false;
+export const isOwnerRoleAccount = (acc?: Pick<StaffAccount, 'role'> | { role?: string; designation?: string } | null): boolean => {
+  if (!acc || (acc as StaffAccount).isActive === false) return false;
   const roleText = `${acc.role || ''} ${(acc as any).designation || ''}`.toLowerCase();
   return (
     roleText.includes('মালিক') ||
@@ -12,6 +12,32 @@ export const isOwnerRoleAccount = (acc?: StaffAccount | null): boolean => {
     roleText.includes('owner') ||
     roleText.includes('partner')
   );
+};
+
+export const isNonStaffRoleAccount = (
+  acc?: Pick<StaffAccount, 'role'> | { role?: string; designation?: string } | null
+): boolean => {
+  if (!acc) return false;
+  const roleText = `${acc.role || ''} ${(acc as any).designation || ''}`.toLowerCase();
+  const trimmed = roleText.trim();
+  return (
+    roleText.includes('মালিক') ||
+    roleText.includes('অংশীদার') ||
+    roleText.includes('owner') ||
+    roleText.includes('partner') ||
+    roleText.includes('সদস্য') ||
+    roleText.includes('গ্রাহক') ||
+    roleText.includes('customer') ||
+    roleText.includes('member') ||
+    roleText.includes('স্টাফ নয়') ||
+    trimmed === 'অন্যান্য' ||
+    trimmed === 'other'
+  );
+};
+
+export const isActualStaffAccount = (acc?: StaffAccount | null): boolean => {
+  if (!acc || acc.isActive === false) return false;
+  return !isNonStaffRoleAccount(acc);
 };
 
 export const normalizePersonName = (raw?: string | null, stripParens = true): string => {

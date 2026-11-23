@@ -209,7 +209,9 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
   const confirmDelete = () => {
     if (!deleteConfirmId) return;
     const targetId = deleteConfirmId;
-    const updated = bannerList.filter(b => b.id !== targetId);
+    const updated = bannerList
+      .filter(b => b.id !== targetId)
+      .map((b, idx) => ({ ...b, priority: idx + 1 }));
     setBannerList(updated);
     if (onDeleteBanner) {
       onDeleteBanner(targetId);
@@ -277,7 +279,10 @@ export const BannerManagerModal: React.FC<BannerManagerModalProps> = ({
         isActive: isFormActive,
         priority: bannerList.length + 1
       };
-      const updated = [newBanner, ...bannerList];
+      const updated = [...bannerList, newBanner].map((b, idx) => ({
+        ...b,
+        priority: idx + 1
+      }));
       setBannerList(updated);
       onSaveBanners(updated);
     }

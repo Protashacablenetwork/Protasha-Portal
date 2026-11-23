@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Staff, SalaryPayment, AppConfig } from '../types';
-import { STAFF_DESIGNATIONS, PAYMENT_METHODS, formatCurrency, getMonthBengaliName } from '../data/categories';
+import { STAFF_DESIGNATIONS, PAYMENT_METHODS, formatCurrency, getMonthBengaliName, getNextMonthKey } from '../data/categories';
 import { ConfirmModal } from './ConfirmModal';
+import { StaffSalaryDetailPage } from './StaffSalaryDetailPage';
 import { StaffAccount, StaffTransaction, QuickHisabOwner } from '../../../types';
 import { safeStorage } from '../../../utils/safeStorage';
 import { showToast } from '../../../utils/uiFeedback';
+import { isActualStaffAccount } from '../../../utils/ownerDueSync';
 import {
   Users,
   Plus,
@@ -56,6 +58,8 @@ interface StaffSalaryManagerProps {
   staffAccounts?: StaffAccount[];
   onSaveStaffAccounts?: (accounts: StaffAccount[]) => void;
   quickHisabOwners?: QuickHisabOwner[];
+  selectedStaffId?: string | null;
+  onSelectStaffDetail?: (staff: Staff | null) => void;
 }
 
 export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
@@ -75,11 +79,13 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
   onRequireLogin,
   staffAccounts = [],
   onSaveStaffAccounts,
-  quickHisabOwners = []
+  quickHisabOwners = [],
+  selectedStaffId,
+  onSelectStaffDetail
 }) => {
   const [activeTab, setActiveTab] = useState<'payroll' | 'directory'>('payroll');
   const [payrollFilter, setPayrollFilter] = useState<'all' | 'paid' | 'pending'>('all');
-  const [selectedStaffDetail, setSelectedStaffDetail] = useState<Staff | null>(null);
+  const [localSelectedStaffDetail, setLocalSelectedStaffDetail] = useState<Staff | null>(null);
 
   // Confirm Modal state
   const [confirmState, setConfirmState] = useState<{
@@ -180,7 +186,7 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
     });
 
     (staffAccounts || []).forEach(acc => {
-      if (!acc || !acc.id) return;
+      if (!acc || !acc.id || !isActualStaffAccount(acc)) return;
       const p = cleanPhone(acc.phone);
       if (seenIds.has(acc.id) || (p.length >= 10 && seenPhones.has(p))) {
         const idx = list.findIndex(s => s.id === acc.id || (p.length >= 10 && cleanPhone(s.phone) === p));
@@ -212,6 +218,22 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
     return list;
   }, [staffList, staffAccounts]);
 
+  const activeStaffDetail = useMemo(() => {
+    if (selectedStaffId !== undefined) {
+      if (!selectedStaffId) return null;
+      return unifiedStaff.find(s => s.id === selectedStaffId) || null;
+    }
+    return localSelectedStaffDetail;
+  }, [selectedStaffId, unifiedStaff, localSelectedStaffDetail]);
+
+  const openStaffDetail = (staff: Staff | null) => {
+    if (onSelectStaffDetail) {
+      onSelectStaffDetail(staff);
+    } else {
+      setLocalSelectedStaffDetail(staff);
+    }
+  };
+
   // Compute live payroll summary
   const activeStaff = unifiedStaff.filter(s => s.status === 'active');
   const totalBasePay = activeStaff.reduce((acc, s) => acc + s.baseSalary, 0);
@@ -226,7 +248,7 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
   activeStaff.forEach(stf => {
     const sal = salaryMap.get(stf.id);
     if (sal && sal.paymentStatus === 'paid') {
-      paidTotal += sal.netSalary;
+      paidTotal += (Number(sal.baseSalary) || 0) + (Number(sal.bonusOrAllowance) || 0);
       paidCount++;
     } else {
       pendingCount++;
@@ -293,19 +315,23 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
   };
 
   // Open Pay Salary Modal
-  const handleOpenPayModal = (staff: Staff) => {
-    const existing = salaryMap.get(staff.id);
+  const handleOpenPayModal = (staff: Staff, targetMonth?: string) => {
+    const effectiveMonth = targetMonth || selectedMonth;
+    if (targetMonth && targetMonth !== selectedMonth) {
+      onMonthChange(targetMonth);
+    }
+    const existing = salaries.find(s => s.staffId === staff.id && s.month === effectiveMonth);
     const companyDue = getStaffCompanyDue(staff);
     setSelectedStaffForPay(staff);
 
-    // If company owes money (companyDue > 0) and no deduction is set, automatically populate deduction with companyDue!
+    // Populate deduction from existing pending/carry-forward record or live company due
     const defaultDeduction = existing && existing.deductionOrAdvance !== undefined && existing.deductionOrAdvance !== null
-      ? (existing.deductionOrAdvance || '')
+      ? (existing.deductionOrAdvance || (companyDue > 0 ? companyDue : ''))
       : (companyDue > 0 ? companyDue : '');
 
     const defaultNote = existing?.note || (companyDue > 0
-      ? `${getMonthBengaliName(selectedMonth)} মাসের বেতন (কোম্পানি পাওনা কর্তন: ৳${companyDue})`
-      : `${getMonthBengaliName(selectedMonth)} মাসের বেতন`);
+      ? `${getMonthBengaliName(effectiveMonth)} মাসের বেতন (কোম্পানি পাওনা কর্তন: ৳${companyDue})`
+      : `${getMonthBengaliName(effectiveMonth)} মাসের বেতন`);
 
     setPayFormData({
       baseSalary: existing ? existing.baseSalary : (staff.baseSalary || ''),
@@ -363,6 +389,32 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
 
   return (
     <div className="space-y-5 animate-in fade-in duration-200">
+      {activeStaffDetail ? (
+        <StaffSalaryDetailPage
+          staff={activeStaffDetail}
+          salaries={salaries}
+          selectedMonth={selectedMonth}
+          companyDue={getStaffCompanyDue(activeStaffDetail)}
+          config={config}
+          isAdminLoggedIn={isAdminLoggedIn}
+          onBack={() => openStaffDetail(null)}
+          onPaySalary={(stf, targetMonth) => handleOpenPayModal(stf, targetMonth)}
+          onEditStaff={(stf) => handleOpenEditStaff(stf)}
+          onDeleteStaff={(stf) => {
+            setConfirmState({
+              isOpen: true,
+              title: 'স্টাফ মুছে ফেলার নিশ্চিতকরণ',
+              message: `আপনি কি নিশ্চিতভাবে ${stf.name} কে মুছে ফেলতে চান?`,
+              onConfirm: async () => {
+                setConfirmState(prev => ({ ...prev, isOpen: false }));
+                openStaffDetail(null);
+                await onDeleteStaff(stf.id);
+              }
+            });
+          }}
+        />
+      ) : (
+        <>
       {/* Top Header Card with Month Selector and Tab Navigation */}
       <div className="bg-white dark:bg-slate-900 rounded-3xl p-5 border border-slate-200 dark:border-slate-800 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -665,9 +717,16 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
                     const net = sal ? sal.netSalary : Math.max(0, base + bonus - deduction);
 
                     return (
-                      <tr key={staff.id} className="hover:bg-slate-50/80 transition-colors">
+                      <tr
+                        key={staff.id}
+                        onClick={() => openStaffDetail(staff)}
+                        className="hover:bg-indigo-50/40 dark:hover:bg-slate-800/60 transition-colors cursor-pointer"
+                      >
                         <td className="px-4 py-3.5">
-                          <div className="font-bold text-slate-900 text-sm">{staff.name}</div>
+                          <div className="font-bold text-slate-900 dark:text-slate-100 text-sm flex items-center gap-1.5">
+                            <span>{staff.name}</span>
+                            <span className="text-[10px] text-indigo-600 font-semibold">রশিদ →</span>
+                          </div>
                           <div className="text-slate-500 flex items-center gap-2 mt-0.5">
                             <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 text-[10px] font-semibold">
                               {staff.designation}
@@ -698,7 +757,11 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
                           ) : companyDue > 0 ? (
                             <span className="text-amber-700 font-bold block">
                               -{formatCurrency(companyDue, config.currencySymbol)}
-                              <span className="text-[9px] text-amber-600 block">(পাওনা কর্তন)</span>
+                              <span className="text-[9px] text-amber-600 block">
+                                {companyDue > base + bonus
+                                  ? `(অতিরিক্ত ৳${(companyDue - (base + bonus)).toLocaleString('bn-BD')} পরের মাসে যাবে)`
+                                  : '(পাওনা কর্তন)'}
+                              </span>
                             </span>
                           ) : (
                             '—'
@@ -707,6 +770,11 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
 
                         <td className="px-3 py-3.5 font-black text-sm text-slate-900">
                           {formatCurrency(net, config.currencySymbol)}
+                          {sal && isPaid && (
+                            <span className="text-[9px] text-indigo-700 font-bold block">
+                              ব্যয়ে পূর্ণ বেতন: {formatCurrency(base + bonus, config.currencySymbol)}
+                            </span>
+                          )}
                           {!sal && companyDue > 0 && (
                             <span className="text-[9px] text-amber-700 font-bold block">
                               (পাওনা কর্তন শেষে)
@@ -741,13 +809,16 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
                           )}
                         </td>
 
-                        <td className="px-4 py-3.5 text-right">
+                        <td className="px-4 py-3.5 text-right" onClick={e => e.stopPropagation()}>
                           <div className="inline-flex items-center gap-1.5">
                             {isPaid ? (
                               <>
                                 <button
-                                  onClick={() => onViewSalarySlip(sal!)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold transition-colors"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onViewSalarySlip(sal!);
+                                  }}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold transition-colors cursor-pointer"
                                   title="বেতন স্লিপ প্রিন্ট করুন"
                                 >
                                   <Printer className="w-3.5 h-3.5" />
@@ -755,8 +826,11 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
                                 </button>
                                 {isAdminLoggedIn && (
                                   <button
-                                    onClick={() => handleMarkPending(staff)}
-                                    className="px-2 py-1.5 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleMarkPending(staff);
+                                    }}
+                                    className="px-2 py-1.5 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
                                     title="রোলব্যাক / বাতিল করুন"
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
@@ -766,8 +840,11 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
                             ) : (
                               isAdminLoggedIn && (
                                 <button
-                                  onClick={() => handleOpenPayModal(staff)}
-                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-xs transition-colors"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenPayModal(staff);
+                                  }}
+                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-xs transition-colors cursor-pointer"
                                 >
                                   <DollarSign className="w-3.5 h-3.5" />
                                   <span>বেতন প্রদান</span>
@@ -814,7 +891,7 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
               return (
                 <div
                   key={staff.id}
-                  onClick={() => setSelectedStaffDetail(staff)}
+                  onClick={() => openStaffDetail(staff)}
                   className="p-4 rounded-2xl border border-slate-200 hover:border-indigo-400 hover:shadow-md transition-all bg-slate-50/50 flex flex-col justify-between gap-3 cursor-pointer group"
                 >
                   <div>
@@ -870,10 +947,10 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
 
                     <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200" onClick={e => e.stopPropagation()}>
                     <button
-                      onClick={() => setSelectedStaffDetail(staff)}
-                      className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors"
+                      onClick={() => openStaffDetail(staff)}
+                      className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors cursor-pointer"
                     >
-                      <span>বিস্তারিত তথ্য দেখুন</span>
+                      <span>বিস্তারিত ও বেতন রশিদ →</span>
                     </button>
                     {isAdminLoggedIn && (
                       <div className="flex items-center gap-1.5">
@@ -909,6 +986,8 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
             })}
           </div>
         </div>
+      )}
+        </>
       )}
 
       {/* MODAL 1: ADD / EDIT STAFF MODAL */}
@@ -1147,20 +1226,50 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
                     placeholder="0"
                   />
                 </div>
-                <div className="pt-2 border-t border-slate-200 flex justify-between items-center font-black text-sm text-slate-900">
-                  <span>সর্বমোট প্রদেয় নিট বেতন:</span>
-                  <span className="text-emerald-700 text-base">
-                    {formatCurrency(
-                      Math.max(
-                        0,
-                        (Number(payFormData.baseSalary) || 0) +
-                          (Number(payFormData.bonusOrAllowance) || 0) -
-                          (Number(payFormData.deductionOrAdvance) || 0)
-                      ),
-                      config.currencySymbol
-                    )}
-                  </span>
-                </div>
+                {(() => {
+                  const grossPay = (Number(payFormData.baseSalary) || 0) + (Number(payFormData.bonusOrAllowance) || 0);
+                  const requestedDeduct = Math.max(0, Number(payFormData.deductionOrAdvance) || 0);
+                  const appliedDeduct = Math.min(grossPay, requestedDeduct);
+                  const netCashPay = Math.max(0, grossPay - appliedDeduct);
+                  const companyDueNow = getStaffCompanyDue(selectedStaffForPay);
+                  const settledCompanyDue = Math.min(appliedDeduct, companyDueNow);
+                  const remainingCompanyDueAfter = Math.max(0, companyDueNow - settledCompanyDue);
+                  const excessDeductRequested = Math.max(0, requestedDeduct - appliedDeduct);
+                  const nextMonthRollover = Math.max(excessDeductRequested, remainingCompanyDueAfter);
+                  const nextMonthName = getMonthBengaliName(getNextMonthKey(selectedMonth));
+
+                  return (
+                    <>
+                      <div className="pt-2 border-t border-slate-200 space-y-1.5">
+                        <div className="flex justify-between items-center text-xs text-indigo-900 font-bold">
+                          <span>মোট মূল বেতন (কোম্পানির ব্যয়ে অটো এন্ট্রি হবে):</span>
+                          <span>{formatCurrency(grossPay, config.currencySymbol)}</span>
+                        </div>
+                        {requestedDeduct > grossPay && (
+                          <div className="flex justify-between items-center text-[11px] text-rose-700 font-semibold">
+                            <span>এ মাসে বেতন থেকে কর্তন হবে:</span>
+                            <span>-{formatCurrency(appliedDeduct, config.currencySymbol)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between items-center font-black text-sm text-slate-900 pt-1">
+                          <span>হাতে প্রদেয় নিট নগদ বেতন:</span>
+                          <span className="text-emerald-700 text-base">
+                            {formatCurrency(netCashPay, config.currencySymbol)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {nextMonthRollover > 0 && (requestedDeduct > 0 || companyDueNow > grossPay) && (
+                        <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-300 text-[11px] text-amber-950 font-semibold flex items-start gap-2">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                          <span>
+                            বেতন থেকে কর্তনের পরও আরও <strong>{formatCurrency(nextMonthRollover, config.currencySymbol)}</strong> পাওনা অবশিষ্ট থাকবে, যা স্বয়ংক্রিয়ভাবে পরবর্তী মাস (<strong>{nextMonthName}</strong>)-এ এন্ট্রি হয়ে যাবে।
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -1213,7 +1322,7 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
               <div className="p-2.5 bg-indigo-50/70 border border-indigo-200 rounded-xl text-[11px] text-indigo-900 flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
                 <span>
-                  বেতন পরিশোধ বাটন চাপলে এটি সরাসরি কোম্পানির খরচের খতিয়ানে <strong>'স্টাফ বেতন ও টেকনিশিয়ান ভাতা'</strong> ক্যাটাগরিতে স্বয়ংক্রিয়ভাবে যুক্ত হবে।
+                  বেতন পরিশোধ করলে কর্তন বাদ দিয়ে কর্মীকে নিট টাকা প্রদান করা হবে, তবে আয়-ব্যয় খতিয়ানে <strong>পূর্ণ বেতন (মূল + বোনাস)</strong> স্বয়ংক্রিয়ভাবে খরচ হিসাবে যুক্ত হবে।
                 </span>
               </div>
 
@@ -1234,202 +1343,6 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL 3: STAFF DETAIL & HISTORY MODAL (when staff card is clicked) */}
-      {selectedStaffDetail && (
-        <div 
-          onClick={() => setSelectedStaffDetail(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-slate-900/60 backdrop-blur-xs overflow-y-auto"
-        >
-          <div 
-            onClick={e => e.stopPropagation()}
-            className="bg-white rounded-3xl shadow-2xl max-w-lg w-full max-h-[90vh] my-auto flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 duration-150"
-          >
-            {/* Modal Header */}
-            <div className="p-5 bg-gradient-to-r from-indigo-600 to-blue-700 text-white flex items-start justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-xs flex items-center justify-center font-bold text-xl text-white">
-                  {selectedStaffDetail.name.charAt(0)}
-                </div>
-                <div>
-                  <h3 className="font-black text-lg text-white">{selectedStaffDetail.name}</h3>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="px-2 py-0.5 rounded-full bg-white/20 text-white text-[11px] font-semibold">
-                      {selectedStaffDetail.designation}
-                    </span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                      selectedStaffDetail.status === 'active' ? 'bg-emerald-400 text-emerald-950' : 'bg-slate-300 text-slate-800'
-                    }`}>
-                      {selectedStaffDetail.status === 'active' ? 'সক্রিয়' : 'নিষ্ক্রিয়'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <button
-                onClick={() => setSelectedStaffDetail(null)}
-                className="p-1.5 rounded-full bg-white/20 hover:bg-white/30 text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-5 overflow-y-auto space-y-4 text-xs">
-              {/* Info Grid */}
-              <div className="grid grid-cols-2 gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                <div>
-                  <span className="text-slate-400 block text-[10px]">মোবাইল নম্বর:</span>
-                  <a href={`tel:${selectedStaffDetail.phone}`} className="font-bold text-indigo-600 hover:underline text-sm">
-                    {selectedStaffDetail.phone}
-                  </a>
-                </div>
-                <div>
-                  <span className="text-slate-400 block text-[10px]">মূল মাসিক বেতন:</span>
-                  <span className="font-black text-slate-900 text-sm">
-                    {formatCurrency(selectedStaffDetail.baseSalary, config.currencySymbol)}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block text-[10px]">যোগদানের তারিখ:</span>
-                  <span className="font-semibold text-slate-700">{selectedStaffDetail.joinDate}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block text-[10px]">চলতি মাস ({getMonthBengaliName(selectedMonth)}):</span>
-                  {(() => {
-                    const currentSal = salaryMap.get(selectedStaffDetail.id);
-                    const isPaid = currentSal && currentSal.paymentStatus === 'paid';
-                    return (
-                      <span className={`font-bold ${isPaid ? 'text-emerald-600' : 'text-amber-600'}`}>
-                        {isPaid ? '✓ পরিশোধিত' : '⏳ বকেয়া'}
-                      </span>
-                    );
-                  })()}
-                </div>
-                {selectedStaffDetail.notes && (
-                  <div className="col-span-2 pt-2 border-t border-slate-200">
-                    <span className="text-slate-400 block text-[10px]">মন্তব্য / ঠিকানা:</span>
-                    <span className="text-slate-700">{selectedStaffDetail.notes}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Salary Payment History */}
-              <div>
-                <h4 className="font-bold text-slate-800 text-xs mb-2 flex items-center gap-1.5">
-                  <DollarSign className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>বেতন প্রদানের ইতিহাস ({salaries.filter(s => s.staffId === selectedStaffDetail.id).length} টি রেকর্ড)</span>
-                </h4>
-                
-                {salaries.filter(s => s.staffId === selectedStaffDetail.id).length === 0 ? (
-                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-center text-slate-400">
-                    এখনও কোনো বেতন প্রদানের রেকর্ড পাওয়া যায়নি।
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-48 overflow-y-auto">
-                    {salaries
-                      .filter(s => s.staffId === selectedStaffDetail.id)
-                      .map(sal => (
-                        <div key={sal.id} className="p-3 bg-white border border-slate-200 rounded-xl flex items-center justify-between gap-2 shadow-2xs">
-                          <div>
-                            <div className="font-bold text-slate-900 flex items-center gap-1.5">
-                              <span>{getMonthBengaliName(sal.month)}</span>
-                              <span className="px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                                {sal.paymentStatus === 'paid' ? 'পরিশোধিত' : 'বকেয়া'}
-                              </span>
-                            </div>
-                            <div className="text-[10px] text-slate-400 mt-0.5">
-                              তারিখ: {sal.paymentDate || '—'} • মাধ্যম: {sal.paymentMethod || 'নগদ'}
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <span className="font-black text-slate-900 text-sm">
-                              {formatCurrency(sal.netSalary, config.currencySymbol)}
-                            </span>
-                            {sal.paymentStatus === 'paid' && (
-                              <button
-                                onClick={() => {
-                                  setSelectedStaffDetail(null);
-                                  onViewSalarySlip(sal);
-                                }}
-                                className="p-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700"
-                                title="বেতন স্লিপ দেখুন"
-                              >
-                                <Printer className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Modal Actions */}
-            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5">
-                {isAdminLoggedIn && (
-                  <>
-                    <button
-                      onClick={() => {
-                        const stf = selectedStaffDetail;
-                        setSelectedStaffDetail(null);
-                        handleOpenEditStaff(stf);
-                      }}
-                      className="px-3 py-1.5 rounded-xl bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-semibold flex items-center gap-1"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                      <span>এডিট</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        const stf = selectedStaffDetail;
-                        setConfirmState({
-                          isOpen: true,
-                          title: 'স্টাফ মুছে ফেলার নিশ্চিতকরণ',
-                          message: `আপনি কি নিশ্চিতভাবে ${stf.name} কে মুছে ফেলতে চান?`,
-                          onConfirm: async () => {
-                            setConfirmState(prev => ({ ...prev, isOpen: false }));
-                            setSelectedStaffDetail(null);
-                            await onDeleteStaff(stf.id);
-                          }
-                        });
-                      }}
-                      className="px-3 py-1.5 rounded-xl bg-white border border-rose-200 hover:bg-rose-50 text-rose-600 text-xs font-semibold flex items-center gap-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>মুছুন</span>
-                    </button>
-                  </>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2">
-                {isAdminLoggedIn && (
-                  <button
-                    onClick={() => {
-                      const stf = selectedStaffDetail;
-                      setSelectedStaffDetail(null);
-                      handleOpenPayModal(stf);
-                    }}
-                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs flex items-center gap-1"
-                  >
-                    <DollarSign className="w-3.5 h-3.5" />
-                    <span>বেতন প্রদান করুন</span>
-                  </button>
-                )}
-                <button
-                  onClick={() => setSelectedStaffDetail(null)}
-                  className="px-4 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold"
-                >
-                  বন্ধ করুন
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       )}

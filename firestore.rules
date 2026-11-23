@@ -172,12 +172,20 @@ service cloud.firestore {
       return data.keys().hasAll(['id', 'role', 'status']) &&
         data.keys().hasOnly([
           'id', 'name', 'phone', 'pin', 'avatarUrl', 'gmail',
-          'boundMethods', 'readNotifications', 'role', 'status',
+          'boundMethods', 'readNotifications', 'role', 'permissions', 'status',
           'virtualCardNumber', 'recordedBy', 'createdAt', 'updatedAt'
         ]) &&
         data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
-        data.role in ['admin', 'sub-admin', 'user', 'visitor'] &&
+        data.role in ['admin', 'sub-admin', 'staff', 'user', 'visitor'] &&
         data.status in ['active', 'suspended'] &&
+        (!('permissions' in data) || data.permissions == null || (
+          data.permissions is map &&
+          data.permissions.keys().size() <= 20 &&
+          data.permissions.keys().hasOnly([
+            'transactions', 'addTransactions', 'ledger', 'billManager',
+            'ayByay', 'quickHisab', 'staffManager', 'staffAttendance', 'supportTickets'
+          ])
+        )) &&
         (!('name' in data) || (data.name is string && data.name.size() <= 150)) &&
         (!('phone' in data) || (data.phone is string && data.phone.size() <= 32)) &&
         (!('pin' in data) || (data.pin is string && data.pin.size() <= 32)) &&

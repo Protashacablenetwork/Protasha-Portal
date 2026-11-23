@@ -1,38 +1,26 @@
-import React, { useState } from 'react';
-import { Lock, X, KeyRound, ShieldCheck } from 'lucide-react';
+import React from 'react';
+import { Lock, X, LogIn, ShieldCheck } from 'lucide-react';
 
 interface AdminLoginModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess?: () => void;
+  onOpenMainLogin?: () => void;
 }
 
 export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
   isOpen,
   onClose,
-  onSuccess,
+  onOpenMainLogin
 }) => {
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-
   if (!isOpen) return null;
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (password === '12588') {
-      setError(false);
-      setPassword('');
-      onSuccess();
-      onClose();
-    } else {
-      setError(true);
-    }
-  };
-
   return (
-    <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
-      <div 
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200"
+    >
+      <div
         onClick={(e) => e.stopPropagation()}
         className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-3xl p-6 shadow-2xl border border-slate-100 dark:border-slate-800 space-y-5"
       >
@@ -43,10 +31,10 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                এডমিন লগইন (Admin Login)
+                অনুমতি সীমাবদ্ধ (Read-Only)
               </h3>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                নতুন এন্ট্রি করার জন্য পাসওয়ার্ড দিন
+                অ্যাডমিন বা অনুমোদিত সাব-অ্যাডমিন প্রয়োজন
               </p>
             </div>
           </div>
@@ -59,67 +47,35 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({
           </button>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-              এডমিন পাসওয়ার্ড (Admin Password)
-            </label>
-            <div className="relative">
-              <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="password"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                maxLength={5}
-                autoComplete="new-password"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                data-lpignore="true"
-                data-1password-type="off"
-                value={password}
-                onChange={(e) => {
-                  const val = e.target.value.replace(/[^0-9]/g, '');
-                  setPassword(val);
-                  setError(false);
-                }}
-                placeholder="পাসওয়ার্ড লিখুন"
-                autoFocus
-                className={`w-full pl-10 pr-10 py-2.5 rounded-xl border text-sm text-slate-900 dark:text-white bg-slate-50 dark:bg-slate-800 focus:bg-white dark:focus:bg-slate-900 focus:outline-hidden focus:ring-2 ${
-                  error ? 'border-rose-500 ring-rose-500/20' : 'border-slate-300 dark:border-slate-700 focus:ring-indigo-500/20'
-                }`}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 font-medium"
-              >
-                {showPassword ? 'লুকান' : 'দেখুন'}
-              </button>
-            </div>
-            {error && (
-              <p className="text-xs text-rose-600 font-medium mt-1">
-                ভুল পাসওয়ার্ড! সঠিক পাসওয়ার্ড দিন।
-              </p>
-            )}
-          </div>
+        <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 flex items-start gap-2.5 text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
+          <Lock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <span>
+            সাধারণ ইউজার বা স্টাফ অ্যাকাউন্ট থেকে আয়-ব্যয় ডেটা যোগ, এডিট বা পরিবর্তন করা যাবে না। নতুন এন্ট্রি করতে মেইন লগইন পেইজ থেকে অ্যাডমিন বা আয়-ব্যয় পার্মিশনপ্রাপ্ত সাব-অ্যাডমিন আইডি দিয়ে লগইন করুন।
+          </span>
+        </div>
 
-          <div className="pt-2 flex items-center justify-end gap-2">
+        <div className="pt-1 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 text-xs font-bold transition cursor-pointer"
+          >
+            বন্ধ করুন
+          </button>
+          {onOpenMainLogin && (
             <button
               type="button"
-              onClick={onClose}
-              className="px-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 text-xs font-bold transition cursor-pointer"
+              onClick={() => {
+                onClose();
+                onOpenMainLogin();
+              }}
+              className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-md shadow-indigo-500/20 inline-flex items-center gap-1.5 cursor-pointer"
             >
-              বাতিল
+              <LogIn className="w-3.5 h-3.5" />
+              <span>মেইন লগইন পেইজে যান</span>
             </button>
-            <button
-              type="submit"
-              className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition shadow-md shadow-indigo-500/20 cursor-pointer"
-            >
-              লগইন করুন
-            </button>
-          </div>
-        </form>
+          )}
+        </div>
       </div>
     </div>
   );

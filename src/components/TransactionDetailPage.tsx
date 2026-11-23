@@ -435,6 +435,15 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({
                   : 'Sub-Admin can only edit or delete their own entries within 30 minutes.')}
             </span>
           </div>
+        ) : (user?.role === 'user' || user?.role === 'staff') ? (
+          <div className="p-3.5 rounded-2xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
+            <Lock className="w-4 h-4 text-slate-500 shrink-0" />
+            <span>
+              {lang === 'bn'
+                ? 'শুধুমাত্র দেখার অনুমতি (Read-Only) — সাধারণ ইউজার ও স্টাফ কোনো লেনদেন এডিট বা ডিলিট করতে পারবেন না।'
+                : 'Read-only access — Regular users and attendance staff cannot edit or delete transactions.'}
+            </span>
+          </div>
         ) : (
           <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 flex items-center justify-between text-xs">
             <div className="flex items-center gap-2 text-amber-900 dark:text-amber-300">

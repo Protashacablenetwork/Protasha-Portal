@@ -44,11 +44,13 @@ import {
   SupportTicketStatus,
   UserSession
 } from '../types';
+import { isActualStaffAccount } from '../utils/ownerDueSync';
 import { toBengaliNumber } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import {
   canModifySupportTicket,
   formatRemainingCountdown,
+  hasSubAdminPermission,
   isSupportTicketOwner,
   normalizePhoneNumber,
   SUPPORT_TICKET_EDIT_WINDOW_MS
@@ -232,16 +234,19 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
   const isVisitor = user?.role === 'visitor';
   const isAdmin = user?.role === 'admin';
   const isSubAdminUser = user?.role === 'sub-admin';
+  const isStaffRoleUser = user?.role === 'staff';
+  const hasSubAdminSupportPerm = isSubAdminUser && hasSubAdminPermission(user, 'supportTickets');
   const matchedMainStaff = useMemo(
-    () => findMatchedStaffForUser(user, staffAccounts),
-    [user, staffAccounts]
+    () => (hasSubAdminSupportPerm ? findMatchedStaffForUser(user, staffAccounts) : null),
+    [hasSubAdminSupportPerm, user, staffAccounts]
   );
-  const isMainPageStaff = isSubAdminUser || Boolean(matchedMainStaff);
-  const isManualTempStaffSession = Boolean(staffSession) && !isMainPageStaff && !isAdmin;
-  const isStaffActive = isMainPageStaff || Boolean(staffSession);
+  const isMainPageStaff = hasSubAdminSupportPerm;
+  const isManualTempStaffSession = Boolean(staffSession) && !isMainPageStaff && !isAdmin && !isStaffRoleUser;
+  const isStaffActive = isMainPageStaff || isManualTempStaffSession;
   const canViewAllTickets = isAdmin || isStaffActive;
   const canChangeStatus = isAdmin || isStaffActive;
   const canDeleteAnyMessage = isAdmin || isStaffActive;
+  const canMutateTickets = isAdmin || isStaffActive;
 
   const activeActorName = (
     (isManualTempStaffSession ? staffSession?.name : undefined) ||
@@ -658,7 +663,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
 
   const handleSendChatMessage = async (e?: React.FormEvent, presetText?: string) => {
     if (e) e.preventDefault();
-    if (!activeDetailTicket || isVisitor || isSendingChat) return;
+    if (!activeDetailTicket || !canMutateTickets || isSendingChat) return;
 
     const content = (presetText ?? chatInput).trim();
     if (!content) return;
@@ -774,17 +779,19 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
         }
       }
 
-      // 2. Also verify against Firestore sub-admin accounts in 'users' collection
+      // 2. Also verify against Firestore sub-admin/staff accounts in 'users' collection
       try {
-        const q = query(collection(db, 'users'), where('phone', '==', rawId));
-        const snap = await getDocs(q);
+        const snap = await getDocs(collection(db, 'users'));
         const matchedSubAdmin = snap.docs
           .map((d) => ({ id: d.id, ...(d.data() as any) }))
           .find(
             (u) =>
-              u.role === 'sub-admin' &&
+              (u.role === 'sub-admin' || u.role === 'staff') &&
               u.status !== 'suspended' &&
-              String(u.pin || '') === cleanPin
+              String(u.pin || '') === cleanPin &&
+              ((u.phone && String(u.phone).trim() === rawId) ||
+                (normalizedInputPhone.length >= 6 &&
+                  normalizePhoneNumber(u.phone) === normalizedInputPhone))
           );
 
         if (matchedSubAdmin) {
@@ -792,7 +799,10 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
             staffId: matchedSubAdmin.id,
             name: matchedSubAdmin.name || rawId,
             phone: matchedSubAdmin.phone || rawId,
-            roleTitle: isBn ? 'সাব-অ্যাডমিন / স্টাফ' : 'Sub-Admin / Staff',
+            roleTitle:
+              matchedSubAdmin.role === 'staff'
+                ? isBn ? 'স্টাফ' : 'Staff'
+                : isBn ? 'সাব-অ্যাডমিন / স্টাফ' : 'Sub-Admin / Staff',
             loggedInAt: new Date().toISOString()
           };
           setStaffSession(session);
@@ -878,6 +888,10 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
   };
 
   const openNewForm = () => {
+    if (!canMutateTickets) {
+      sounds.playTap();
+      return;
+    }
     sounds.playTap();
     pushSubViewHistory();
     setEditingTicket(null);
@@ -919,6 +933,14 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
 
   const handleSubmitForm = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canMutateTickets) {
+      setFormError(
+        isBn
+          ? 'সাধারণ ইউজার অভিযোগ যোগ বা পরিবর্তন করতে পারবেন না। স্টাফ পিন দিয়ে লগইন করুন।'
+          : 'Regular users cannot add or edit tickets. Please sign in with Staff PIN.'
+      );
+      return;
+    }
     if (editingTicket) {
       const check = canModifySupportTicket(editingTicket, user, staffSession, Date.now());
       if (!check.allowed) {
@@ -1480,7 +1502,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
               <div ref={chatBottomRef} />
             </div>
 
-            {!isVisitor && (
+            {canMutateTickets ? (
               <div className="sticky bottom-0 z-20 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 px-3 pt-2 pb-3 safe-area-bottom">
                 <div className="w-full max-w-5xl mx-auto space-y-2">
                   <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar">
@@ -1516,7 +1538,13 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                   </form>
                 </div>
               </div>
-            )}
+            ) : !isVisitor ? (
+              <div className="sticky bottom-0 z-20 bg-slate-100 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 px-4 py-3 text-center text-xs font-semibold text-slate-600 dark:text-slate-400">
+                {isBn
+                  ? 'শুধুমাত্র দেখার অনুমতি (Read-Only) — মেসেজ বা পরিবর্তন করতে অনুমোদিত স্টাফ বা অ্যাডমিন লগইন প্রয়োজন।'
+                  : 'Read-only access — Staff PIN or Admin login required to send messages.'}
+              </div>
+            ) : null}
           </>
         ) : (
           /* DETAIL TAB 2: PUBLIC TRACKING LINK + RESOLVE PROMPT + ACTIVITY HISTORY */
@@ -1665,7 +1693,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
             </button>
           )}
 
-          {!isVisitor && (
+          {canMutateTickets && (
             <button
               type="button"
               onClick={openNewForm}
@@ -1717,8 +1745,8 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
               <Lock className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0 mt-0.5" />
               <p className="text-[11px] font-semibold text-sky-950 dark:text-sky-200 leading-relaxed">
                 {isBn
-                  ? 'আপনি শুধুমাত্র আপনার নিজের দাখিলকৃত অভিযোগগুলো দেখতে পাচ্ছেন। অভিযোগ দাখিলের ১০ মিনিটের মধ্যে এডিট/ডিলিট করা যাবে — এরপর শুধু অ্যাডমিন নিয়ন্ত্রণ করবেন।'
-                  : 'You can view only your own submitted complaints. Edit/Delete is available within 10 minutes of submission — after that only Admin has control.'}
+                  ? 'আপনি শুধুমাত্র দেখার অনুমতিতে (Read-Only) আছেন। সাধারণ ইউজাররা কোনো টিকেট যোগ বা পরিবর্তন করতে পারবেন না।'
+                  : 'You are in Read-Only mode. Regular users cannot add or modify support tickets.'}
               </p>
             </div>
             <button
@@ -1933,7 +1961,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                 ? 'নতুন গ্রাহক কমপ্লেইন যোগ করতে উপরের "নতুন টিকেট" বাটনে ট্যাপ করুন।'
                 : 'Tap "New Ticket" above to log a customer complaint.'}
             </p>
-            {!isVisitor && (
+            {canMutateTickets && (
               <button
                 type="button"
                 onClick={openNewForm}
@@ -2196,7 +2224,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                           <option value="">
                             {isBn ? 'টেকনিশিয়ান অ্যাসাইন...' : 'Assign technician...'}
                           </option>
-                          {staffAccounts.map((staff) => (
+                          {staffAccounts.filter(isActualStaffAccount).map((staff) => (
                             <option key={staff.id} value={staff.id}>
                               {staff.name} ({staff.role})
                             </option>
@@ -2567,7 +2595,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                     className="w-full h-11 px-3 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-500/30"
                   >
                     <option value="">{isBn ? 'এখন অ্যাসাইন নয় (পরে ঠিক করবো)' : 'Unassigned'}</option>
-                    {staffAccounts.map((s) => (
+                    {staffAccounts.filter(isActualStaffAccount).map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.name} — {s.role}
                       </option>
@@ -2682,14 +2710,14 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                 </div>
               )}
 
-              {staffAccounts.filter((s) => s.isActive !== false).length > 0 && (
+              {staffAccounts.filter(isActualStaffAccount).length > 0 && (
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                     {isBn ? 'স্টাফ তালিকা থেকে নির্বাচন (ঐচ্ছিক)' : 'Select Staff (Optional)'}
                   </label>
                   <select
                     value={
-                      staffAccounts.find(
+                      staffAccounts.filter(isActualStaffAccount).find(
                         (s) =>
                           s.phone === staffLoginIdentifier ||
                           s.id === staffLoginIdentifier ||
@@ -2706,7 +2734,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                   >
                     <option value="">{isBn ? 'স্টাফ বেছে নিন...' : 'Choose staff member...'}</option>
                     {staffAccounts
-                      .filter((s) => s.isActive !== false)
+                      .filter(isActualStaffAccount)
                       .map((s) => (
                         <option key={s.id} value={s.id}>
                           {s.name} — {s.role} ({s.phone || s.userCode || s.id})
@@ -2817,13 +2845,13 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                 />
               </div>
 
-              {staffAccounts.length > 0 && (
+              {staffAccounts.filter(isActualStaffAccount).length > 0 && (
                 <div className="space-y-2">
                   <p className="text-xs font-extrabold text-slate-700 dark:text-slate-300">
                     {isBn ? 'আলাদা স্টাফের ব্যক্তিগত পিন (ঐচ্ছিক)' : 'Per-Staff Custom PIN (Optional)'}
                   </p>
                   <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
-                    {staffAccounts.map((st) => (
+                    {staffAccounts.filter(isActualStaffAccount).map((st) => (
                       <div
                         key={st.id}
                         className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800"

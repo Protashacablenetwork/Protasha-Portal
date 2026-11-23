@@ -14,6 +14,7 @@ import {
   InventoryLog,
   AppNavTab
 } from './types';
+import { isActualStaffAccount } from '../../utils/ownerDueSync';
 import { Header } from './components/Header';
 import { StatsCards } from './components/StatsCards';
 import { DashboardOverview } from './components/DashboardOverview';
@@ -35,11 +36,17 @@ import { PWAInstallButton } from './components/PWAInstallButton';
 import { NewMonthModal } from './components/NewMonthModal';
 import { 
   getMonthBengaliName, 
+  getNextMonthKey,
   parseNumber, 
   isIncomeTransaction, 
   isExpenseTransaction,
   getTransactionMonth
 } from './data/categories';
+import {
+  fetchNetConnectionSummary,
+  fetchPrevMonthDueBillSummary,
+  BillServiceSummary
+} from './utils/billSyncHelper';
 import { ArrowDownToLine, CheckCircle2, AlertCircle, ArrowLeft, Boxes, BarChart3, Sparkles, PlusCircle, FileSpreadsheet } from 'lucide-react';
 import { StaffAccount, QuickHisabOwner, UserSession } from '../../types';
 import { initialTransactions } from '../../data/initialData';
@@ -47,9 +54,9 @@ import {
   sanitizeStaffForFirestore,
   upsertSingleStaffToCloud,
   deleteSingleStaffFromCloud,
-  broadcastStaffAccounts,
-  findMatchedStaffForUser
+  broadcastStaffAccounts
 } from '../../utils/staffSync';
+import { hasSubAdminPermission } from '../../utils/permissions';
 import { staffDb, safeSetDoc, safeDeleteDoc, handleFirestoreError, OperationType } from '../../utils/firebase';
 import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { safeStorage } from '../../utils/safeStorage';
@@ -116,12 +123,9 @@ export function AyByayPortal({
     }
   }, [propStaffAccounts]);
 
-  // Any staff member logged in on the main page automatically gets edit access with zero extra PIN
-  const matchedMainStaff = useMemo(
-    () => findMatchedStaffForUser(currentUser || null, staffAccounts),
-    [currentUser, staffAccounts]
-  );
-  const canEdit = isAdmin || isSubAdmin || Boolean(matchedMainStaff);
+  // Edit access strictly granted to Main Admin or Sub-Admin with 'ayByay' permission.
+  // Regular users, attendance-only staff, and unpermitted sub-admins are strictly read-only.
+  const canEdit = isAdmin || (isSubAdmin && hasSubAdminPermission(currentUser, 'ayByay'));
 
   useEffect(() => {
     const handleStaffChange = (e: any) => {
@@ -192,6 +196,8 @@ export function AyByayPortal({
     }
   }, []);
 
+  const autoBillIncomeRef = useRef<Record<string, Transaction>>({});
+
   // Real-time synchronization for Ay-Byay Transactions
   useEffect(() => {
     try {
@@ -205,7 +211,17 @@ export function AyByayPortal({
           }
         });
 
-        const sorted = cloudTx.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        // Merge latest live Bill Manager auto-income entries if not yet written to cloud
+        const mergedMap = new Map<string, Transaction>();
+        cloudTx.forEach(tx => mergedMap.set(tx.id, tx));
+        Object.values(autoBillIncomeRef.current).forEach(autoTx => {
+          const existing = mergedMap.get(autoTx.id);
+          if (!existing || Math.round(Number(existing.amount) || 0) !== Math.round(Number(autoTx.amount) || 0)) {
+            mergedMap.set(autoTx.id, autoTx);
+          }
+        });
+
+        const sorted = Array.from(mergedMap.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
         setTransactions(sorted);
         safeStorage.setItem('isp_cache_txns', JSON.stringify(sorted));
         window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { type: 'transactions', data: sorted } }));
@@ -296,6 +312,7 @@ export function AyByayPortal({
   }, []);
 
   const handleSaveStaffAccounts = (updated: StaffAccount[]) => {
+    if (!canEdit) return;
     const sanitized = updated.map((s) => sanitizeStaffForFirestore(s));
     setStaffAccounts(sanitized);
     if (propOnSaveStaffAccounts) {
@@ -315,13 +332,7 @@ export function AyByayPortal({
 
     (staffAccounts || []).forEach(acc => {
       if (!acc || !acc.id || seenIds.has(String(acc.id))) return;
-      const roleLower = (acc.role || '').toLowerCase();
-      if (
-        roleLower.includes('মালিক') ||
-        roleLower.includes('অংশীদার') ||
-        roleLower.includes('সদস্য') ||
-        roleLower.includes('গ্রাহক')
-      ) {
+      if (!isActualStaffAccount(acc)) {
         return;
       }
       seenIds.add(String(acc.id));
@@ -470,6 +481,10 @@ export function AyByayPortal({
   };
 
   const handleAddNewMonth = (monthKey: string) => {
+    if (!canEdit) {
+      setIsAdminLoginModalOpen(true);
+      return;
+    }
     const updated = Array.from(new Set([monthKey, ...managedMonths]));
     setManagedMonths(updated);
     safeStorage.setItem('isp_managed_months', JSON.stringify(updated));
@@ -487,6 +502,9 @@ export function AyByayPortal({
   // Interactive Card Detail Modal
   const [activeCardDetail, setActiveCardDetail] = useState<DashboardCardType | null>(null);
   const [isCardModalOpen, setIsCardModalOpen] = useState(false);
+
+  // Full-page Staff Salary Detail selection
+  const [selectedStaffDetailId, setSelectedStaffDetailId] = useState<string | null>(null);
 
   // Salary Slip Modal
   const [selectedSalarySlip, setSelectedSalarySlip] = useState<SalaryPayment | null>(null);
@@ -512,6 +530,7 @@ export function AyByayPortal({
 
   const stateRef = useRef({
     activeNav,
+    selectedStaffDetailId,
     isCardModalOpen,
     isSalarySlipOpen,
     isDetailModalOpen,
@@ -524,6 +543,7 @@ export function AyByayPortal({
   useEffect(() => {
     stateRef.current = {
       activeNav,
+      selectedStaffDetailId,
       isCardModalOpen,
       isSalarySlipOpen,
       isDetailModalOpen,
@@ -533,7 +553,8 @@ export function AyByayPortal({
       isAdminLoginModalOpen
     };
   }, [
-    activeNav, 
+    activeNav,
+    selectedStaffDetailId,
     isCardModalOpen, 
     isSalarySlipOpen, 
     isDetailModalOpen, 
@@ -622,11 +643,20 @@ export function AyByayPortal({
         return;
       }
 
-      // 4. Sub-page navigation unwinding step by step
+      // 4. Staff salary detail full-page unwinding
+      if (s.activeNav === 'staff' && s.selectedStaffDetailId) {
+        if (!hState || !String(hState.appStep || '').startsWith('staff-detail-')) {
+          setSelectedStaffDetailId(null);
+          return;
+        }
+      }
+
+      // 5. Sub-page navigation unwinding step by step
       if (hState && hState.ayByayPortal) {
         const nextTargetNav = (hState.targetNav as AppNavTab) || 'dashboard';
         if (s.activeNav !== nextTargetNav) {
           setActiveNav(nextTargetNav);
+          if (nextTargetNav !== 'staff') setSelectedStaffDetailId(null);
           return;
         }
       }
@@ -655,6 +685,9 @@ export function AyByayPortal({
       setActiveNav(newNav);
       if (newNav !== 'card_detail') {
         setActiveCardDetail(null);
+      }
+      if (newNav !== 'staff') {
+        setSelectedStaffDetailId(null);
       }
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -703,8 +736,15 @@ export function AyByayPortal({
       return;
     }
 
+    if (s.activeNav === 'staff' && s.selectedStaffDetailId) {
+      setSelectedStaffDetailId(null);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
     if (s.activeNav !== 'dashboard') {
       setActiveNav('dashboard');
+      setSelectedStaffDetailId(null);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
@@ -721,6 +761,11 @@ export function AyByayPortal({
 
   // Inventory Management Handlers
   const handleAddInventoryItem = async (item: Partial<InventoryItem>) => {
+    if (!canEdit) {
+      setIsAdminLoginModalOpen(true);
+      setSyncToast({ message: 'মালামাল পরিবর্তন করতে অ্যাডমিন বা অনুমোদিত সাব-অ্যাডমিন লগইন প্রয়োজন', type: 'error' });
+      return;
+    }
     try {
       const id = item.id || `INV-${Date.now()}`;
       const payload = {
@@ -746,6 +791,11 @@ export function AyByayPortal({
   };
 
   const handleDeleteInventoryItem = async (id: string) => {
+    if (!canEdit) {
+      setIsAdminLoginModalOpen(true);
+      setSyncToast({ message: 'মালামাল ডিলিট করতে অ্যাডমিন বা অনুমোদিত সাব-অ্যাডমিন লগইন প্রয়োজন', type: 'error' });
+      return;
+    }
     try {
       await safeDeleteDoc(doc(staffDb, 'ay_byay_inventory', id));
       setSyncToast({ message: 'মালামাল সফলভাবে মুছে ফেলা হয়েছে', type: 'success' });
@@ -755,6 +805,10 @@ export function AyByayPortal({
   };
 
   const handleDeleteInventoryLog = async (id: string) => {
+    if (!canEdit) {
+      setIsAdminLoginModalOpen(true);
+      return;
+    }
     try {
       const log = inventoryLogs.find(l => l.id === id);
       if (!log) return;
@@ -787,6 +841,11 @@ export function AyByayPortal({
     paymentMethod?: string;
     note?: string;
   }) => {
+    if (!canEdit) {
+      setIsAdminLoginModalOpen(true);
+      setSyncToast({ message: 'স্টক মুভমেন্ট রেকর্ড করতে অ্যাডমিন বা অনুমোদিত সাব-অ্যাডমিন লগইন প্রয়োজন', type: 'error' });
+      return;
+    }
     try {
       const item = inventoryItems.find(i => i.id === logData.itemId);
       if (!item) return;
@@ -844,6 +903,147 @@ export function AyByayPortal({
     });
   }, [transactions, selectedMonth]);
 
+  const transactionsRef = useRef<Transaction[]>(transactions);
+  useEffect(() => {
+    transactionsRef.current = transactions;
+  }, [transactions]);
+
+  const salariesRef = useRef<SalaryPayment[]>(salaries);
+  useEffect(() => {
+    salariesRef.current = salaries;
+  }, [salaries]);
+
+  // Real-time auto-sync of Bill Manager Pro income ('নেট সংযোগ' current month & 'বকেয়া বিল' previous month)
+  useEffect(() => {
+    let isCancelled = false;
+
+    const getDismissedMap = (): Record<string, number> => {
+      try {
+        const raw = safeStorage.getItem('ay_byay_dismissed_auto_tx');
+        return raw ? JSON.parse(raw) : {};
+      } catch {
+        return {};
+      }
+    };
+
+    const setDismissedMap = (map: Record<string, number>) => {
+      try {
+        safeStorage.setItem('ay_byay_dismissed_auto_tx', JSON.stringify(map));
+      } catch {}
+    };
+
+    const upsertAutoIncomeTx = async (
+      txId: string,
+      summary: BillServiceSummary | null,
+      category: string,
+      descriptionTitle: string
+    ) => {
+      if (!summary || isCancelled) return;
+      const existing = transactionsRef.current.find(t => t.id === txId);
+      const dismissedMap = getDismissedMap();
+
+      if (dismissedMap[txId] !== undefined) {
+        if (dismissedMap[txId] === summary.totalPay) {
+          return;
+        }
+        delete dismissedMap[txId];
+        setDismissedMap(dismissedMap);
+      }
+
+      if (summary.totalPay <= 0 && !existing) {
+        return;
+      }
+
+      const expectedDescription = `${descriptionTitle} (${summary.bnMonth} - ${summary.count} জন গ্রাহক)`;
+      const expectedNote = `বিল ম্যানেজার প্রো থেকে রিয়েল-টাইম অটো আপডেট • মাস: ${summary.bnMonth} • মোট আদায়: ৳${summary.totalPay} • বকেয়া: ৳${summary.totalDue}`;
+      const nowYM = new Date().toISOString().slice(0, 7);
+      const defaultDate = selectedMonth === nowYM
+        ? new Date().toISOString().split('T')[0]
+        : `${selectedMonth}-01`;
+      const txDate = existing?.date && getTransactionMonth(existing.date) === selectedMonth
+        ? existing.date
+        : defaultDate;
+
+      if (
+        existing &&
+        Math.round(Number(existing.amount) || 0) === summary.totalPay &&
+        existing.note === expectedNote &&
+        existing.description === expectedDescription &&
+        getTransactionMonth(existing.date) === selectedMonth
+      ) {
+        return;
+      }
+
+      const payload: Transaction = {
+        id: txId,
+        type: 'income',
+        description: expectedDescription,
+        category,
+        amount: summary.totalPay,
+        date: txDate,
+        paymentMethod: existing?.paymentMethod || 'নগদ (Cash)',
+        note: expectedNote,
+        source: 'ay-byay',
+        recordedBy: existing?.recordedBy || currentUser?.id || 'system-bill-sync',
+        createdAt: existing?.createdAt || new Date().toISOString()
+      };
+
+      autoBillIncomeRef.current[txId] = payload;
+
+      setTransactions(prev => {
+        const filtered = prev.filter(t => t.id !== txId);
+        const updated = [payload, ...filtered].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        try { safeStorage.setItem('isp_cache_txns', JSON.stringify(updated)); } catch {}
+        return updated;
+      });
+
+      if (canEdit) {
+        await safeSetDoc(doc(staffDb, 'ay_byay_transactions', txId), payload).catch(() => {});
+      }
+    };
+
+    const runSync = async (forceFresh = false) => {
+      try {
+        const [netConnSummary, prevDueSummary] = await Promise.all([
+          fetchNetConnectionSummary(selectedMonth, forceFresh),
+          fetchPrevMonthDueBillSummary(selectedMonth, forceFresh)
+        ]);
+        if (isCancelled) return;
+        await upsertAutoIncomeTx(
+          `tx-bill-net-conn-${selectedMonth}`,
+          netConnSummary,
+          'নেট সংযোগ',
+          'নতুন নেট সংযোগ বিল আদায়'
+        );
+        await upsertAutoIncomeTx(
+          `tx-bill-due-prev-${selectedMonth}`,
+          prevDueSummary,
+          'বকেয়া বিল',
+          'আগের মাসের বকেয়া বিল আদায়'
+        );
+      } catch (err) {
+        console.warn('[AyByay] Bill Manager auto-income sync skipped:', err);
+      }
+    };
+
+    void runSync(true);
+
+    const handleBillUpdate = () => { void runSync(false); };
+    const handleOnline = () => { void runSync(true); };
+    window.addEventListener('bill-manager-data-updated', handleBillUpdate);
+    window.addEventListener('online', handleOnline);
+    const intervalId = setInterval(() => {
+      if (navigator.onLine) void runSync(true);
+    }, 90000);
+
+    return () => {
+      isCancelled = true;
+      window.removeEventListener('bill-manager-data-updated', handleBillUpdate);
+      window.removeEventListener('online', handleOnline);
+      clearInterval(intervalId);
+    };
+  }, [selectedMonth, canEdit, currentUser?.id]);
+
   // Compute live dashboard metrics for selected month
   const stats = useMemo(() => {
     let totalIncome = 0;
@@ -865,9 +1065,9 @@ export function AyByayPortal({
 
     const netProfit = totalIncome - totalExpense;
 
-    // Staff paid salaries for this month
+    // Staff paid salaries for this month (full gross salary budget expense)
     const monthSal = (salaries || []).filter(s => s && s.month === selectedMonth && s.paymentStatus === 'paid');
-    const paidSalaries = monthSal.reduce((acc, s) => acc + (Number(s?.netSalary) || 0), 0);
+    const paidSalaries = monthSal.reduce((acc, s) => acc + (Number(s?.baseSalary) || 0) + (Number(s?.bonusOrAllowance) || 0), 0);
 
     // Bandwidth & Operations expenses
     const bandwidthCategories = [
@@ -1028,6 +1228,15 @@ export function AyByayPortal({
     }
     try {
       // 1. Delete document directly from Firestore so it doesn't auto-return
+      const targetTx = transactionsRef.current.find(t => t.id === id);
+      if (id.startsWith('tx-bill-') && targetTx) {
+        try {
+          const dismissedRaw = safeStorage.getItem('ay_byay_dismissed_auto_tx');
+          const dismissedMap = dismissedRaw ? JSON.parse(dismissedRaw) : {};
+          dismissedMap[id] = Math.round(Number(targetTx.amount) || 0);
+          safeStorage.setItem('ay_byay_dismissed_auto_tx', JSON.stringify(dismissedMap));
+        } catch {}
+      }
       await safeDeleteDoc(doc(staffDb, 'ay_byay_transactions', id));
       
       try {
@@ -1182,8 +1391,15 @@ export function AyByayPortal({
     }
     try {
       const staffMember = effectiveStaffList.find(s => s.id === data.staffId);
-      const grossSalary = data.baseSalary + (data.bonusOrAllowance || 0);
-      const netSalary = Math.max(0, grossSalary - (data.deductionOrAdvance || 0));
+      const baseSalaryNum = Math.max(0, Number(data.baseSalary) || 0);
+      const bonusNum = Math.max(0, Number(data.bonusOrAllowance) || 0);
+      const requestedDeduction = Math.max(0, Number(data.deductionOrAdvance) || 0);
+
+      // Full salary enters expense ledger even if dues were deducted
+      const grossSalary = baseSalaryNum + bonusNum;
+      const appliedDeduction = Math.min(grossSalary, requestedDeduction);
+      const netSalary = Math.max(0, grossSalary - appliedDeduction);
+
       const recordId = `sal-${data.staffId}-${data.month}`;
       const payDate = data.paymentDate || new Date().toISOString().split('T')[0];
       const voucher = data.voucherNumber || `VCH-SAL-${Date.now().toString().slice(-4)}`;
@@ -1194,9 +1410,9 @@ export function AyByayPortal({
         staffName: staffMember?.name || 'স্টাফ',
         staffDesignation: staffMember?.designation || 'কর্মচারী',
         month: data.month,
-        baseSalary: data.baseSalary,
-        bonusOrAllowance: data.bonusOrAllowance,
-        deductionOrAdvance: data.deductionOrAdvance,
+        baseSalary: baseSalaryNum,
+        bonusOrAllowance: bonusNum,
+        deductionOrAdvance: appliedDeduction,
         netSalary,
         paymentStatus: data.paymentStatus,
         paymentDate: payDate,
@@ -1207,7 +1423,6 @@ export function AyByayPortal({
         recordedByGmail: currentUser?.gmail || undefined,
         createdAt: new Date().toISOString()
       };
-
 
       // 1. Permanently save salary record to Google Cloud Firestore staffDb collection 'staff_salaries'
       await safeSetDoc(doc(staffDb, 'staff_salaries', record.id), record).catch(err => {
@@ -1225,62 +1440,124 @@ export function AyByayPortal({
         return [record, ...prev];
       });
       try {
-        const updated = [...salaries.filter(s => !(s.staffId === data.staffId && s.month === data.month)), record];
+        const updated = [...salariesRef.current.filter(s => !(s.staffId === data.staffId && s.month === data.month)), record];
         safeStorage.setItem('isp_cache_salaries', JSON.stringify(updated));
       } catch {}
 
-      // 3. Deduct from company dues in "স্টাফ কালেকশন ও কোম্পানি পাওনা" if deduction was applied and staff owes dues
-      if (data.deductionOrAdvance > 0) {
-        const cleanPhone = (p: string) => (p || '').replace(/[^0-9]/g, '');
-        const targetPhone = cleanPhone(staffMember?.phone || '');
-        const matchedAcc = staffAccounts.find(a => 
-          a.id === data.staffId || 
-          (targetPhone.length >= 10 && cleanPhone(a.phone) === targetPhone) ||
-          (a.name && staffMember?.name && a.name.trim().toLowerCase() === staffMember.name.trim().toLowerCase())
+      // 3. Settle company dues in "স্টাফ কালেকশন ও কোম্পানি পাওনা" (and compute any remaining due for next month rollover)
+      const cleanPhone = (p: string) => (p || '').replace(/[^0-9]/g, '');
+      const targetPhone = cleanPhone(staffMember?.phone || '');
+      const matchedAcc = staffAccounts.find(a =>
+        a.id === data.staffId ||
+        (targetPhone.length >= 10 && cleanPhone(a.phone) === targetPhone) ||
+        (a.name && staffMember?.name && a.name.trim().toLowerCase() === staffMember.name.trim().toLowerCase())
+      );
+
+      let remainingCompanyDueAfter = matchedAcc?.remainingDue || 0;
+
+      if (appliedDeduction > 0 && matchedAcc) {
+        const monthTag = `বেতন থেকে কোম্পানি পাওনা কর্তন (${getMonthBengaliName(data.month)})`;
+        const cleanedOldTxs = (matchedAcc.transactions || []).filter(
+          t => !(t.type === 'collection' && t.note?.includes(monthTag))
         );
+        const totalDueBefore = cleanedOldTxs.filter(t => t.type === 'due').reduce((sum, t) => sum + (t.amount || 0), 0);
+        const totalCollBefore = cleanedOldTxs.filter(t => t.type === 'collection').reduce((sum, t) => sum + (t.amount || 0), 0);
+        const remBeforeThisSalary = Math.max(0, totalDueBefore - totalCollBefore);
 
-        if (matchedAcc && (matchedAcc.remainingDue || 0) > 0) {
-          const settleAmount = Math.min(data.deductionOrAdvance, matchedAcc.remainingDue);
-          if (settleAmount > 0) {
-            const collectionTx = {
-              id: `stx-sal-${Date.now()}`,
-              staffId: matchedAcc.id,
-              type: 'collection' as const,
-              amount: settleAmount,
-              date: payDate,
-              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-              customerName: `${record.staffName} (${record.staffDesignation})`,
-              note: `বেতন থেকে কোম্পানি পাওনা কর্তন (${getMonthBengaliName(data.month)}) - ভাউচার: ${voucher}`,
-              recordedBy: 'পে-রোল সিস্টেম',
-              created: Date.now()
-            };
+        const settleAmount = Math.min(appliedDeduction, remBeforeThisSalary);
+        if (settleAmount > 0) {
+          const collectionTx = {
+            id: `stx-sal-${Date.now()}`,
+            staffId: matchedAcc.id,
+            type: 'collection' as const,
+            amount: settleAmount,
+            date: payDate,
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            customerName: `${record.staffName} (${record.staffDesignation})`,
+            note: `${monthTag} - ভাউচার: ${voucher}`,
+            recordedBy: 'পে-রোল সিস্টেম',
+            created: Date.now()
+          };
 
-            const oldTxs = matchedAcc.transactions || [];
-            const newTxs = [...oldTxs, collectionTx];
-            const newTotalDue = newTxs.filter(t => t.type === 'due').reduce((sum, t) => sum + (t.amount || 0), 0);
-            const newTotalCollected = newTxs.filter(t => t.type === 'collection').reduce((sum, t) => sum + (t.amount || 0), 0);
-            const newRemaining = Math.max(0, newTotalDue - newTotalCollected);
+          const newTxs = [...cleanedOldTxs, collectionTx];
+          const newTotalDue = newTxs.filter(t => t.type === 'due').reduce((sum, t) => sum + (t.amount || 0), 0);
+          const newTotalCollected = newTxs.filter(t => t.type === 'collection').reduce((sum, t) => sum + (t.amount || 0), 0);
+          const newRemaining = Math.max(0, newTotalDue - newTotalCollected);
+          remainingCompanyDueAfter = newRemaining;
 
-            const updatedAccount: StaffAccount = {
-              ...matchedAcc,
-              totalDue: newTotalDue,
-              totalCollected: newTotalCollected,
-              remainingDue: newRemaining,
-              transactions: newTxs
-            };
+          const updatedAccount: StaffAccount = {
+            ...matchedAcc,
+            totalDue: newTotalDue,
+            totalCollected: newTotalCollected,
+            remainingDue: newRemaining,
+            transactions: newTxs
+          };
 
-            // Save updated account directly to Firestore staffDb collection 'staff'
-            safeSetDoc(doc(staffDb, 'staff', matchedAcc.id), updatedAccount).catch(() => {});
-            const updatedAccounts = staffAccounts.map(a => a.id === matchedAcc.id ? updatedAccount : a);
-            handleSaveStaffAccounts(updatedAccounts);
-          }
+          safeSetDoc(doc(staffDb, 'staff', matchedAcc.id), updatedAccount).catch(() => {});
+          const updatedAccounts = staffAccounts.map(a => a.id === matchedAcc.id ? updatedAccount : a);
+          handleSaveStaffAccounts(updatedAccounts);
+        } else {
+          remainingCompanyDueAfter = remBeforeThisSalary;
         }
       }
 
-      // 4. Save directly to Firestore ay_byay_salaries
+      // 4. Auto-rollover excess deduction or unpaid remaining company due into next month
+      const excessRequested = Math.max(0, requestedDeduction - appliedDeduction);
+      const carryForwardAmount = Math.max(
+        excessRequested,
+        appliedDeduction > 0 || requestedDeduction > 0 ? remainingCompanyDueAfter : 0
+      );
+      let nextMonthCarried: string | null = null;
+
+      if (carryForwardAmount > 0 && data.paymentStatus === 'paid') {
+        const nextMonth = getNextMonthKey(data.month);
+        const nextSalId = `sal-${data.staffId}-${nextMonth}`;
+        const existingNextSal = salariesRef.current.find(s => s.id === nextSalId || (s.staffId === data.staffId && s.month === nextMonth));
+        if (!existingNextSal || existingNextSal.paymentStatus !== 'paid') {
+          const nextBase = staffMember?.baseSalary || baseSalaryNum;
+          const nextRecord: SalaryPayment = {
+            id: nextSalId,
+            staffId: data.staffId,
+            staffName: record.staffName,
+            staffDesignation: record.staffDesignation,
+            month: nextMonth,
+            baseSalary: nextBase,
+            bonusOrAllowance: 0,
+            deductionOrAdvance: carryForwardAmount,
+            netSalary: Math.max(0, nextBase - carryForwardAmount),
+            paymentStatus: 'pending',
+            paymentDate: '',
+            paymentMethod: record.paymentMethod,
+            voucherNumber: `CF-${nextMonth.replace('-', '')}-${Date.now().toString().slice(-4)}`,
+            note: `পূর্ববর্তী (${getMonthBengaliName(data.month)}) মাসের বেতন থেকে অবশিষ্ট কোম্পানি পাওনা স্বয়ংক্রিয় স্থানান্তর: ৳${carryForwardAmount}`,
+            recordedBy: currentUser?.id || 'admin-primary',
+            createdAt: new Date().toISOString()
+          };
+
+          await safeSetDoc(doc(staffDb, 'staff_salaries', nextSalId), nextRecord).catch(() => {});
+          await safeSetDoc(doc(staffDb, 'ay_byay_salaries', nextSalId), nextRecord).catch(() => {});
+
+          setSalaries(prev => {
+            const filtered = prev.filter(s => s.id !== nextSalId && !(s.staffId === data.staffId && s.month === nextMonth));
+            const nextArr = [nextRecord, ...filtered];
+            try { safeStorage.setItem('isp_cache_salaries', JSON.stringify(nextArr)); } catch {}
+            return nextArr;
+          });
+
+          if (!managedMonths.includes(nextMonth)) {
+            const nextMonthsList = Array.from(new Set([nextMonth, ...managedMonths]));
+            setManagedMonths(nextMonthsList);
+            safeStorage.setItem('isp_managed_months', JSON.stringify(nextMonthsList));
+            handleSaveConfig({ managedMonths: nextMonthsList });
+          }
+          nextMonthCarried = nextMonth;
+        }
+      }
+
+      // 5. Save directly to Firestore ay_byay_salaries
       await safeSetDoc(doc(staffDb, 'ay_byay_salaries', record.id), record);
 
-      // 5. Create/update corresponding Expense transaction in Ay-Byay Firestore
+      // 6. Create/update corresponding Expense transaction in Ay-Byay Firestore with FULL gross salary
       if (data.paymentStatus === 'paid') {
         const txnId = `tx-sal-${record.id}`;
         const salaryExpenseTx: Transaction = {
@@ -1288,10 +1565,10 @@ export function AyByayPortal({
           type: 'expense',
           description: `স্টাফ বেতন: ${record.staffName} (${record.staffDesignation})`,
           category: 'বেতন (Salary)',
-          amount: record.netSalary,
+          amount: grossSalary,
           date: payDate,
           paymentMethod: record.paymentMethod,
-          note: `${getMonthBengaliName(data.month)} মাসের বেতন। মূল: ৳${data.baseSalary}, বোনাস: ৳${data.bonusOrAllowance || 0}, কর্তন: ৳${data.deductionOrAdvance || 0}। ভাউচার: ${voucher}`,
+          note: `${getMonthBengaliName(data.month)} মাসের পূর্ণ বেতন খরচ এন্ট্রি: ৳${grossSalary} (মূল: ৳${baseSalaryNum}, বোনাস: ৳${bonusNum}, কর্তন: ৳${appliedDeduction}, নিট হাতে প্রদান: ৳${netSalary})${nextMonthCarried ? ` • পরের মাস (${getMonthBengaliName(nextMonthCarried)})-এ স্থানান্তর: ৳${carryForwardAmount}` : ''}। ভাউচার: ${voucher}`,
           source: 'ay-byay',
           createdAt: record.createdAt,
           recordedBy: currentUser?.id
@@ -1311,7 +1588,12 @@ export function AyByayPortal({
         window.dispatchEvent(new CustomEvent('aybyay-data-changed', { detail: { action: 'salary_disbursed', record } }));
       } catch {}
 
-      setSyncToast({ message: `✓ ${record.staffName} এর বেতন ক্লাউড ডাটাবেজে সফলভাবে সংরক্ষিত হয়েছে`, type: 'success' });
+      setSyncToast({
+        message: nextMonthCarried
+          ? `✓ ${record.staffName} এর পূর্ণ বেতন ৳${grossSalary} ব্যয়ে এন্ট্রি হয়েছে ও অবশিষ্ট ৳${carryForwardAmount} ${getMonthBengaliName(nextMonthCarried)} মাসে স্থানান্তর হয়েছে`
+          : `✓ ${record.staffName} এর পূর্ণ বেতন ৳${grossSalary} ব্যয়ে সফলভাবে সংরক্ষিত হয়েছে`,
+        type: 'success'
+      });
       return true;
     } catch (err) {
       console.error('Error disbursing salary:', err);
@@ -1338,6 +1620,23 @@ export function AyByayPortal({
       // 2. Remove linked expense transaction from Ay-Byay Firestore
       const linkedTxId = `tx-sal-${id}`;
       await safeDeleteDoc(doc(staffDb, 'ay_byay_transactions', linkedTxId));
+
+      // 2b. Clean up auto-carried next-month pending record if created from this salary
+      let removedCarryId: string | null = null;
+      if (salRecord) {
+        const nextMonth = getNextMonthKey(salRecord.month);
+        const candidateCarryId = `sal-${salRecord.staffId}-${nextMonth}`;
+        const carrySal = salaries.find(s => s.id === candidateCarryId);
+        if (
+          carrySal &&
+          carrySal.paymentStatus === 'pending' &&
+          (carrySal.note || '').includes(`পূর্ববর্তী (${getMonthBengaliName(salRecord.month)})`)
+        ) {
+          removedCarryId = candidateCarryId;
+          safeDeleteDoc(doc(staffDb, 'ay_byay_salaries', candidateCarryId)).catch(() => {});
+          safeDeleteDoc(doc(staffDb, 'staff_salaries', candidateCarryId)).catch(() => {});
+        }
+      }
 
       // 3. Revert company due collection in "স্টাফ কালেকশন ও কোম্পানি পাওনা" if deduction was applied
       if (salRecord && (salRecord.deductionOrAdvance || 0) > 0) {
@@ -1379,7 +1678,7 @@ export function AyByayPortal({
 
       // Update local state and caches immediately
       setSalaries(prev => {
-        const updated = prev.filter(s => s.id !== id);
+        const updated = prev.filter(s => s.id !== id && (!removedCarryId || s.id !== removedCarryId));
         safeStorage.setItem('isp_cache_salaries', JSON.stringify(updated));
         return updated;
       });
@@ -1525,14 +1824,12 @@ export function AyByayPortal({
         onOpenDriveBackup={onOpenDriveBackup}
       />
 
-      {/* Admin Login Modal */}
+      {/* Restricted Access Notice Modal */}
       <AdminLoginModal
         isOpen={isAdminLoginModalOpen}
         onClose={() => setIsAdminLoginModalOpen(false)}
-        onSuccess={() => {
+        onOpenMainLogin={() => {
           if (onAdminLogin) onAdminLogin();
-          setSyncToast({ message: 'এডমিন লগইন সফল হয়েছে! এখন নতুন এন্ট্রি করতে পারবেন।', type: 'success' });
-          handleNavChange('new_entry');
         }}
       />
 
@@ -1685,6 +1982,22 @@ export function AyByayPortal({
           staffAccounts={staffAccounts}
           onSaveStaffAccounts={handleSaveStaffAccounts}
           quickHisabOwners={quickHisabOwners}
+          selectedStaffId={selectedStaffDetailId}
+          onSelectStaffDetail={(stf) => {
+            if (stf) {
+              setSelectedStaffDetailId(stf.id);
+              pushHistoryStep(`staff-detail-${stf.id}`, 'staff');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            } else {
+              try {
+                if (window.history.state && String(window.history.state.appStep || '').startsWith('staff-detail-')) {
+                  window.history.back();
+                  return;
+                }
+              } catch {}
+              setSelectedStaffDetailId(null);
+            }
+          }}
         />
       )}
 
@@ -1694,6 +2007,7 @@ export function AyByayPortal({
           <TransactionForm
             onAddTransaction={handleAddTransaction}
             isSubmitting={isSubmitting}
+            selectedMonth={selectedMonth}
             initialType={formInitialType}
             initialCategory={formInitialCategory}
             isOpenInitially={true}

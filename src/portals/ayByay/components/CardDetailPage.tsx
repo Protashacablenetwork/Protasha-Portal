@@ -136,7 +136,7 @@ export const CardDetailPage: React.FC<CardDetailPageProps> = ({
   const paidSalariesTotal = useMemo(() => {
     return monthSalaries
       .filter(s => s && s.paymentStatus === 'paid')
-      .reduce((acc, s) => acc + (Number(s?.netSalary) || 0), 0);
+      .reduce((acc, s) => acc + (Number(s?.baseSalary) || 0) + (Number(s?.bonusOrAllowance) || 0), 0);
   }, [monthSalaries]);
 
   const pendingSalariesTotal = useMemo(() => {
@@ -396,7 +396,11 @@ export const CardDetailPage: React.FC<CardDetailPageProps> = ({
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{staff.designation} • {staff.phone}</p>
                   </div>
                   <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-700/60 text-xs">
-                    <span className="text-slate-600 dark:text-slate-300">মূল বেতন: {formatCurrency(staff.baseSalary, currencySymbol)}</span>
+                    <span className="text-slate-600 dark:text-slate-300">
+                      {salaryRec
+                        ? `মোট বেতন: ${formatCurrency((salaryRec.baseSalary || 0) + (salaryRec.bonusOrAllowance || 0), currencySymbol)}`
+                        : `মূল বেতন: ${formatCurrency(staff.baseSalary, currencySymbol)}`}
+                    </span>
                     {salaryRec && onViewSalarySlip && (
                       <button
                         onClick={() => onViewSalarySlip(salaryRec)}

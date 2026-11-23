@@ -1,4 +1,3 @@
-import * as XLSX from 'xlsx';
 import { BillRecord, BillServiceType } from './types';
 
 export function getBillManagerLogoUrl(): string {
@@ -6,16 +5,101 @@ export function getBillManagerLogoUrl(): string {
   return assetBase ? `${assetBase}bill-manager-logo.jpg` : './bill-manager-logo.jpg';
 }
 
-export async function fetchWithCorsFallback(rawUrl: string): Promise<ArrayBuffer | null> {
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  const value = String(text ?? '').trim();
+  if (!value) return false;
+
+  // Try modern Clipboard API when allowed in secure context
+  if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch {
+      // Clipboard API is often blocked in embedded iframes / mobile WebViews -> fall through to execCommand
+    }
+  }
+
+  // Universal fallback: off-screen textarea inside modal (or body) + execCommand('copy')
+  if (typeof document !== 'undefined') {
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const host =
+      (document.querySelector('.bm-modal-content') as HTMLElement | null) ||
+      document.body ||
+      document.documentElement;
+    const textarea = document.createElement('textarea');
+    textarea.value = value;
+    textarea.setAttribute('readonly', '');
+    textarea.contentEditable = 'true';
+    textarea.style.position = 'fixed';
+    textarea.style.top = '0';
+    textarea.style.left = '-9999px';
+    textarea.style.width = '2em';
+    textarea.style.height = '2em';
+    textarea.style.padding = '0';
+    textarea.style.border = 'none';
+    textarea.style.outline = 'none';
+    textarea.style.boxShadow = 'none';
+    textarea.style.background = 'transparent';
+    textarea.style.fontSize = '16px';
+    textarea.style.opacity = '0.01';
+
+    try {
+      host.appendChild(textarea);
+      textarea.focus({ preventScroll: true });
+      textarea.select();
+      textarea.setSelectionRange(0, value.length);
+      const ok = document.execCommand('copy');
+      if (ok) return true;
+    } catch {
+      // ignore and return false
+    } finally {
+      try {
+        if (textarea.parentNode) textarea.parentNode.removeChild(textarea);
+      } catch {}
+      try {
+        if (previousFocus && typeof previousFocus.focus === 'function') {
+          previousFocus.focus({ preventScroll: true });
+        }
+      } catch {}
+    }
+  }
+
+  return false;
+}
+
+export function toCsvSheetUrl(rawUrl: string): string {
+  if (!rawUrl) return rawUrl;
+  if (rawUrl.includes('docs.google.com/spreadsheets/') && rawUrl.includes('format=xlsx')) {
+    return rawUrl.replace(/format=xlsx/gi, 'format=csv');
+  }
+  return rawUrl;
+}
+
+async function fetchWithTimeout(url: string, timeoutMs = 7500): Promise<Response> {
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+  try {
+    return await fetch(url, { signal: ctrl ? ctrl.signal : undefined });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export async function fetchWithCorsFallback(
+  rawUrl: string,
+  options?: { forceFresh?: boolean; timeoutMs?: number }
+): Promise<ArrayBuffer | null> {
   if (!rawUrl) return null;
   const cacheBuster = `_t=${Date.now()}`;
   const separator = rawUrl.includes('?') ? '&' : '?';
   const urlWithBuster = `${rawUrl}${separator}${cacheBuster}`;
+  const freshParam = options?.forceFresh ? '&fresh=1' : '';
+  const timeoutMs = options?.timeoutMs ?? 8000;
 
-  // Strategy 1: Local Express server proxy endpoint (works in full-stack Node/Vite mode)
+  // Strategy 1: Local Express server proxy endpoint (fastest + keeps server micro-cache)
   try {
-    const proxyUrl = `/api/fetch-sheet?url=${encodeURIComponent(rawUrl)}&${cacheBuster}`;
-    const res = await fetch(proxyUrl);
+    const proxyUrl = `/api/fetch-sheet?url=${encodeURIComponent(rawUrl)}${freshParam}${options?.forceFresh ? `&${cacheBuster}` : ''}`;
+    const res = await fetchWithTimeout(proxyUrl, timeoutMs);
     if (res.ok) {
       const ct = (res.headers.get('content-type') || '').toLowerCase();
       if (!ct.includes('text/html')) {
@@ -29,29 +113,150 @@ export async function fetchWithCorsFallback(rawUrl: string): Promise<ArrayBuffer
   // Strategy 2: corsproxy.io (for static hosting e.g. InfinityFree)
   try {
     const corsUrl = `https://corsproxy.io/?${encodeURIComponent(urlWithBuster)}`;
-    const res = await fetch(corsUrl);
-    if (res.ok) return await res.arrayBuffer();
+    const res = await fetchWithTimeout(corsUrl, timeoutMs);
+    if (res.ok) {
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      if (!ct.includes('text/html')) return await res.arrayBuffer();
+    }
   } catch (e) {
     console.warn('[BillManager] corsproxy.io failed', e);
   }
 
   // Strategy 3: allorigins
   try {
-    const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(urlWithBuster)}`);
-    if (res.ok) return await res.arrayBuffer();
+    const res = await fetchWithTimeout(`https://api.allorigins.win/raw?url=${encodeURIComponent(urlWithBuster)}`, timeoutMs);
+    if (res.ok) {
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      if (!ct.includes('text/html')) return await res.arrayBuffer();
+    }
   } catch (e) {
     console.warn('[BillManager] allorigins failed', e);
   }
 
   // Strategy 4: Direct fetch fallback
   try {
-    const res = await fetch(urlWithBuster);
+    const res = await fetchWithTimeout(urlWithBuster, timeoutMs);
     if (res.ok) return await res.arrayBuffer();
   } catch (e) {
     console.error('[BillManager] Direct fetch blocked by CORS', e);
   }
 
   return null;
+}
+
+// Fast session memory cache for parsed Google Sheet records (30s TTL)
+const sessionSheetCache = new Map<string, { records: BillRecord[]; fetchedAt: number }>();
+const SESSION_CACHE_TTL_MS = 30 * 1000;
+
+export function getCachedSheetRecords(rawUrl: string, netType: BillServiceType | string): BillRecord[] | null {
+  const key = `${netType}::${rawUrl}`;
+  const hit = sessionSheetCache.get(key);
+  if (hit && Date.now() - hit.fetchedAt < SESSION_CACHE_TTL_MS) {
+    return hit.records;
+  }
+  return null;
+}
+
+export function setCachedSheetRecords(rawUrl: string, netType: BillServiceType | string, records: BillRecord[]): void {
+  const key = `${netType}::${rawUrl}`;
+  sessionSheetCache.set(key, { records, fetchedAt: Date.now() });
+}
+
+export function parseCsvMatrix(csvText: string): string[][] {
+  const cleaned = csvText.charCodeAt(0) === 0xfeff ? csvText.slice(1) : csvText;
+  const rows: string[][] = [];
+  let curRow: string[] = [];
+  let curVal = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (cleaned[i + 1] === '"') {
+          curVal += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        curVal += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      curRow.push(curVal);
+      curVal = '';
+    } else if (ch === '\r') {
+      if (cleaned[i + 1] === '\n') i++;
+      curRow.push(curVal);
+      rows.push(curRow);
+      curRow = [];
+      curVal = '';
+    } else if (ch === '\n') {
+      curRow.push(curVal);
+      rows.push(curRow);
+      curRow = [];
+      curVal = '';
+    } else {
+      curVal += ch;
+    }
+  }
+  if (curVal.length > 0 || curRow.length > 0) {
+    curRow.push(curVal);
+    rows.push(curRow);
+  }
+  return rows;
+}
+
+/**
+ * Fetches & parses a Google Sheet quickly:
+ * 1) Prefers lightweight CSV (~50% smaller download, ~2ms pure-JS parse, zero xlsx bundle cost)
+ * 2) Falls back automatically to XLSX binary + lazy xlsx import if CSV fails or non-Google URL returns binary
+ */
+export async function fetchSheetRecordsFast(
+  rawUrl: string,
+  netType: BillServiceType | string,
+  options?: { forceFresh?: boolean }
+): Promise<BillRecord[] | null> {
+  if (!rawUrl) return null;
+  if (!options?.forceFresh) {
+    const memHit = getCachedSheetRecords(rawUrl, netType);
+    if (memHit) return memHit;
+  }
+
+  const csvUrl = toCsvSheetUrl(rawUrl);
+  const isCsvPreferred = csvUrl !== rawUrl || rawUrl.includes('format=csv') || rawUrl.includes('tqx=out:csv');
+
+  if (isCsvPreferred) {
+    const csvBuffer = await fetchWithCorsFallback(csvUrl, { forceFresh: options?.forceFresh });
+    if (csvBuffer && csvBuffer.byteLength > 0) {
+      const bytes = new Uint8Array(csvBuffer.slice(0, 4));
+      const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b; // PK zip signature -> actually xlsx
+      if (isZip) {
+        const recs = await parseWorkbookBufferAsync(csvBuffer, netType);
+        setCachedSheetRecords(rawUrl, netType, recs);
+        return recs;
+      }
+      const text = new TextDecoder('utf-8').decode(csvBuffer);
+      const trimmedHead = text.trimStart().slice(0, 200).toLowerCase();
+      if (text && !trimmedHead.startsWith('<!doctype') && !trimmedHead.startsWith('<html')) {
+        const rows = parseCsvMatrix(text);
+        const recs = parseRowsToRecords(rows, netType);
+        if (recs.length > 0) {
+          setCachedSheetRecords(rawUrl, netType, recs);
+          return recs;
+        }
+      }
+    }
+  }
+
+  // Fallback to original URL (e.g., binary .xlsx)
+  const buffer = await fetchWithCorsFallback(rawUrl, { forceFresh: options?.forceFresh });
+  if (!buffer) return null;
+  const recs = await parseWorkbookBufferAsync(buffer, netType);
+  setCachedSheetRecords(rawUrl, netType, recs);
+  return recs;
 }
 
 export function toEnglishDigits(str: unknown): string {
@@ -151,15 +356,7 @@ export function normalizeBengali(str: unknown): string {
     .trim();
 }
 
-export function parseWorkbookBuffer(buffer: ArrayBuffer, netType: BillServiceType | string): BillRecord[] {
-  const wb = XLSX.read(buffer, { type: 'array' });
-  return parseWorkbook(wb, netType);
-}
-
-export function parseWorkbook(wb: XLSX.WorkBook, netType: BillServiceType | string): BillRecord[] {
-  if (!wb || !wb.SheetNames || wb.SheetNames.length === 0) return [];
-  const sheet = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: '' });
+export function parseRowsToRecords(rows: any[][], netType: BillServiceType | string): BillRecord[] {
   if (!rows || rows.length < 2) return [];
 
   let headerRowIdx = -1;
@@ -318,11 +515,34 @@ export function parseWorkbook(wb: XLSX.WorkBook, netType: BillServiceType | stri
   return records;
 }
 
-export function exportRecordsToExcel(
+export async function parseWorkbookBufferAsync(
+  buffer: ArrayBuffer,
+  netType: BillServiceType | string
+): Promise<BillRecord[]> {
+  const bytes = new Uint8Array(buffer.slice(0, 4));
+  const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b;
+  if (!isZip) {
+    try {
+      const text = new TextDecoder('utf-8').decode(buffer);
+      if (text && (text.includes(',') || text.includes('ক্রমিক'))) {
+        return parseRowsToRecords(parseCsvMatrix(text), netType);
+      }
+    } catch {}
+  }
+  const XLSX = await import('xlsx');
+  const wb = XLSX.read(buffer, { type: 'array' });
+  if (!wb || !wb.SheetNames || wb.SheetNames.length === 0) return [];
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, defval: '' });
+  return parseRowsToRecords(rows, netType);
+}
+
+export async function exportRecordsToExcel(
   records: BillRecord[],
   currentNet: string,
   currentMonth: string
-): void {
+): Promise<void> {
+  const XLSX = await import('xlsx');
   const isDisBill = currentNet === 'ডিস বিল';
   const data = records.map((r, i) => {
     const rowObj: Record<string, string | number> = { SL: i + 1 };

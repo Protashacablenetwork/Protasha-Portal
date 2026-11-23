@@ -23,12 +23,13 @@ import {
   ToastState
 } from './types';
 import {
+  copyTextToClipboard,
   exportRecordsToExcel,
-  fetchWithCorsFallback,
+  fetchSheetRecordsFast,
   getBillManagerLogoUrl,
+  getCachedSheetRecords,
   normalizeBengali,
-  parseDateForSort,
-  parseWorkbookBuffer
+  parseDateForSort
 } from './utils';
 import { PromoCarousel } from './PromoCarousel';
 import { BillCharts } from './BillCharts';
@@ -91,8 +92,12 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
   const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
   const [duplicates, setDuplicates] = useState<DuplicateEntry[]>([]);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [hasInitialSheetLoaded, setHasInitialSheetLoaded] = useState(false);
 
   const toastTimerRef = useRef<number | null>(null);
+  const copyTimerRef = useRef<number | null>(null);
+  const activeLoadSeqRef = useRef(0);
   const trendSectionRef = useRef<HTMLDivElement | null>(null);
   const tableSectionRef = useRef<HTMLElement | null>(null);
   const portalLogoUrl = useMemo(() => getBillManagerLogoUrl(), []);
@@ -266,9 +271,15 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
     setIsDuplicateModalOpen(false);
   }, []);
 
-  // Load current sheet data
+  // Load current sheet data with instant cache hydration (Stale-While-Revalidate) + fast CSV fetch
   const loadData = useCallback(
-    async (netType: BillServiceType, month: string, notifySuccess = true) => {
+    async (
+      netType: BillServiceType,
+      month: string,
+      notifySuccess = true,
+      forceFresh = false
+    ) => {
+      const seqId = ++activeLoadSeqRef.current;
       const url = getActiveSheetLink(netType, month);
       const cacheKey = `bill_v4_${netType}_${month}`;
       const isOnline = typeof navigator.onLine === 'boolean' ? navigator.onLine : true;
@@ -280,42 +291,74 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
         });
         setAllRecords([]);
         setIsLoading(false);
+        setHasInitialSheetLoaded(true);
         return;
+      }
+
+      // 1. Instant hydration from session memory cache or localStorage (<5ms)
+      let hasHydratedCache = false;
+      const memCached = !forceFresh ? getCachedSheetRecords(url, netType) : null;
+      if (memCached && memCached.length > 0) {
+        setAllRecords(memCached);
+        setStatusNotice(null);
+        setIsLoading(false);
+        setHasInitialSheetLoaded(true);
+        return;
+      }
+
+      if (!forceFresh) {
+        const storedRaw = safeStorage.getItem(cacheKey);
+        if (storedRaw) {
+          try {
+            const parsed = JSON.parse(storedRaw) as BillRecord[];
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setAllRecords(parsed);
+              setStatusNotice(null);
+              setIsLoading(false);
+              hasHydratedCache = true;
+            }
+          } catch {}
+        }
       }
 
       if (!isOnline) {
-        const cached = safeStorage.getItem(cacheKey);
-        if (cached) {
-          try {
-            const parsed = JSON.parse(cached) as BillRecord[];
-            setAllRecords(parsed);
-            setStatusNotice(null);
-            setIsLoading(false);
-            return;
-          } catch {}
+        if (!hasHydratedCache) {
+          setStatusNotice({
+            tone: 'error',
+            message: '⚠️ ইন্টারনেট সংযোগ নেই এবং সংরক্ষিত ডেটা পাওয়া যায়নি।'
+          });
+          setAllRecords([]);
         }
-        setStatusNotice({
-          tone: 'error',
-          message: '⚠️ ইন্টারনেট সংযোগ নেই এবং সংরক্ষিত ডেটা পাওয়া যায়নি।'
-        });
-        setAllRecords([]);
         setIsLoading(false);
+        setHasInitialSheetLoaded(true);
         return;
       }
 
-      setAllRecords([]);
-      setIsLoading(true);
+      if (!hasHydratedCache) {
+        setAllRecords([]);
+        setIsLoading(true);
+      } else {
+        setIsRefreshing(true);
+      }
       setStatusNotice(null);
 
       try {
-        const buffer = await fetchWithCorsFallback(url);
-        if (!buffer) {
+        const recs = await fetchSheetRecordsFast(url, netType, { forceFresh });
+        if (seqId !== activeLoadSeqRef.current) return;
+        if (!recs) {
           throw new Error('Empty data received');
         }
-        const recs = parseWorkbookBuffer(buffer, netType);
         safeStorage.setItem(cacheKey, JSON.stringify(recs));
         setAllRecords(recs);
         setStatusNotice(null);
+
+        try {
+          window.dispatchEvent(
+            new CustomEvent('bill-manager-data-updated', {
+              detail: { netType, month, recs }
+            })
+          );
+        } catch {}
 
         const sumPay = recs.reduce((s, r) => s + (r.pay || 0), 0);
         if (netType === 'নেট বিল' || netType === 'ডিস বিল') {
@@ -331,23 +374,18 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
           });
         }
 
-        if (notifySuccess) {
+        if (notifySuccess && (!hasHydratedCache || forceFresh)) {
           showToast(`✅ ${netType} (${month}) এর ${recs.length} টি তথ্য লোড হয়েছে`, 'success');
         }
       } catch (err) {
-        console.warn('[BillManager] Live fetch failed, trying cache:', err);
-        const cached = safeStorage.getItem(cacheKey);
-        if (cached) {
-          try {
-            const parsed = JSON.parse(cached) as BillRecord[];
-            setAllRecords(parsed);
-            setStatusNotice({
-              tone: 'warning',
-              message: `⚠️ লাইভ সার্ভার সংযোগ পেতে সমস্যা হয়েছে — সংরক্ষিত ক্যাশ ডেটা দেখানো হচ্ছে (${parsed.length} টি বিল)।`
-            });
-            setIsLoading(false);
-            return;
-          } catch {}
+        if (seqId !== activeLoadSeqRef.current) return;
+        console.warn('[BillManager] Live fetch failed, keeping cache if available:', err);
+        if (hasHydratedCache) {
+          setStatusNotice({
+            tone: 'warning',
+            message: '⚠️ লাইভ সার্ভার সংযোগ পেতে সমস্যা হয়েছে — সংরক্ষিত ক্যাশ ডেটা দেখানো হচ্ছে।'
+          });
+          return;
         }
         setStatusNotice({
           tone: 'error',
@@ -355,7 +393,11 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
         });
         setAllRecords([]);
       } finally {
-        setIsLoading(false);
+        if (seqId === activeLoadSeqRef.current) {
+          setIsLoading(false);
+          setIsRefreshing(false);
+          setHasInitialSheetLoaded(true);
+        }
       }
     },
     [showToast]
@@ -363,80 +405,117 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
 
   // Fetch current view whenever service or month changes
   useEffect(() => {
-    void loadData(currentNet, currentMonth, true);
+    void loadData(currentNet, currentMonth, true, false);
   }, [currentNet, currentMonth, loadData]);
 
-  // Background preloader for annual monthly revenue bar chart
+  // Deferred & batched background preloader for annual monthly revenue bar chart (never competes with initial load)
   useEffect(() => {
+    if (!hasInitialSheetLoaded) return;
     let cancelled = false;
-    const preload = async () => {
-      const monthsToFetch = [
-        'এপ্রিল',
-        'মে',
-        'জুন',
-        'জুলাই',
-        'আগস্ট',
-        'সেপ্টেম্বর',
-        'অক্টোবর',
-        'নভেম্বর'
-      ];
+    const monthsToFetch = [
+      'এপ্রিল',
+      'মে',
+      'জুন',
+      'জুলাই',
+      'আগস্ট',
+      'সেপ্টেম্বর',
+      'অক্টোবর',
+      'নভেম্বর'
+    ];
+
+    const preloadTimer = window.setTimeout(async () => {
       const nextAgg: MonthlyAggregates = {
         net: { ...monthlyAggregates.net },
         dis: { ...monthlyAggregates.dis }
       };
       let changed = false;
 
+      // Step 1: Hydrate any already-cached sheets instantaneously from localStorage
+      const missingTasks: Array<{ type: 'নেট বিল' | 'ডিস বিল'; month: string; url: string }> = [];
       for (const m of monthsToFetch) {
-        if (cancelled) return;
         const netUrl = getActiveSheetLink('নেট বিল', m);
         if (netUrl && !nextAgg.net[m]) {
-          try {
-            const buffer = await fetchWithCorsFallback(netUrl);
-            if (buffer && !cancelled) {
-              const recs = parseWorkbookBuffer(buffer, 'নেট বিল');
-              nextAgg.net[m] = recs.reduce((s, r) => s + (r.pay || 0), 0);
-              safeStorage.setItem(`bill_v4_নেট বিল_${m}`, JSON.stringify(recs));
-              changed = true;
-            }
-          } catch {}
+          const cachedRaw = safeStorage.getItem(`bill_v4_নেট বিল_${m}`);
+          if (cachedRaw) {
+            try {
+              const cached = JSON.parse(cachedRaw) as BillRecord[];
+              if (Array.isArray(cached) && cached.length > 0) {
+                nextAgg.net[m] = cached.reduce((s, r) => s + (r.pay || 0), 0);
+                changed = true;
+              }
+            } catch {}
+          }
+          if (!nextAgg.net[m]) {
+            missingTasks.push({ type: 'নেট বিল', month: m, url: netUrl });
+          }
         }
+
         const disUrl = getActiveSheetLink('ডিস বিল', m);
         if (disUrl && !nextAgg.dis[m]) {
-          try {
-            const buffer = await fetchWithCorsFallback(disUrl);
-            if (buffer && !cancelled) {
-              const recs = parseWorkbookBuffer(buffer, 'ডিস বিল');
-              nextAgg.dis[m] = recs.reduce((s, r) => s + (r.pay || 0), 0);
-              safeStorage.setItem(`bill_v4_ডিস বিল_${m}`, JSON.stringify(recs));
-              changed = true;
-            }
-          } catch {}
+          const cachedRaw = safeStorage.getItem(`bill_v4_ডিস বিল_${m}`);
+          if (cachedRaw) {
+            try {
+              const cached = JSON.parse(cachedRaw) as BillRecord[];
+              if (Array.isArray(cached) && cached.length > 0) {
+                nextAgg.dis[m] = cached.reduce((s, r) => s + (r.pay || 0), 0);
+                changed = true;
+              }
+            } catch {}
+          }
+          if (!nextAgg.dis[m]) {
+            missingTasks.push({ type: 'ডিস বিল', month: m, url: disUrl });
+          }
         }
       }
 
       if (changed && !cancelled) {
         safeStorage.setItem('bill_monthly_aggregates', JSON.stringify(nextAgg));
-        setMonthlyAggregates(nextAgg);
+        setMonthlyAggregates({ net: { ...nextAgg.net }, dis: { ...nextAgg.dis } });
       }
-    };
 
-    void preload();
+      // Step 2: Fetch remaining uncached months in parallel batches of 3
+      const BATCH_SIZE = 3;
+      for (let i = 0; i < missingTasks.length; i += BATCH_SIZE) {
+        if (cancelled) return;
+        const batch = missingTasks.slice(i, i + BATCH_SIZE);
+        let batchUpdated = false;
+        await Promise.all(
+          batch.map(async (task) => {
+            try {
+              const recs = await fetchSheetRecordsFast(task.url, task.type);
+              if (recs && recs.length > 0 && !cancelled) {
+                const sumPay = recs.reduce((s, r) => s + (r.pay || 0), 0);
+                if (task.type === 'নেট বিল') nextAgg.net[task.month] = sumPay;
+                else nextAgg.dis[task.month] = sumPay;
+                safeStorage.setItem(`bill_v4_${task.type}_${task.month}`, JSON.stringify(recs));
+                batchUpdated = true;
+              }
+            } catch {}
+          })
+        );
+        if (batchUpdated && !cancelled) {
+          safeStorage.setItem('bill_monthly_aggregates', JSON.stringify(nextAgg));
+          setMonthlyAggregates({ net: { ...nextAgg.net }, dis: { ...nextAgg.dis } });
+        }
+      }
+    }, 350);
+
     return () => {
       cancelled = true;
+      window.clearTimeout(preloadTimer);
     };
-    // Run once on portal launch
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hasInitialSheetLoaded]);
 
   // Online / Offline listeners
   useEffect(() => {
     const onOnline = () => {
       showToast('🟢 ইন্টারনেট সংযোগ সক্রিয় হয়েছে — লাইভ ডেটা লোড হচ্ছে', 'info');
-      void loadData(currentNet, currentMonth, false);
+      void loadData(currentNet, currentMonth, false, true);
     };
     const onOffline = () => {
       showToast('🔴 ইন্টারনেট সংযোগ বিচ্ছিন্ন হয়েছে — অফলাইন মোড চালু', 'warning');
-      void loadData(currentNet, currentMonth, false);
+      void loadData(currentNet, currentMonth, false, false);
     };
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
@@ -444,6 +523,7 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
       if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+      if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current);
     };
   }, [currentMonth, currentNet, loadData, showToast]);
 
@@ -538,19 +618,19 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
     showToast(
-      lang === 'bn' ? '🔄 ডেটা রিফ্রেশ করা হচ্ছে...' : '🔄 Refreshing data...',
+      lang === 'bn' ? '🔄 লাইভ ডেটা রিফ্রেশ করা হচ্ছে...' : '🔄 Refreshing live data...',
       'info'
     );
-    await loadData(currentNet, currentMonth, true);
-    window.setTimeout(() => setIsRefreshing(false), 500);
+    await loadData(currentNet, currentMonth, true, true);
+    window.setTimeout(() => setIsRefreshing(false), 300);
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!allRecords.length) {
       showToast('এক্সপোর্ট করার মতো কোনো ডেটা নেই', 'warning');
       return;
     }
-    exportRecordsToExcel(allRecords, currentNet, currentMonth);
+    await exportRecordsToExcel(allRecords, currentNet, currentMonth);
     showToast('📥 এক্সেল ফাইল ডাউনলোড সম্পন্ন হয়েছে', 'success');
   };
 
@@ -600,21 +680,50 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
     } catch {}
   };
 
-  const handleCopyText = (txt: string) => {
-    try {
-      void navigator.clipboard.writeText(txt);
-    } catch {}
-    showToast('📋 ক্লিপবোর্ডে কপি হয়েছে', 'success');
+  const handleCopyText = async (txt: string, fieldKey?: string) => {
+    const clean = String(txt ?? '').trim();
+    if (!clean || clean === '---' || clean === '-----' || clean === '-') {
+      showToast('⚠️ কপি করার মতো সঠিক তথ্য নেই', 'warning');
+      return;
+    }
+    const copied = await copyTextToClipboard(clean);
+    if (copied) {
+      if (fieldKey) {
+        setCopiedField(fieldKey);
+        if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = window.setTimeout(() => setCopiedField(null), 1800);
+      }
+      const preview = clean.length > 26 ? `${clean.slice(0, 26)}...` : clean;
+      showToast(`📋 ক্লিপবোর্ডে কপি হয়েছে: ${preview}`, 'success');
+    } else {
+      showToast('❌ কপি করা সম্ভব হয়নি', 'error');
+    }
   };
 
-  const handleSendDueSms = () => {
+  const buildFullBillCopyText = (r: BillRecord): string => {
+    const statusLabel =
+      r.status || (r.due === 0 ? 'পরিশোধিত' : r.pay > 0 ? 'আংশিক' : 'বকেয়া');
+    const lines = [
+      `📄 বিলের বিবরণ (${currentNet} - ${currentMonth})`,
+      `নাম: ${r.name}`,
+      ...(r.id && r.id !== '-----' ? [`আইডি: ${r.id}`] : []),
+      `মোবাইল: ${r.mob}`,
+      `পরিশোধিত: ${r.pay.toLocaleString()} ৳`,
+      `বকেয়া: ${r.due > 0 ? `${r.due.toLocaleString()} ৳` : '০ ৳ (কোনো বকেয়া নেই)'}`,
+      `সর্বমোট: ${(r.pay + r.due).toLocaleString()} ৳`,
+      `তারিখ: ${r.date}`,
+      `ঠিকানা: ${r.address}`,
+      `স্ট্যাটাস: ${statusLabel}`
+    ];
+    return lines.join('\n');
+  };
+
+  const handleSendDueSms = async () => {
     if (!selectedRecord) return;
     const r = selectedRecord;
     const cleanPhone = (r.mob || '').replace(/[^0-9+]/g, '');
     const smsText = `প্রিয় গ্রাহক ${r.name}, আপনার ${currentNet} বাবদ বকেয়া ${r.due.toLocaleString()} টাকা দ্রুত পরিশোধ করার জন্য বিনীত অনুরোধ করা হচ্ছে। ধন্যবাদ - বিল ম্যানেজার।`;
-    try {
-      void navigator.clipboard.writeText(smsText);
-    } catch {}
+    await copyTextToClipboard(smsText);
     if (cleanPhone && cleanPhone.length >= 8) {
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
       const separator = isIOS ? '&' : '?';
@@ -1444,6 +1553,13 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
                 <div className="bm-detail-label">গ্রাহকের নাম:</div>
                 <div className="bm-detail-value">
                   <strong>{selectedRecord.name}</strong>
+                  <button
+                    type="button"
+                    className="bm-copy-pill"
+                    onClick={() => void handleCopyText(selectedRecord.name, 'name')}
+                  >
+                    {copiedField === 'name' ? '✓ কপি হয়েছে' : 'কপি'}
+                  </button>
                 </div>
               </div>
               {selectedRecord.id && (
@@ -1454,9 +1570,9 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
                     <button
                       type="button"
                       className="bm-copy-pill"
-                      onClick={() => handleCopyText(selectedRecord.id || '')}
+                      onClick={() => void handleCopyText(selectedRecord.id || '', 'id')}
                     >
-                      কপি
+                      {copiedField === 'id' ? '✓ কপি হয়েছে' : 'কপি'}
                     </button>
                   </div>
                 </div>
@@ -1468,9 +1584,9 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
                   <button
                     type="button"
                     className="bm-copy-pill"
-                    onClick={() => handleCopyText(selectedRecord.mob)}
+                    onClick={() => void handleCopyText(selectedRecord.mob, 'mob')}
                   >
-                    কপি
+                    {copiedField === 'mob' ? '✓ কপি হয়েছে' : 'কপি'}
                   </button>
                 </div>
               </div>
@@ -1516,7 +1632,18 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
               </div>
               <div className="bm-detail-row">
                 <div className="bm-detail-label">ঠিকানা:</div>
-                <div className="bm-detail-value">{selectedRecord.address}</div>
+                <div className="bm-detail-value">
+                  <span>{selectedRecord.address}</span>
+                  {selectedRecord.address && selectedRecord.address !== '---' && (
+                    <button
+                      type="button"
+                      className="bm-copy-pill"
+                      onClick={() => void handleCopyText(selectedRecord.address, 'address')}
+                    >
+                      {copiedField === 'address' ? '✓ কপি হয়েছে' : 'কপি'}
+                    </button>
+                  )}
+                </div>
               </div>
               <div className="bm-detail-row">
                 <div className="bm-detail-label">স্ট্যাটাস:</div>
@@ -1545,6 +1672,14 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
               <button
                 type="button"
                 className="bm-modal-btn secondary"
+                onClick={() => void handleCopyText(buildFullBillCopyText(selectedRecord), 'all')}
+                style={{ gridColumn: 'span 2' }}
+              >
+                {copiedField === 'all' ? '✅ সম্পূর্ণ বিবরণ কপি হয়েছে' : '📋 সম্পূর্ণ বিবরণ কপি করুন'}
+              </button>
+              <button
+                type="button"
+                className="bm-modal-btn secondary"
                 onClick={handlePrintReceipt}
               >
                 {dict.btnPrint}
@@ -1559,7 +1694,7 @@ export const BillManagerPortal: React.FC<BillManagerPortalProps> = ({ onExit }) 
               <button
                 type="button"
                 className="bm-modal-btn whatsapp"
-                onClick={handleSendDueSms}
+                onClick={() => void handleSendDueSms()}
               >
                 {dict.btnSms}
               </button>

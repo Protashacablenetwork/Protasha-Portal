@@ -16,7 +16,9 @@ import {
   SupportTicket,
   StaffAttendanceRecord,
   PopupNotice,
-  PopupNoticeAcknowledgement
+  PopupNoticeAcknowledgement,
+  SubAdminPermissionKey,
+  SubAdminPermissions
 } from './types';
 import { 
   initialNotifications, 
@@ -38,10 +40,13 @@ import { PrimaryFeatureCards, OperationsHubCards } from './components/PrimaryFea
 import { PromoCarousel } from './components/PromoCarousel';
 import { QuickChannels } from './components/QuickChannels';
 import { TransactionList } from './components/TransactionList';
-import { LoginView } from './components/LoginView';
 import { BottomNav, TabId } from './components/BottomNav';
 import { clearTrackFromCurrentUrl, extractTrackTicketIdFromLocation } from './components/TicketTrackingHelpers';
 import { showConfirm, showToast } from './utils/uiFeedback';
+
+const LoginView = React.lazy(() =>
+  import('./components/LoginView').then((m) => ({ default: m.LoginView }))
+);
 
 // Lazy confetti trigger so canvas-confetti is zero bytes on initial boot
 const triggerConfetti = (opts: Record<string, any>) => {
@@ -138,43 +143,43 @@ const AyByayPortal = React.lazy(() =>
 const BillManagerPortal = React.lazy(() =>
   import('./portals/billManager/BillManagerPortal').then((m) => ({ default: m.BillManagerPortal }))
 );
-import { fetchLiveWeather, WeatherData, detectPreciseLocation, DistrictInfo, getUserPreferredDistrict, ALL_BANGLADESH_DISTRICTS, DEFAULT_HEADQUARTERS_DISTRICT } from './utils/weatherService';
-import { checkAndGenerateWeatherNotifications } from './utils/weatherNotificationService';
-import {
-  checkAndGeneratePrayerNotifications,
-  checkAndGenerateFastingReminders,
-  isFastingReminderEnabled,
-  fetchLivePrayerTimes,
-  PrayerTimings
-} from './utils/prayerTimeService';
+import type { WeatherData, DistrictInfo } from './utils/weatherService';
+import type { PrayerTimings } from './utils/prayerTimeService';
 import { safeStorage } from './utils/safeStorage';
-import { canAddTransactions, canModifyTransaction, isTransactionOwner, isLoggedInSession, isSupportTicketOwner, normalizePhoneNumber } from './utils/permissions';
+import {
+  canAddTransactions,
+  canModifyTransaction,
+  hasSubAdminPermission,
+  isTransactionOwner,
+  isLoggedInSession,
+  isSupportTicketOwner,
+  normalizePhoneNumber
+} from './utils/permissions';
 import { saveStoredUser } from './utils/userStorage';
 import {
   sanitizeStaffForFirestore,
   broadcastStaffAccounts,
+  findMatchedStaffForUser,
   isStaffOrAdminUser,
-  syncMainLoginStaffSession
+  syncMainLoginStaffSession,
+  syncStaffPinEverywhere
 } from './utils/staffSync';
+import { isActualStaffAccount } from './utils/ownerDueSync';
 import {
   startDeviceSessionGuard,
   releaseDeviceSession,
   claimDeviceSession,
   getDeviceLabel
 } from './utils/deviceSession';
-import {
-  checkForAppUpdates,
-  buildUpdateNotificationItem,
-  markVersionFeaturesAcknowledged,
-  UpdateCheckResult
-} from './utils/appVersion';
-import { getDriveAccessToken, initDriveAuth, uploadBackupToGoogleDrive } from './utils/googleDrive';
-import { collectMasterBackupData } from './utils/backupCollector';
-import {
-  initSilentCloudArchiveListener,
-  scheduleSilentCloudArchiveSync,
-  syncMasterDataToCloudArchive
-} from './utils/cloudArchiveSync';
+import type { UpdateCheckResult } from './utils/appVersion';
+
+const DEFAULT_BOOT_DISTRICT: DistrictInfo = {
+  nameBn: 'জামালপুর',
+  nameEn: 'Jamalpur',
+  divisionBn: 'ময়মনসিংহ',
+  lat: 24.9375,
+  lon: 89.9377
+};
 
 // Per-device automated location/system alerts stay strictly local so multi-district users never overwrite each other in Firestore
 const isLocalAutoNotification = (n: NotificationItem): boolean => {
@@ -272,13 +277,25 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return;
-    const unsubDriveAuth = initDriveAuth(() => {
-      scheduleSilentCloudArchiveSync(500);
-    });
-    const unsubArchive = initSilentCloudArchiveListener(() => userRef.current);
+    let active = true;
+    let unsubDriveAuth: (() => void) | null = null;
+    let unsubArchive: (() => void) | null = null;
+    const timer = setTimeout(() => {
+      Promise.all([import('./utils/googleDrive'), import('./utils/cloudArchiveSync')])
+        .then(([{ initDriveAuth }, { initSilentCloudArchiveListener, scheduleSilentCloudArchiveSync }]) => {
+          if (!active) return;
+          unsubDriveAuth = initDriveAuth(() => {
+            scheduleSilentCloudArchiveSync(500);
+          });
+          unsubArchive = initSilentCloudArchiveListener(() => userRef.current);
+        })
+        .catch(() => {});
+    }, 1200);
     return () => {
-      unsubDriveAuth();
-      unsubArchive();
+      active = false;
+      clearTimeout(timer);
+      if (unsubDriveAuth) unsubDriveAuth();
+      if (unsubArchive) unsubArchive();
     };
   }, [Boolean(user)]);
 
@@ -432,18 +449,20 @@ export default function App() {
     return Array.isArray(list) ? list : [];
   };
 
-  // Dynamic Homepage Banners (Cloud-first with fallback to initialBanners)
+  // Dynamic Homepage Banners (Cloud-first with fallback to initialBanners, sorted sequentially)
   const [banners, setBanners] = useState<BannerAd[]>(() => {
     try {
       const saved = safeStorage.getItem('protyasha_banners');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.filter(b => b && b.id);
+          return parsed
+            .filter(b => b && b.id)
+            .sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
         }
       }
     } catch {}
-    return initialBanners;
+    return [...initialBanners].sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
   });
 
   // Customer Support Tickets (Real-time synced with Firestore 'support_tickets')
@@ -610,6 +629,12 @@ export default function App() {
             const nextGmail = data.gmail !== undefined ? (data.gmail || undefined) : prev.gmail;
             const nextBound = Array.isArray(data.boundMethods) ? data.boundMethods : prev.boundMethods;
             const nextRole = data.role || prev.role;
+            const nextPermissions =
+              nextRole === 'sub-admin'
+                ? data.permissions && typeof data.permissions === 'object'
+                  ? (data.permissions as SubAdminPermissions)
+                  : prev.permissions
+                : undefined;
 
             if (
               nextName === prev.name &&
@@ -617,20 +642,26 @@ export default function App() {
               nextAvatar === prev.avatarUrl &&
               nextGmail === prev.gmail &&
               nextRole === prev.role &&
+              JSON.stringify(nextPermissions || null) === JSON.stringify(prev.permissions || null) &&
               JSON.stringify(nextBound || []) === JSON.stringify(prev.boundMethods || [])
             ) {
               return prev;
             }
 
-            return {
+            const nextSession: UserSession = {
               ...prev,
               name: nextName,
               phone: nextPhone,
               avatarUrl: nextAvatar,
               gmail: nextGmail,
               boundMethods: nextBound,
-              role: nextRole
+              role: nextRole,
+              permissions: nextPermissions
             };
+            try {
+              safeStorage.setItem('protyasha_user', JSON.stringify(nextSession));
+            } catch {}
+            return nextSession;
           });
         }
       }, (err) => {
@@ -1139,6 +1170,12 @@ export default function App() {
         const lastBackupDate = safeStorage.getItem('protyasha_last_auto_backup_date');
 
         if (currentTimeStr >= scheduledTime && lastBackupDate !== todayStr) {
+          const [{ getDriveAccessToken, uploadBackupToGoogleDrive }, { collectMasterBackupData }, { syncMasterDataToCloudArchive }] =
+            await Promise.all([
+              import('./utils/googleDrive'),
+              import('./utils/backupCollector'),
+              import('./utils/cloudArchiveSync')
+            ]);
           const token = getDriveAccessToken();
           if (token) {
             const masterData = await collectMasterBackupData(user);
@@ -1428,12 +1465,22 @@ export default function App() {
         phone: updatedData.phone,
         ...(updatedData.pin ? { pin: updatedData.pin } : {}),
         ...(cleanAvatar ? { avatarUrl: cleanAvatar } : {}),
+        ...(user.role === 'sub-admin' && user.permissions ? { permissions: user.permissions } : {}),
         role: user.role,
         status: 'active' as const,
         updatedAt: nowIso
       };
 
       await safeSetDoc(doc(db, 'users', targetId), userData, { merge: true });
+
+      if (user.role === 'staff' && updatedData.pin) {
+        const matchedStaff = findMatchedStaffForUser(user, staffAccounts);
+        await syncStaffPinEverywhere({
+          staffId: matchedStaff?.id || targetId,
+          phone: updatedData.phone || user.phone || '',
+          newPin: updatedData.pin
+        }).catch(() => {});
+      }
 
       // Critical: For Admin accounts, also persist to settings/admin_profile so all devices & logins sync in real time
       if (user.role === 'admin') {
@@ -1468,7 +1515,8 @@ export default function App() {
         id: targetId,
         name: updatedData.name,
         phone: updatedData.phone,
-        avatarUrl: cleanAvatar || user.avatarUrl
+        avatarUrl: cleanAvatar || user.avatarUrl,
+        ...(user.role === 'sub-admin' && user.permissions ? { permissions: user.permissions } : {})
       };
       setUser(updatedSession);
       safeStorage.setItem('protyasha_user', JSON.stringify(updatedSession));
@@ -1556,7 +1604,13 @@ export default function App() {
 
   // Active Real User District State (Defaults stably to preferred or Jamalpur HQ)
   const [currentDistrict, setCurrentDistrict] = useState<DistrictInfo>(() => {
-    return getUserPreferredDistrict() || DEFAULT_HEADQUARTERS_DISTRICT || ALL_BANGLADESH_DISTRICTS[0];
+    try {
+      const savedName = safeStorage.getItem('protyasha_weather_district_bn');
+      if (savedName && savedName !== DEFAULT_BOOT_DISTRICT.nameBn) {
+        return { ...DEFAULT_BOOT_DISTRICT, nameBn: savedName };
+      }
+    } catch {}
+    return DEFAULT_BOOT_DISTRICT;
   });
 
   // Weather data state
@@ -1603,6 +1657,14 @@ export default function App() {
 
     const runAutomatedMonitoring = async () => {
       try {
+        const [{ fetchLiveWeather, detectPreciseLocation, getUserPreferredDistrict }, { checkAndGenerateWeatherNotifications }, prayerMod] =
+          await Promise.all([
+            import('./utils/weatherService'),
+            import('./utils/weatherNotificationService'),
+            import('./utils/prayerTimeService')
+          ]);
+        if (!isSubscribed) return;
+
         const preferred = getUserPreferredDistrict();
         let activeDistrict = preferred || currentDistrict;
 
@@ -1623,7 +1685,7 @@ export default function App() {
 
         const [w, fetchedTimings] = await Promise.all([
           fetchLiveWeather().catch(() => null),
-          liveTimings ? Promise.resolve(liveTimings) : fetchLivePrayerTimes(activeDistrict).catch(() => null)
+          liveTimings ? Promise.resolve(liveTimings) : prayerMod.fetchLivePrayerTimes(activeDistrict).catch(() => null)
         ]);
 
         if (fetchedTimings) {
@@ -1647,13 +1709,13 @@ export default function App() {
           }
 
           // 2. Prayer Times & Sunrise/Sunset Notifications (user's own district)
-          const prayerRes = checkAndGeneratePrayerNotifications(activeDistrict, working);
+          const prayerRes = prayerMod.checkAndGeneratePrayerNotifications(activeDistrict, working);
           working = prayerRes.updatedNotifications;
           if (prayerRes.newlyAdded) newlyAdded = prayerRes.newlyAdded;
 
           // 3. Daily & Pre-Time Sehri/Iftar Schedule Notifications (strictly for user's own district)
-          const fastingEnabled = isFastingReminderEnabled();
-          const fastingRes = checkAndGenerateFastingReminders(activeDistrict, working, fastingEnabled, liveTimings);
+          const fastingEnabled = prayerMod.isFastingReminderEnabled();
+          const fastingRes = prayerMod.checkAndGenerateFastingReminders(activeDistrict, working, fastingEnabled, liveTimings);
           working = fastingRes.updatedNotifications;
           if (fastingRes.newlyAdded) {
             newlyAdded = fastingRes.newlyAdded;
@@ -1688,7 +1750,7 @@ export default function App() {
     };
 
     // Defer initial monitoring so app launch & first paint are instant
-    const initialTimer = setTimeout(runAutomatedMonitoring, 2400);
+    const initialTimer = setTimeout(runAutomatedMonitoring, 2600);
     // Check periodically in background
     const interval = setInterval(runAutomatedMonitoring, 5 * 60 * 1000);
     return () => {
@@ -1702,7 +1764,11 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     const checkFastingReminder = async () => {
-      const enabled = isFastingReminderEnabled();
+      const [{ getUserPreferredDistrict }, prayerMod] = await Promise.all([
+        import('./utils/weatherService'),
+        import('./utils/prayerTimeService')
+      ]);
+      const enabled = prayerMod.isFastingReminderEnabled();
       if (!enabled) return;
 
       const activeDistrict = getUserPreferredDistrict() || currentDistrict;
@@ -1712,7 +1778,7 @@ export default function App() {
 
       if (!liveTimings) {
         try {
-          const fetched = await fetchLivePrayerTimes(activeDistrict);
+          const fetched = await prayerMod.fetchLivePrayerTimes(activeDistrict);
           if (fetched) {
             liveTimings = fetched;
             liveTimingsCacheRef.current = { key: todayKey, timings: fetched };
@@ -1721,7 +1787,7 @@ export default function App() {
       }
 
       setNotifications(prev => {
-        const { updatedNotifications, newlyAdded } = checkAndGenerateFastingReminders(
+        const { updatedNotifications, newlyAdded } = prayerMod.checkAndGenerateFastingReminders(
           activeDistrict,
           prev,
           enabled,
@@ -1743,7 +1809,7 @@ export default function App() {
       });
     };
 
-    const initialCheck = setTimeout(() => { void checkFastingReminder(); }, 2500);
+    const initialCheck = setTimeout(() => { void checkFastingReminder(); }, 3200);
     const interval = setInterval(() => { void checkFastingReminder(); }, 30 * 1000);
     const handleSettingChange = (e: Event) => {
       const custom = e as CustomEvent<{ enabled: boolean }>;
@@ -1760,10 +1826,20 @@ export default function App() {
     };
   }, [Boolean(user), currentDistrict, showAppToast]);
 
-  // Handle manual or automatic app update check & trigger notification if new update/features exist
+  // Handle manual or automatic app update check & trigger notification only once per genuine new update
   const handleUpdateCheckResult = useCallback(
-    (res: UpdateCheckResult, isBackgroundCheck: boolean = false) => {
-      if (res.status === 'update_available' || res.hasNewFeatures) {
+    async (res: UpdateCheckResult, isBackgroundCheck: boolean = false) => {
+      if (res.status === 'update_available') {
+        const {
+          buildUpdateNotificationItem,
+          hasUpdateBeenNotified,
+          markUpdateNotified
+        } = await import('./utils/appVersion');
+
+        if (isBackgroundCheck && hasUpdateBeenNotified(res)) {
+          return;
+        }
+
         const updateNotif = buildUpdateNotificationItem(res);
         setNotifications(prev => {
           if (prev.some(n => n.id === updateNotif.id)) return prev;
@@ -1778,32 +1854,21 @@ export default function App() {
           ? (res.releaseInfo.featuresBn[0] || res.releaseInfo.titleBn)
           : (res.releaseInfo.featuresEn[0] || res.releaseInfo.titleEn);
 
-        if (res.status === 'update_available') {
-          showAppToast(
-            lang === 'bn'
-              ? `নতুন অ্যাপ আপডেট পাওয়া গেছে (v${res.latestVersion})`
-              : `New App Update Available (v${res.latestVersion})`,
-            firstFeature,
-            'amber',
-            8000
-          );
-        } else {
-          showAppToast(
-            lang === 'bn'
-              ? `নতুন ফিচার যুক্ত হয়েছে (v${res.latestVersion})`
-              : `New Features Added (v${res.latestVersion})`,
-            firstFeature,
-            'emerald',
-            7000
-          );
-          markVersionFeaturesAcknowledged(res.releaseInfo);
-        }
+        showAppToast(
+          lang === 'bn'
+            ? `নতুন অ্যাপ আপডেট পাওয়া গেছে (v${res.latestVersion})`
+            : `New App Update Available (v${res.latestVersion})`,
+          firstFeature,
+          'amber',
+          8000
+        );
+
+        markUpdateNotified(res);
 
         if (
           typeof window !== 'undefined' &&
           'Notification' in window &&
-          Notification.permission === 'granted' &&
-          res.status === 'update_available'
+          Notification.permission === 'granted'
         ) {
           try {
             new Notification(updateNotif.titleBn, {
@@ -1825,18 +1890,36 @@ export default function App() {
     [lang, showAppToast]
   );
 
-  // Background check on app startup so users automatically receive a notification when new features/versions arrive
+  // One-time startup check + Real-time Cloud Firestore listener for genuine new app updates
   useEffect(() => {
     const timer = setTimeout(async () => {
       try {
+        const { checkForAppUpdates } = await import('./utils/appVersion');
         const res = await checkForAppUpdates();
-        if (res.status === 'update_available' || res.hasNewFeatures) {
-          handleUpdateCheckResult(res, true);
+        if (res.status === 'update_available') {
+          void handleUpdateCheckResult(res, true);
         }
       } catch {}
     }, 3500);
 
-    return () => clearTimeout(timer);
+    let unsubscribeVersion: (() => void) | null = null;
+    try {
+      unsubscribeVersion = onSnapshot(doc(db, 'settings', 'app_version'), async (snap) => {
+        if (!snap.exists()) return;
+        try {
+          const { buildCloudUpdateResult } = await import('./utils/appVersion');
+          const res = buildCloudUpdateResult(snap.data());
+          if (res) {
+            void handleUpdateCheckResult(res, true);
+          }
+        } catch {}
+      });
+    } catch {}
+
+    return () => {
+      clearTimeout(timer);
+      if (unsubscribeVersion) unsubscribeVersion();
+    };
   }, [handleUpdateCheckResult]);
 
   // Listen for iframe portal messages (e.g., in-app back button inside portal)
@@ -1948,6 +2031,60 @@ export default function App() {
       });
     }
   }, [serviceStatuses, activePortal, activeTab, isStaffManagerOpen, isQuickHisabOpen, isSupportTicketsOpen, isStaffAttendanceOpen]);
+
+  // Real-time RBAC Enforcement: Immediately close restricted views if role or Sub-Admin permissions change
+  useEffect(() => {
+    if (!user) return;
+
+    if (!canAddTransactions(user) && isEntryModalOpen) {
+      setIsEntryModalOpen(false);
+      setEditingTransaction(null);
+    }
+
+    if (user.role === 'staff') {
+      if (activePortal) setActivePortal(null);
+      if (activeTab === 'transactions' || activeTab === 'ledger') setActiveTab('home');
+      if (isStaffManagerOpen) setIsStaffManagerOpen(false);
+      if (isQuickHisabOpen) setIsQuickHisabOpen(false);
+      if (isSupportTicketsOpen) setIsSupportTicketsOpen(false);
+      if (isRecycleBinOpen) setIsRecycleBinOpen(false);
+      if (isUserManagementOpen) setIsUserManagementOpen(false);
+      if (isBannerManagerOpen) setIsBannerManagerOpen(false);
+      if (isChannelManagerOpen) setIsChannelManagerOpen(false);
+      if (isFooterSettingsOpen) setIsFooterSettingsOpen(false);
+      if (isServiceManagerOpen) setIsServiceManagerOpen(false);
+      if (isPopupNoticeManagerOpen) setIsPopupNoticeManagerOpen(false);
+      if (isDriveBackupOpen) setIsDriveBackupOpen(false);
+      if (isChangePinOpen) setIsChangePinOpen(false);
+    } else if (user.role === 'sub-admin') {
+      if (activeTab === 'transactions' && !hasSubAdminPermission(user, 'transactions')) setActiveTab('home');
+      if (activeTab === 'ledger' && !hasSubAdminPermission(user, 'ledger')) setActiveTab('home');
+      if (activePortal === 'ay-byay' && !hasSubAdminPermission(user, 'ayByay')) setActivePortal(null);
+      if (activePortal === 'bill-manager' && !hasSubAdminPermission(user, 'billManager')) setActivePortal(null);
+      if (isQuickHisabOpen && !hasSubAdminPermission(user, 'quickHisab')) setIsQuickHisabOpen(false);
+      if (isStaffManagerOpen && !hasSubAdminPermission(user, 'staffManager')) setIsStaffManagerOpen(false);
+      if (isSupportTicketsOpen && !hasSubAdminPermission(user, 'supportTickets')) setIsSupportTicketsOpen(false);
+      if (isStaffAttendanceOpen && !hasSubAdminPermission(user, 'staffAttendance')) setIsStaffAttendanceOpen(false);
+    }
+  }, [
+    user,
+    activePortal,
+    activeTab,
+    isStaffManagerOpen,
+    isQuickHisabOpen,
+    isSupportTicketsOpen,
+    isEntryModalOpen,
+    isStaffAttendanceOpen,
+    isUserManagementOpen,
+    isRecycleBinOpen,
+    isServiceManagerOpen,
+    isPopupNoticeManagerOpen,
+    isBannerManagerOpen,
+    isChannelManagerOpen,
+    isFooterSettingsOpen,
+    isDriveBackupOpen,
+    isChangePinOpen
+  ]);
 
   // -------------------------------------------------------------
   // AUTO-SYNC MAIN-PAGE STAFF SESSION (ZERO EXTRA PIN ANYWHERE)
@@ -2298,7 +2435,7 @@ export default function App() {
     };
   }, [Boolean(user), userKey]);
 
-  // Real-time listeners for settings documents (service control, notifications, footer, admin profile, audit logs)
+  // Real-time listeners for settings documents (critical UI settings immediately, notifications & audit logs deferred after login)
   useEffect(() => {
     let unsubServices: (() => void) | null = null;
     try {
@@ -2331,37 +2468,6 @@ export default function App() {
         }
       );
     } catch {}
-
-    let unsubNotifs: (() => void) | null = null;
-    try {
-      unsubNotifs = onSnapshot(
-        doc(db, 'settings', 'broadcast_notifications'),
-        (snapshot) => {
-          if (!snapshot.exists()) return;
-          const data = snapshot.data();
-          if (Array.isArray(data.list)) {
-            const sorted = [...(data.list as NotificationItem[])].sort((a, b) => {
-              const timeA = typeof a.id === 'string' && a.id.includes('-') ? parseInt(a.id.split('-').pop() || '0', 10) : 0;
-              const timeB = typeof b.id === 'string' && b.id.includes('-') ? parseInt(b.id.split('-').pop() || '0', 10) : 0;
-              return timeB - timeA;
-            });
-            const cleaned = cleanDemoNotifications(sorted);
-            setNotifications(prev => {
-              const merged = mergeCloudAndLocalNotifications(cleaned, prev);
-              try {
-                safeStorage.setItem('protyasha_notifications', JSON.stringify(merged));
-              } catch {}
-              return merged;
-            });
-          }
-        },
-        (err) => {
-          handleFirestoreError(err, OperationType.GET, 'settings/broadcast_notifications');
-        }
-      );
-    } catch (e) {
-      console.warn('Broadcast notification listener error:', e);
-    }
 
     let unsubFooter: (() => void) | null = null;
     try {
@@ -2423,34 +2529,75 @@ export default function App() {
       );
     } catch {}
 
-    let unsubAudit: (() => void) | null = null;
-    try {
-      unsubAudit = onSnapshot(
-        doc(db, 'settings', 'audit_logs'),
-        (snapshot) => {
-          if (!snapshot.exists()) return;
-          const data = snapshot.data();
-          if (data && Array.isArray(data.logs)) {
-            setAuditLogs(data.logs);
-            try {
-              safeStorage.setItem('protyasha_audit', JSON.stringify(data.logs));
-            } catch {}
-          }
-        },
-        (err) => {
-          handleFirestoreError(err, OperationType.GET, 'settings/audit_logs');
-        }
-      );
-    } catch {}
-
     return () => {
       if (unsubServices) unsubServices();
-      if (unsubNotifs) unsubNotifs();
       if (unsubFooter) unsubFooter();
       if (unsubAdminProfile) unsubAdminProfile();
-      if (unsubAudit) unsubAudit();
     };
   }, []);
+
+  // Notifications & Audit Logs listeners (only needed once logged in / browsing)
+  useEffect(() => {
+    if (!user) return;
+    let unsubNotifs: (() => void) | null = null;
+    let unsubAudit: (() => void) | null = null;
+    const timer = setTimeout(() => {
+      try {
+        unsubNotifs = onSnapshot(
+          doc(db, 'settings', 'broadcast_notifications'),
+          (snapshot) => {
+            if (!snapshot.exists()) return;
+            const data = snapshot.data();
+            if (Array.isArray(data.list)) {
+              const sorted = [...(data.list as NotificationItem[])].sort((a, b) => {
+                const timeA = typeof a.id === 'string' && a.id.includes('-') ? parseInt(a.id.split('-').pop() || '0', 10) : 0;
+                const timeB = typeof b.id === 'string' && b.id.includes('-') ? parseInt(b.id.split('-').pop() || '0', 10) : 0;
+                return timeB - timeA;
+              });
+              const cleaned = cleanDemoNotifications(sorted);
+              setNotifications(prev => {
+                const merged = mergeCloudAndLocalNotifications(cleaned, prev);
+                try {
+                  safeStorage.setItem('protyasha_notifications', JSON.stringify(merged));
+                } catch {}
+                return merged;
+              });
+            }
+          },
+          (err) => {
+            handleFirestoreError(err, OperationType.GET, 'settings/broadcast_notifications');
+          }
+        );
+      } catch (e) {
+        console.warn('Broadcast notification listener error:', e);
+      }
+
+      try {
+        unsubAudit = onSnapshot(
+          doc(db, 'settings', 'audit_logs'),
+          (snapshot) => {
+            if (!snapshot.exists()) return;
+            const data = snapshot.data();
+            if (data && Array.isArray(data.logs)) {
+              setAuditLogs(data.logs);
+              try {
+                safeStorage.setItem('protyasha_audit', JSON.stringify(data.logs));
+              } catch {}
+            }
+          },
+          (err) => {
+            handleFirestoreError(err, OperationType.GET, 'settings/audit_logs');
+          }
+        );
+      } catch {}
+    }, 450);
+
+    return () => {
+      clearTimeout(timer);
+      if (unsubNotifs) unsubNotifs();
+      if (unsubAudit) unsubAudit();
+    };
+  }, [Boolean(user)]);
 
   // Sync state to local storage with safety check (skip redundant initial hydration write)
   const isStorageSyncMountedRef = useRef(false);
@@ -2638,6 +2785,47 @@ export default function App() {
   };
 
   const checkServiceAccess = (serviceId: string, displayName: string): boolean => {
+    // Staff accounts logged in via Staff credentials can ONLY access Staff Attendance
+    if (user?.role === 'staff' && serviceId !== 'staffAttendance') {
+      sounds.playTap();
+      showAppToast(
+        lang === 'bn' ? 'স্টাফ অ্যাকাউন্ট সীমাবদ্ধ' : 'Staff Account Restricted',
+        lang === 'bn'
+          ? 'স্টাফ লগইন দিয়ে শুধুমাত্র "স্টাফ হাজিরা ও ছুটি" অপশন ব্যবহার করা যাবে।'
+          : 'Staff accounts can only access the Staff Attendance module.',
+        'amber',
+        5000
+      );
+      return false;
+    }
+
+    // Sub-Admin granular permissions configured by Main Admin
+    if (user?.role === 'sub-admin') {
+      const subAdminMap: Record<string, SubAdminPermissionKey | undefined> = {
+        transactions: 'transactions',
+        ledger: 'ledger',
+        billManager: 'billManager',
+        ayByay: 'ayByay',
+        quickHisab: 'quickHisab',
+        staffManager: 'staffManager',
+        staffAttendance: 'staffAttendance',
+        supportTickets: 'supportTickets'
+      };
+      const permKey = subAdminMap[serviceId];
+      if (permKey && !hasSubAdminPermission(user, permKey)) {
+        sounds.playTap();
+        showAppToast(
+          lang === 'bn' ? 'অনুমতি সীমাবদ্ধ' : 'Access Restricted',
+          lang === 'bn'
+            ? `মেইন এডমিন আপনার সাব-এডমিন অ্যাকাউন্টে "${displayName}" সেবার অনুমতি চালু করেননি।`
+            : `Main Admin has not enabled "${displayName}" permission for this Sub-Admin account.`,
+          'amber',
+          5000
+        );
+        return false;
+      }
+    }
+
     const status = serviceStatuses[serviceId];
     if (status && (status.isActive === false || String(status.isActive) === 'false')) {
       setActiveServiceNotice({
@@ -2805,7 +2993,18 @@ export default function App() {
       }
     } else if (!canAddTransactions(user)) {
       sounds.playTap();
-      openLoginView();
+      if (isLoggedInSession(user)) {
+        showAppToast(
+          lang === 'bn' ? 'রিড-অনলি মোড / অনুমতি নেই' : 'Read-Only / Permission Denied',
+          lang === 'bn'
+            ? 'আপনার অ্যাকাউন্ট দিয়ে নতুন ডেটা যোগ বা পরিবর্তন করা যাবে না।'
+            : 'Your account does not have permission to add or modify records.',
+          'amber',
+          5000
+        );
+      } else {
+        openLoginView();
+      }
       return;
     }
 
@@ -3008,6 +3207,8 @@ export default function App() {
         ? 'এডমিন লগইন'
         : loggedInUser.role === 'sub-admin'
         ? 'সাব-এডমিন লগইন'
+        : loggedInUser.role === 'staff'
+        ? 'স্টাফ লগইন (হাজিরা)'
         : loggedInUser.role === 'user'
         ? 'ইউজার লগইন'
         : 'ভিজিটর মোড',
@@ -3065,17 +3266,11 @@ export default function App() {
   };
 
   const handleAyByayAdminLogin = () => {
-    // If not already an admin, upgrade the session role to admin locally for this portal session
-    if (user?.role !== 'admin' && user?.role !== 'sub-admin') {
-      const adminSession: UserSession = user 
-        ? { ...user, role: 'admin' }
-        : { role: 'admin', name: 'প্রত্যাশা অ্যাডমিন', phone: '01777877207' };
-      setUser(adminSession);
-    }
+    setActivePortal(null);
+    openLoginView();
   };
 
   const handleAyByayAdminLogout = () => {
-    // Return to original session or logout if it was a temp admin session
     handleLogout();
   };
 
@@ -3111,7 +3306,7 @@ export default function App() {
         ...b,
         id: String(b.id),
         isActive: b.isActive !== false,
-        priority: b.priority ?? idx + 1,
+        priority: idx + 1,
         updatedAt: nowIso
       }));
     const nextIds = new Set(cleanBanners.map(b => b.id));
@@ -3306,6 +3501,7 @@ export default function App() {
     const uName = (user.name || '').trim().toLowerCase();
     const isMatchedStaffUser =
       user.role === 'sub-admin' ||
+      user.role === 'staff' ||
       staffAccounts.some((s) => {
         if (s.isActive === false) return false;
         if (user.id && s.id === user.id) return true;
@@ -3560,29 +3756,37 @@ export default function App() {
         
         {/* If Login View is explicitly requested */}
         {isLoginOpen ? (
-          <LoginView
-            lang={lang}
-            footerConfig={footerConfig}
-            banners={banners}
-            adminAvatar={adminAvatar}
-            sessionNotice={sessionNotice}
-            isVisitorModeEnabled={isVisitorModeEnabled}
-            visitorDisabledTitle={serviceStatuses.visitorMode?.title}
-            visitorDisabledMessage={serviceStatuses.visitorMode?.customMessage}
-            onClearSessionNotice={() => setSessionNotice('')}
-            onLanguageChange={setLang}
-            onLoginSuccess={handleLoginSuccess}
-            onSubViewChange={(isSubView) => {
-              isLoginSubViewActiveRef.current = isSubView;
-            }}
-            onClose={() => {
-              // Only allow closing login modal if user already has an active session
-              if (isLoggedInSession(user)) {
-                sessionStorage.setItem('protyasha_session_active', 'true');
-                closeOverlayViaBack(() => setIsLoginOpen(false));
-              }
-            }}
-          />
+          <React.Suspense
+            fallback={
+              <div className="min-h-screen flex items-center justify-center bg-white dark:bg-slate-900">
+                <div className="w-9 h-9 rounded-full border-4 border-rose-500/25 border-t-[#E52E2E] animate-spin" />
+              </div>
+            }
+          >
+            <LoginView
+              lang={lang}
+              footerConfig={footerConfig}
+              banners={banners}
+              adminAvatar={adminAvatar}
+              sessionNotice={sessionNotice}
+              isVisitorModeEnabled={isVisitorModeEnabled}
+              visitorDisabledTitle={serviceStatuses.visitorMode?.title}
+              visitorDisabledMessage={serviceStatuses.visitorMode?.customMessage}
+              onClearSessionNotice={() => setSessionNotice('')}
+              onLanguageChange={setLang}
+              onLoginSuccess={handleLoginSuccess}
+              onSubViewChange={(isSubView) => {
+                isLoginSubViewActiveRef.current = isSubView;
+              }}
+              onClose={() => {
+                // Only allow closing login modal if user already has an active session
+                if (isLoggedInSession(user)) {
+                  sessionStorage.setItem('protyasha_session_active', 'true');
+                  closeOverlayViaBack(() => setIsLoginOpen(false));
+                }
+              }}
+            />
+          </React.Suspense>
         ) : selectedTransaction ? (
           /* CARD TAP OPENS NEW PAGE (NOT POPUP) */
           <React.Suspense
@@ -3648,6 +3852,7 @@ export default function App() {
                     2. আয়-ব্যয় হিসাব (opens Income-Expense Smart Management portal) */}
                 <PrimaryFeatureCards
                   lang={lang}
+                  user={user}
                   serviceStatuses={serviceStatuses}
                   onOpenBillManager={handleLaunchBillManager}
                   onOpenAyByay={handleLaunchAyByay}
@@ -3696,8 +3901,10 @@ export default function App() {
                         handleLaunchAyByay();
                         return;
                       }
+                      if (!checkServiceAccess('transactions', 'সকল লেনদেন ও স্টেটমেন্ট')) return;
                       setActivePortal(portal);
                     } else if (link.startsWith('#category:') || link.startsWith('category:')) {
+                      if (!checkServiceAccess('transactions', 'সকল লেনদেন ও স্টেটমেন্ট')) return;
                       const cat = link.replace(/^#?category:/, '');
                       setSelectedMethodFilter(cat === 'all' ? '' : cat);
                       setActiveTab('transactions');
@@ -3706,7 +3913,6 @@ export default function App() {
                       if (user?.role === 'admin') {
                         setIsFooterSettingsOpen(true);
                       } else {
-                        // Open footer settings or show notifications
                         setIsNotificationsOpen(true);
                       }
                     } else if (link.startsWith('tel:')) {
@@ -3714,6 +3920,7 @@ export default function App() {
                     } else if (link.startsWith('http')) {
                       window.open(link, '_blank');
                     } else {
+                      if (!checkServiceAccess('transactions', 'সকল লেনদেন ও স্টেটমেন্ট')) return;
                       setActiveTab('transactions');
                     }
                     pushHistoryStep();
@@ -3729,14 +3936,49 @@ export default function App() {
                   onSaveBanners={handleSaveBanners}
                 />
 
+                {user?.role === 'staff' && (
+                  <div className="px-4 mt-4">
+                    <div className="rounded-2xl border border-teal-200 dark:border-teal-800/70 bg-gradient-to-r from-teal-50 via-emerald-50 to-white dark:from-teal-950/60 dark:via-emerald-950/30 dark:to-slate-900 p-3.5 shadow-sm flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-black text-teal-800 dark:text-teal-200">
+                          {lang === 'bn' ? 'স্টাফ হাজিরা মোড সক্রিয়' : 'Staff Attendance Mode Active'}
+                        </p>
+                        <p className="text-[11px] text-teal-700/90 dark:text-teal-300/90 leading-snug mt-0.5">
+                          {lang === 'bn'
+                            ? 'আপনি শুধুমাত্র স্টাফ হাজিরা ও ছুটি অপশনে প্রবেশ করে নিজের হাজিরা ও পিন পরিচালনা করতে পারবেন।'
+                            : 'Your staff login grants access strictly to Staff Attendance & your own PIN settings.'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!checkServiceAccess('staffAttendance', 'স্টাফ হাজিরা ও ছুটি')) return;
+                          sounds.playTap();
+                          setIsStaffAttendanceOpen(true);
+                          pushHistoryStep();
+                        }}
+                        className="shrink-0 px-3 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-extrabold shadow-sm transition-colors cursor-pointer"
+                      >
+                        {lang === 'bn' ? 'হাজিরা দিন' : 'Attendance'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Operations Hub Strip: সাপোর্ট টিকেট ও স্টাফ হাজিরা (মেইন পেইজ বিজ্ঞাপনের নিচে) */}
                 <OperationsHubCards
                   lang={lang}
+                  user={user}
                   serviceStatuses={serviceStatuses}
                   openTicketsCount={
                     supportTickets.filter((t) => {
                       if (t.status === 'resolved') return false;
-                      if (isStaffOrAdminUser(user, staffAccounts)) return true;
+                      if (
+                        user?.role === 'admin' ||
+                        (user?.role === 'sub-admin' && hasSubAdminPermission(user, 'supportTickets'))
+                      ) {
+                        return true;
+                      }
                       return isSupportTicketOwner(t, user);
                     }).length
                   }
@@ -3749,7 +3991,7 @@ export default function App() {
                         (r.status === 'present' || r.status === 'late' || r.status === 'half_day')
                     ).length;
                   })()}
-                  totalStaffCount={staffAccounts.filter((s) => s.isActive !== false).length}
+                  totalStaffCount={staffAccounts.filter(isActualStaffAccount).length}
                   onOpenSupportTickets={() => {
                     if (!checkServiceAccess('supportTickets', 'সাপোর্ট টিকেট ও কমপ্লেইন')) return;
                     sounds.playTap();
@@ -3796,6 +4038,16 @@ export default function App() {
                       setInitialEntryMethod(selectedMethod || 'নগদ');
                       setIsEntryModalOpen(true);
                       pushHistoryStep();
+                    } else if (isLoggedInSession(user)) {
+                      sounds.playTap();
+                      showAppToast(
+                        lang === 'bn' ? 'রিড-অনলি মোড / অনুমতি নেই' : 'Read-Only / Permission Denied',
+                        lang === 'bn'
+                          ? 'আপনার অ্যাকাউন্ট দিয়ে নতুন জমা বা লেনদেন যোগ করা যাবে না।'
+                          : 'Your account cannot add or modify transactions.',
+                        'amber',
+                        5000
+                      );
                     } else {
                       openLoginView();
                     }
@@ -3808,6 +4060,16 @@ export default function App() {
                       setInitialEntryMethod(selectedMethod || 'নগদ');
                       setIsEntryModalOpen(true);
                       pushHistoryStep();
+                    } else if (isLoggedInSession(user)) {
+                      sounds.playTap();
+                      showAppToast(
+                        lang === 'bn' ? 'রিড-অনলি মোড / অনুমতি নেই' : 'Read-Only / Permission Denied',
+                        lang === 'bn'
+                          ? 'আপনার অ্যাকাউন্ট দিয়ে নতুন খরচ বা লেনদেন যোগ করা যাবে না।'
+                          : 'Your account cannot add or modify transactions.',
+                        'amber',
+                        5000
+                      );
                     } else {
                       openLoginView();
                     }
@@ -4061,13 +4323,21 @@ export default function App() {
                 ).catch(() => {});
               }
               if (user && (user.id === updatedUser.id || user.phone === updatedUser.phone || (updatedUser.role === 'admin' && user.role === 'admin'))) {
-                setUser(prev => prev ? {
-                  ...prev,
-                  name: updatedUser.name,
-                  phone: updatedUser.phone,
-                  avatarUrl: updatedUser.avatarUrl || prev.avatarUrl,
-                  role: updatedUser.role
-                } : null);
+                setUser(prev => {
+                  if (!prev) return null;
+                  const nextSession: UserSession = {
+                    ...prev,
+                    name: updatedUser.name,
+                    phone: updatedUser.phone,
+                    avatarUrl: updatedUser.avatarUrl || prev.avatarUrl,
+                    role: updatedUser.role,
+                    permissions: updatedUser.role === 'sub-admin' ? updatedUser.permissions : undefined
+                  };
+                  try {
+                    safeStorage.setItem('protyasha_user', JSON.stringify(nextSession));
+                  } catch {}
+                  return nextSession;
+                });
               }
             }}
           />
@@ -4178,6 +4448,7 @@ export default function App() {
           <StaffManagerModal
             isOpen={isStaffManagerOpen}
             staffAccounts={staffAccounts}
+            quickHisabOwners={quickHisabOwners}
             lang={lang}
             user={user}
             onClose={() => closeOverlayViaBack(() => setIsStaffManagerOpen(false))}
@@ -4486,20 +4757,22 @@ export default function App() {
               handleSendNotification(notif);
             }}
             onLocationChanged={() => {
-              const preferred = getUserPreferredDistrict();
-              if (preferred) {
-                setCurrentDistrict(preferred);
-                fetchLiveWeather(true).then(w => {
-                  if (w) setWeatherData(w);
-                });
-              } else {
-                detectPreciseLocation().then(({ district }) => {
-                  if (district) setCurrentDistrict(district);
+              import('./utils/weatherService').then(({ getUserPreferredDistrict, fetchLiveWeather, detectPreciseLocation }) => {
+                const preferred = getUserPreferredDistrict();
+                if (preferred) {
+                  setCurrentDistrict(preferred);
                   fetchLiveWeather(true).then(w => {
                     if (w) setWeatherData(w);
                   });
-                });
-              }
+                } else {
+                  detectPreciseLocation().then(({ district }) => {
+                    if (district) setCurrentDistrict(district);
+                    fetchLiveWeather(true).then(w => {
+                      if (w) setWeatherData(w);
+                    });
+                  });
+                }
+              }).catch(() => {});
             }}
           />
         )}
@@ -4522,20 +4795,22 @@ export default function App() {
             }}
             onPushLocalNotification={handlePushLocalNotification}
             onLocationChanged={() => {
-              const preferred = getUserPreferredDistrict();
-              if (preferred) {
-                setCurrentDistrict(preferred);
-                fetchLiveWeather(true).then(w => {
-                  if (w) setWeatherData(w);
-                });
-              } else {
-                detectPreciseLocation().then(({ district }) => {
-                  if (district) setCurrentDistrict(district);
+              import('./utils/weatherService').then(({ getUserPreferredDistrict, fetchLiveWeather, detectPreciseLocation }) => {
+                const preferred = getUserPreferredDistrict();
+                if (preferred) {
+                  setCurrentDistrict(preferred);
                   fetchLiveWeather(true).then(w => {
                     if (w) setWeatherData(w);
                   });
-                });
-              }
+                } else {
+                  detectPreciseLocation().then(({ district }) => {
+                    if (district) setCurrentDistrict(district);
+                    fetchLiveWeather(true).then(w => {
+                      if (w) setWeatherData(w);
+                    });
+                  });
+                }
+              }).catch(() => {});
             }}
             onSubViewActiveChange={(isSubView) => {
               isPrayerSubViewActiveRef.current = isSubView;

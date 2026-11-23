@@ -19,16 +19,20 @@ import {
   Download,
   CheckCircle2
 } from 'lucide-react';
-import { Language, StaffAccount, StaffTransaction, UserSession } from '../types';
+import { Language, QuickHisabOwner, StaffAccount, StaffTransaction, UserSession } from '../types';
+import { initialQuickHisabOwners } from '../data/initialData';
 import { formatCurrency, toBengaliNumber, toEnglishNumber } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import { compressImage } from '../utils/imageCompressor';
 import { savePersistentImage } from '../utils/imageStorage';
 import { useSubViewBack } from '../utils/useSubViewBack';
+import { doesOwnerMatchAccount, isActualStaffAccount, isNonStaffRoleAccount, isOwnerRoleAccount, normalizePersonName } from '../utils/ownerDueSync';
+import { hasSubAdminPermission, normalizePhoneNumber } from '../utils/permissions';
 
 interface StaffManagerModalProps {
   isOpen: boolean;
   staffAccounts: StaffAccount[];
+  quickHisabOwners?: QuickHisabOwner[];
   lang: Language;
   user: UserSession | null;
   onClose: () => void;
@@ -42,6 +46,7 @@ interface StaffManagerModalProps {
 export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
   isOpen,
   staffAccounts,
+  quickHisabOwners,
   lang,
   user,
   onClose,
@@ -94,6 +99,30 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
   const [staffAvatar, setStaffAvatar] = useState('');
   const [staffNotes, setStaffNotes] = useState('');
   const [initialDue, setInitialDue] = useState('');
+  const [dueViewMode, setDueViewMode] = useState<'due' | 'settled'>('due');
+  const [accountSourceMode, setAccountSourceMode] = useState<'staff' | 'owner' | 'custom'>('staff');
+  const [selectedStaffOptionId, setSelectedStaffOptionId] = useState('');
+  const [selectedOwnerOptionId, setSelectedOwnerOptionId] = useState('');
+
+  // Full active staff roster (for 1-click dropdown selection even when their company due is 0)
+  const staffRoster = React.useMemo(() => {
+    return (accounts || []).filter(isActualStaffAccount);
+  }, [accounts]);
+
+  // Deduplicated unique owners list from Quick Hisab for 1-click form autofill
+  const uniqueOwners = React.useMemo(() => {
+    const source = quickHisabOwners && quickHisabOwners.length > 0 ? quickHisabOwners : initialQuickHisabOwners;
+    const seen = new Set<string>();
+    return (source || []).filter((o) => {
+      if (!o || !o.name) return false;
+      const phoneKey = normalizePhoneNumber(toEnglishNumber(o.phone || ''));
+      const nameKey = normalizePersonName(o.name, true);
+      const key = phoneKey.length >= 6 ? `p:${phoneKey}` : `n:${nameKey}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [quickHisabOwners]);
 
   // Printable Report Mode State
   const [isPrintingReport, setIsPrintingReport] = useState(false);
@@ -188,15 +217,44 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
     };
   }, [isOpen, isAddStaffOpen, entryStaff, editingTx, selectedStaff, isPrintingReport, deletingStaff, deletingTx, onClose]);
 
+  // Accounts with active company due vs settled accounts (0-due idle staff are excluded from main list)
+  const accountsWithDue = React.useMemo(
+    () => accounts.filter((a) => (a.remainingDue || 0) > 0),
+    [accounts]
+  );
+
+  const settledAccounts = React.useMemo(
+    () =>
+      accounts.filter(
+        (a) =>
+          (a.remainingDue || 0) <= 0 &&
+          ((a.totalDue || 0) > 0 || (a.totalCollected || 0) > 0 || (a.transactions && a.transactions.length > 0))
+      ),
+    [accounts]
+  );
+
+  const reportAccounts = React.useMemo(
+    () =>
+      accounts.filter(
+        (a) =>
+          (a.remainingDue || 0) > 0 ||
+          (a.totalDue || 0) > 0 ||
+          (a.totalCollected || 0) > 0 ||
+          (a.transactions && a.transactions.length > 0)
+      ),
+    [accounts]
+  );
+
   if (!isOpen) return null;
 
-  // Aggregate totals
+  // Aggregate totals across company due accounts
   const totalDues = accounts.reduce((sum, a) => sum + (a.totalDue || 0), 0);
   const totalCollected = accounts.reduce((sum, a) => sum + (a.totalCollected || 0), 0);
   const netRemainingDue = accounts.reduce((sum, a) => sum + (a.remainingDue || 0), 0);
 
-  // Filter staff
-  const filteredAccounts = accounts.filter(a => {
+  // Filter visible due accounts by search query
+  const activeTabAccounts = dueViewMode === 'settled' ? settledAccounts : accountsWithDue;
+  const filteredAccounts = activeTabAccounts.filter(a => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return true;
     return (
@@ -221,27 +279,27 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
   };
 
   const isAdmin = user?.role === 'admin';
+  const canManageDues = isAdmin || (user?.role === 'sub-admin' && hasSubAdminPermission(user, 'staffManager'));
 
-  // Create or Update Staff Account
+  // Create or Update Company Due Account (reusing existing staff/owner record to avoid duplicates)
   const handleSaveStaffForm = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isAdmin) {
-      showToast(isBn ? 'দুঃখিত, শুধুমাত্র অ্যাডমিন স্টাফ পরিবর্তন করতে পারবেন' : 'Sorry, only admin can modify staff');
+    if (!canManageDues) {
+      showToast(isBn ? 'দুঃখিত, শুধুমাত্র অ্যাডমিন বা অনুমোদিত সাব-অ্যাডমিন হিসাব পরিবর্তন করতে পারবেন' : 'Sorry, only admin or permitted sub-admin can modify accounts');
       return;
     }
 
     if (!staffName.trim()) {
-      showToast(isBn ? 'অনুগ্রহ করে স্টাফের নাম লিখুন' : 'Please enter staff name');
+      showToast(isBn ? 'অনুগ্রহ করে নাম লিখুন' : 'Please enter name');
       return;
     }
 
-    sounds.playSuccess();
     const initDueVal = parseFloat(toEnglishNumber(initialDue).replace(/,/g, '')) || 0;
 
     let updatedList: StaffAccount[] = [];
 
     if (editingStaff) {
-      // Edit existing staff (preserve userCode, baseSalary, isActive)
+      sounds.playSuccess();
       updatedList = accounts.map(a => {
         if (a.id === editingStaff.id) {
           return {
@@ -260,64 +318,135 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
         return a;
       });
       if (onLogAction) {
-        onLogAction('Updated Staff', 'স্টাফ তথ্য পরিবর্তন', `${staffName.trim()} (${staffPhone.trim()})`);
+        onLogAction('Updated Account', 'হিসাব তথ্য পরিবর্তন', `${staffName.trim()} (${staffPhone.trim()})`);
       }
-      showToast(`"${staffName.trim()}" স্টাফের তথ্য আপডেট করা হয়েছে!`);
+      showToast(`"${staffName.trim()}" এর তথ্য আপডেট করা হয়েছে!`);
     } else {
-      // Create new staff
-      const newStaffId = `staff-${Date.now()}`;
-      const initialTx: StaffTransaction[] = initDueVal > 0 ? [
-        {
+      // Check if an existing staff or owner account was picked from dropdown
+      const existingTargetAcc =
+        (accountSourceMode === 'staff' && selectedStaffOptionId
+          ? accounts.find((a) => String(a.id) === String(selectedStaffOptionId))
+          : undefined) ||
+        (accountSourceMode === 'owner' && selectedOwnerOptionId
+          ? (() => {
+              const ownerObj = uniqueOwners.find((o) => String(o.id) === String(selectedOwnerOptionId));
+              return ownerObj
+                ? accounts.find((a) => isOwnerRoleAccount(a) && doesOwnerMatchAccount(ownerObj, a))
+                : undefined;
+            })()
+          : undefined);
+
+      if (initDueVal <= 0) {
+        showToast(
+          isBn
+            ? 'কোম্পানি পাওনা তালিকায় যুক্ত করতে পাওনার পরিমাণ (৳) লিখুন'
+            : 'Please enter a valid company due amount'
+        );
+        return;
+      }
+
+      sounds.playSuccess();
+      const nowIso = new Date().toISOString();
+      const todayStr = nowIso.split('T')[0];
+      const timeStr = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+      if (existingTargetAcc) {
+        const dueTx: StaffTransaction = {
           id: `stx-${Date.now()}`,
-          staffId: newStaffId,
+          staffId: existingTargetAcc.id,
           type: 'due',
           amount: initDueVal,
-          date: new Date().toISOString().split('T')[0],
-          time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
-          userName: '',
-          customerName: staffName.trim() || '',
-          customerAddress: staffAddress.trim() || '',
-          reference: staffReference.trim() || '',
-          note: 'প্রারম্ভিক কোম্পানি পাওনা',
+          date: todayStr,
+          time: timeStr,
+          userName: existingTargetAcc.userCode || '',
+          customerName: staffName.trim() || existingTargetAcc.name,
+          customerAddress: staffAddress.trim() || existingTargetAcc.address || '',
+          reference: staffReference.trim() || existingTargetAcc.reference || '',
+          note: staffNotes.trim() || 'কোম্পানি পাওনা যোগ',
           recordedBy: user?.name || 'অ্যাডমিন',
           created: Date.now()
+        };
+
+        updatedList = accounts.map((a) => {
+          if (a.id !== existingTargetAcc.id) return a;
+          const nextTxs = [...(a.transactions || []), dueTx];
+          const newTotalDue = nextTxs.filter((t) => t.type === 'due').reduce((s, t) => s + (t.amount || 0), 0);
+          const newTotalCollected = nextTxs.filter((t) => t.type === 'collection').reduce((s, t) => s + (t.amount || 0), 0);
+          return {
+            ...a,
+            address: staffAddress.trim() || a.address || '',
+            reference: staffReference.trim() || a.reference || '',
+            avatarUrl: staffAvatar || a.avatarUrl || '',
+            notes: staffNotes.trim() || a.notes || '',
+            totalDue: newTotalDue,
+            totalCollected: newTotalCollected,
+            remainingDue: newTotalDue - newTotalCollected,
+            transactions: nextTxs
+          };
+        });
+
+        if (onLogAction) {
+          onLogAction('Added Company Due', 'কোম্পানি পাওনা যোগ', `${existingTargetAcc.name}: ৳${initDueVal}`);
         }
-      ] : [];
+        showToast(`"${existingTargetAcc.name}" এর খাতায় ${formatCurrency(initDueVal, lang)} কোম্পানি পাওনা যোগ হয়েছে!`);
+      } else {
+        const newAccountId = `staff-${Date.now()}`;
+        const initialTx: StaffTransaction[] = [
+          {
+            id: `stx-${Date.now()}`,
+            staffId: newAccountId,
+            type: 'due',
+            amount: initDueVal,
+            date: todayStr,
+            time: timeStr,
+            userName: '',
+            customerName: staffName.trim() || '',
+            customerAddress: staffAddress.trim() || '',
+            reference: staffReference.trim() || '',
+            note: staffNotes.trim() || 'কোম্পানি পাওনা বিল',
+            recordedBy: user?.name || 'অ্যাডমিন',
+            created: Date.now()
+          }
+        ];
 
-      const newAccount: StaffAccount = {
-        id: newStaffId,
-        name: staffName.trim(),
-        phone: staffPhone.trim() || '01700000000',
-        role: staffRole.trim() || 'কালেকশন টেকনিশিয়ান',
-        userCode: '',
-        address: staffAddress.trim() || '',
-        reference: staffReference.trim() || '',
-        avatarUrl: staffAvatar || '',
-        totalDue: initDueVal,
-        totalCollected: 0,
-        remainingDue: initDueVal,
-        notes: staffNotes.trim() || '',
-        isActive: true,
-        baseSalary: 0,
-        recordedBy: user?.id || user?.name || 'admin',
-        createdAt: new Date().toISOString(),
-        transactions: initialTx
-      };
+        const newAccount: StaffAccount = {
+          id: newAccountId,
+          name: staffName.trim(),
+          phone: staffPhone.trim() || '01700000000',
+          role: staffRole.trim() || 'সাধারণ সদস্য / গ্রাহক',
+          userCode: '',
+          address: staffAddress.trim() || '',
+          reference: staffReference.trim() || '',
+          avatarUrl: staffAvatar || '',
+          totalDue: initDueVal,
+          totalCollected: 0,
+          remainingDue: initDueVal,
+          notes: staffNotes.trim() || '',
+          isActive: true,
+          baseSalary: 0,
+          recordedBy: user?.id || user?.name || 'admin',
+          createdAt: nowIso,
+          transactions: initialTx
+        };
 
-      updatedList = [newAccount, ...accounts];
-      if (onLogAction) {
-        onLogAction('Added Staff', 'নতুন স্টাফ যোগ', `${staffName.trim()} (${staffPhone.trim()})`);
+        updatedList = [newAccount, ...accounts];
+        if (onLogAction) {
+          onLogAction('Added Company Due Account', 'নতুন কোম্পানি পাওনা হিসাব যোগ', `${staffName.trim()} (${staffRole.trim()}): ৳${initDueVal}`);
+        }
+        showToast(`"${staffName.trim()}" এর কোম্পানি পাওনা হিসাব তৈরি হয়েছে!`);
       }
-      showToast(`"${staffName.trim()}" স্টাফ অ্যাকাউন্ট তৈরি করা হয়েছে!`);
     }
 
     const sanitizedList: StaffAccount[] = JSON.parse(JSON.stringify(updatedList));
     setAccounts(sanitizedList);
     onSaveStaffAccounts(sanitizedList);
+    setDueViewMode('due');
 
     // Reset form
     setIsAddStaffOpen(false);
     setEditingStaff(null);
+    setSelectedStaffOptionId('');
+    setSelectedOwnerOptionId('');
     setStaffName('');
     setStaffPhone('');
     setStaffRole('লাইন টেকনিশিয়ান');
@@ -328,10 +457,54 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
     setInitialDue('');
   };
 
-  // Open Edit Staff Modal
+  // Auto-fill form from selected active Staff member
+  const handleSelectStaffForAccount = (staffId: string) => {
+    setSelectedStaffOptionId(staffId);
+    if (!staffId) return;
+    const picked = staffRoster.find((s) => String(s.id) === String(staffId));
+    if (!picked) return;
+    sounds.playTap();
+    setStaffRole(picked.role || 'লাইন টেকনিশিয়ান');
+    setStaffName(picked.name.trim());
+    setStaffPhone((picked.phone || '').trim());
+    setStaffAddress((picked.address || '').trim());
+    setStaffReference((picked.reference || '').trim());
+    setStaffAvatar(picked.avatarUrl || '');
+    if (picked.notes) {
+      setStaffNotes(picked.notes.trim());
+    }
+  };
+
+  // Auto-fill form from selected Quick Hisab owner
+  const handleSelectOwnerForAccount = (ownerId: string) => {
+    setSelectedOwnerOptionId(ownerId);
+    if (!ownerId) return;
+    const owner = uniqueOwners.find((o) => String(o.id) === String(ownerId));
+    if (!owner) return;
+    sounds.playTap();
+    setStaffRole('মালিক / অংশীদার');
+    setStaffName(owner.name.trim());
+    setStaffPhone((owner.phone || '').trim());
+    setStaffAddress((owner.address || '').trim());
+    if (owner.avatarUrl) {
+      setStaffAvatar(owner.avatarUrl);
+    }
+    if (owner.notes && !staffNotes.trim()) {
+      setStaffNotes(owner.notes.trim());
+    }
+  };
+
+  // Open Edit Account Modal
   const handleOpenEditStaff = (staff: StaffAccount) => {
+    if (!canManageDues) {
+      showToast(isBn ? 'হিসাব পরিবর্তন করার অনুমতি নেই' : 'Permission denied');
+      return;
+    }
     sounds.playTap();
     setEditingStaff(staff);
+    const matchedOwner = uniqueOwners.find((o) => doesOwnerMatchAccount(o, staff));
+    setSelectedOwnerOptionId(matchedOwner ? String(matchedOwner.id) : '');
+    setSelectedStaffOptionId(isActualStaffAccount(staff) ? String(staff.id) : '');
     setStaffName(staff.name);
     setStaffPhone(staff.phone);
     setStaffRole(staff.role);
@@ -346,6 +519,10 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
 
   // Request Delete Staff Account (Open Custom Dialog)
   const handleRequestDeleteStaff = (staff: StaffAccount) => {
+    if (!canManageDues) {
+      showToast(isBn ? 'ডিলিট করার অনুমতি নেই' : 'Permission denied');
+      return;
+    }
     sounds.playTap();
     setDeletingStaff(staff);
     window.history.pushState({ staffModal: 'deleteStaff' }, '');
@@ -353,7 +530,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
 
   // Confirm Delete Staff Account
   const handleConfirmDeleteStaff = () => {
-    if (!deletingStaff) return;
+    if (!deletingStaff || !canManageDues) return;
     sounds.playSuccess();
     const staffId = deletingStaff.id;
     const staffName = deletingStaff.name;
@@ -385,8 +562,8 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
 
   // Open Add Due or Record Collection Entry Modal
   const handleOpenEntry = (staff: StaffAccount, type: 'due' | 'collection') => {
-    if (!isAdmin) {
-      showToast(isBn ? 'শুধুমাত্র অ্যাডমিন হিসাব পরিবর্তন করতে পারবেন' : 'Only admin can record transactions');
+    if (!canManageDues) {
+      showToast(isBn ? 'হিসাব পরিবর্তন করার অনুমতি নেই' : 'Permission denied');
       return;
     }
     sounds.playTap();
@@ -395,7 +572,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
     setEntryType(type);
     setEntryAmount('');
     setEntryUserName(staff.userCode || '');
-    setEntryCustomerName('');
+    setEntryCustomerName(isOwnerRoleAccount(staff) ? staff.name : '');
     setEntryAddress(staff.address || '');
     setEntryReference(staff.reference || '');
     setEntryNote('');
@@ -403,10 +580,10 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
     window.history.pushState({ staffModal: 'entry' }, '');
   };
 
-  // Open Edit Staff Transaction Modal (Admin Only)
+  // Open Edit Staff Transaction Modal (Admin & permitted Sub-Admin)
   const handleOpenEditTx = (staff: StaffAccount, tx: StaffTransaction) => {
-    if (!isAdmin) {
-      showToast(isBn ? 'শুধুমাত্র অ্যাডমিন লেনদেন পরিবর্তন করতে পারবেন' : 'Only admin can edit transactions');
+    if (!canManageDues) {
+      showToast(isBn ? 'লেনদেন পরিবর্তন করার অনুমতি নেই' : 'Permission denied');
       return;
     }
     sounds.playTap();
@@ -426,8 +603,8 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
   // Submit Dues / Collection Entry or Save Edited Transaction
   const handleSaveEntry = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isAdmin) {
-      showToast(isBn ? 'শুধুমাত্র অ্যাডমিন হিসাব পরিবর্তন করতে পারবেন' : 'Only admin can record transactions');
+    if (!canManageDues) {
+      showToast(isBn ? 'হিসাব পরিবর্তন করার অনুমতি নেই' : 'Permission denied');
       return;
     }
     if (!entryStaff) return;
@@ -555,6 +732,10 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
 
   // Request Delete Individual Staff Transaction (Custom Dialog)
   const handleRequestDeleteTx = (staffId: string, tx: StaffTransaction) => {
+    if (!canManageDues) {
+      showToast(isBn ? 'ডিলিট করার অনুমতি নেই' : 'Permission denied');
+      return;
+    }
     sounds.playTap();
     setDeletingTx({
       staffId,
@@ -567,7 +748,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
 
   // Confirm Delete Individual Staff Transaction
   const handleConfirmDeleteTx = () => {
-    if (!deletingTx) return;
+    if (!deletingTx || !canManageDues) return;
     sounds.playSuccess();
     const { staffId, txId } = deletingTx;
 
@@ -733,14 +914,14 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
     ` : `
       <div style="text-align: center; margin-bottom: 20px;">
         <h2 style="margin: 0; font-size: 20px;">প্রত্যাশা ক্যাবল নেটওয়ার্ক</h2>
-        <p style="margin: 4px 0; font-size: 13px;">স্টাফ কালেকশন ও কোম্পানি পাওনা সার্বিক অডিট রিপোর্ট</p>
+        <p style="margin: 4px 0; font-size: 13px;">কালেকশন ও কোম্পানি পাওনা সার্বিক অডিট রিপোর্ট</p>
       </div>
 
       <table>
         <thead>
           <tr>
             <th>ক্রমিক</th>
-            <th>স্টাফের নাম ও পদবী</th>
+            <th>নাম ও পরিচয় / পদবী</th>
             <th>ফোন নম্বর</th>
             <th>মোট পাওনা</th>
             <th>কালেকশন জমা</th>
@@ -748,7 +929,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
           </tr>
         </thead>
         <tbody>
-          ${accounts.map((st, idx) => `
+          ${reportAccounts.map((st, idx) => `
             <tr>
               <td>${toBengaliNumber(idx + 1)}</td>
               <td class="text-left font-bold">${st.name} (${st.role})</td>
@@ -798,7 +979,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                 প্রত্যাশা ক্যাবল নেটওয়ার্ক
               </h1>
               <p className="text-xs font-bold text-slate-600 mt-1">
-                {printingStaff ? `স্টাফ ব্যক্তিগত হিসাব খাতা অডিট রিপোর্ট - ${printingStaff.name}` : 'স্টাফ কালেকশন ও কোম্পানি পাওনা খাতা অডিট রিপোর্ট'}
+                {printingStaff ? `ব্যক্তিগত হিসাব খাতা অডিট রিপোর্ট - ${printingStaff.name}` : 'কালেকশন ও কোম্পানি পাওনা খাতা অডিট রিপোর্ট'}
               </p>
               <p className="text-[11px] text-slate-500">
                 হেড অফিস: ইসলামপুর ও জামালপুর অঞ্চল | হেল্পলাইন: ০১৭৭৭-৮৭৭২০৭
@@ -929,16 +1110,16 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                 </div>
               </div>
 
-              {/* Printable Staff Table */}
+              {/* Printable Company Due Table */}
               <div>
                 <h3 className="text-xs font-bold uppercase text-slate-700 mb-2">
-                  স্টাফ হিসাব বিবরণী টেবিল (মোট {accounts.length} জন)
+                  কোম্পানি পাওনা হিসাব বিবরণী টেবিল (মোট {reportAccounts.length} জন)
                 </h3>
                 <table className="w-full text-left border-collapse border border-slate-300 text-xs">
                   <thead>
                     <tr className="bg-slate-200 text-slate-800 font-bold border-b border-slate-300">
                       <th className="p-2 border border-slate-300">ক্রমিক</th>
-                      <th className="p-2 border border-slate-300">স্টাফের নাম ও পদবী</th>
+                      <th className="p-2 border border-slate-300">নাম ও পরিচয় / পদবী</th>
                       <th className="p-2 border border-slate-300">ফোন নম্বর</th>
                       <th className="p-2 border border-slate-300 text-right">মোট পাওনা</th>
                       <th className="p-2 border border-slate-300 text-right">কালেকশন জমা</th>
@@ -946,7 +1127,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                     </tr>
                   </thead>
                   <tbody>
-                    {accounts.map((st, idx) => (
+                    {reportAccounts.map((st, idx) => (
                       <tr key={st.id} className="border-b border-slate-200">
                         <td className="p-2 border border-slate-300 font-bold">{toBengaliNumber(idx + 1)}</td>
                         <td className="p-2 border border-slate-300">
@@ -1019,10 +1200,10 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
             </div>
             <div>
               <h2 className="text-sm font-bold text-slate-900 dark:text-white leading-none">
-                {isBn ? 'স্টাফ কালেকশন ও কোম্পানি পাওনা' : 'Staff Collection & Company Dues'}
+                {isBn ? 'কালেকশন ও কোম্পানি পাওনা' : 'Collection & Company Dues'}
               </h2>
               <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
-                {isBn ? 'ব্যক্তিভিত্তিক ফিল্ড কালেকশন ও হিসাব খাতা' : 'Individual Staff Ledger'}
+                {isBn ? 'স্টাফ, মালিক ও সদস্যদের পাওনা হিসাব খাতা' : 'Individual Dues & Collection Ledger'}
               </p>
             </div>
           </div>
@@ -1045,15 +1226,20 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
             <span className="hidden sm:inline">{isBn ? 'পিডিএফ রিপোর্ট' : 'PDF Report'}</span>
           </button>
 
-          {/* Admin Add Staff Button */}
-          {isAdmin && (
+          {/* Add Due / Account Button */}
+          {canManageDues && (
             <button
               onClick={() => {
                 sounds.playTap();
                 setEditingStaff(null);
+                setAccountSourceMode('staff');
+                setSelectedStaffOptionId('');
+                setSelectedOwnerOptionId('');
                 setStaffName('');
                 setStaffPhone('');
                 setStaffRole('লাইন টেকনিশিয়ান');
+                setStaffAddress('');
+                setStaffReference('');
                 setStaffAvatar('');
                 setStaffNotes('');
                 setInitialDue('');
@@ -1063,7 +1249,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
               className="h-9 px-3 rounded-xl bg-[#E52E2E] hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1 shadow-sm active:scale-95 transition-all"
             >
               <Plus className="w-4 h-4 stroke-[2.5]" />
-              <span>{isBn ? 'স্টাফ যোগ' : 'Add Staff'}</span>
+              <span>{isBn ? 'পাওনা যোগ' : 'Add Due'}</span>
             </button>
           )}
         </div>
@@ -1084,14 +1270,14 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
               {formatCurrency(totalDues, lang)}
             </h3>
             <p className="text-[10px] text-slate-400 mt-0.5">
-              {isBn ? 'মোট ফিল্ড পাওনা' : 'Total Outstanding'}
+              {isBn ? 'মোট কোম্পানি পাওনা' : 'Total Outstanding'}
             </p>
           </div>
 
           {/* 2. Total Collected */}
           <div className="p-3 sm:p-4 rounded-3xl bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent border border-emerald-200 dark:border-emerald-900/40">
             <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider block">
-              {isBn ? 'স্টাফ কালেকশন' : 'Total Collected'}
+              {isBn ? 'মোট কালেকশন' : 'Total Collected'}
             </span>
             <h3 className="text-base sm:text-xl font-black text-emerald-600 dark:text-emerald-400 mt-1 tabular-nums">
               {formatCurrency(totalCollected, lang)}
@@ -1122,7 +1308,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={isBn ? 'স্টাফের নাম, ফোন নম্বর বা পদবী দিয়ে খুঁজুন...' : 'Search staff by name, phone or role...'}
+            placeholder={isBn ? 'নাম, ফোন নম্বর বা পরিচয়/পদবী দিয়ে খুঁজুন...' : 'Search by name, phone or role...'}
             className="w-full h-11 pl-10 pr-4 text-xs rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-rose-500 shadow-2xs"
           />
           {searchQuery && (
@@ -1135,12 +1321,48 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
           )}
         </div>
 
-        {/* Staff Individual Accounts Grid */}
+        {/* Filter Tabs: Only Due Accounts vs Settled */}
+        {settledAccounts.length > 0 && (
+          <div className="grid grid-cols-2 gap-2 p-1 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs">
+            <button
+              type="button"
+              onClick={() => setDueViewMode('due')}
+              className={`h-9 rounded-xl text-xs font-bold transition-all ${
+                dueViewMode === 'due'
+                  ? 'bg-[#E52E2E] text-white shadow-xs'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              {isBn ? `বকেয়া পাওনা (${accountsWithDue.length} জন)` : `With Due (${accountsWithDue.length})`}
+            </button>
+            <button
+              type="button"
+              onClick={() => setDueViewMode('settled')}
+              className={`h-9 rounded-xl text-xs font-bold transition-all ${
+                dueViewMode === 'settled'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              {isBn ? `পরিশোধিত (${settledAccounts.length} জন)` : `Settled (${settledAccounts.length})`}
+            </button>
+          </div>
+        )}
+
+        {/* Company Due Accounts Grid */}
         <div className="space-y-3">
           <div className="flex items-center justify-between px-1">
             <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
               <Users className="w-4 h-4 text-[#E52E2E]" />
-              <span>{isBn ? `স্টাফ তালিকা (${filteredAccounts.length} জন)` : `Staff List (${filteredAccounts.length})`}</span>
+              <span>
+                {dueViewMode === 'settled'
+                  ? isBn
+                    ? `পরিশোধিত তালিকা (${filteredAccounts.length} জন)`
+                    : `Settled Accounts (${filteredAccounts.length})`
+                  : isBn
+                  ? `কোম্পানি পাওনা তালিকা (${filteredAccounts.length} জন)`
+                  : `Company Due List (${filteredAccounts.length})`}
+              </span>
             </h3>
             <span className="text-[10px] text-slate-400">
               {isBn ? 'কার্ডে ট্যাপ করে বিস্তারিত দেখুন' : 'Tap card for full ledger'}
@@ -1151,13 +1373,21 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
             <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800">
               <Users className="w-10 h-10 text-slate-300 dark:text-slate-700 mx-auto mb-2" />
               <p className="text-xs font-bold text-slate-600 dark:text-slate-400">
-                {isBn ? 'কোনো স্টাফের হিসাব পাওয়া যায়নি' : 'No staff accounts found'}
+                {dueViewMode === 'settled'
+                  ? isBn
+                    ? 'কোনো পরিশোধিত হিসাব পাওয়া যায়নি'
+                    : 'No settled accounts found'
+                  : isBn
+                  ? 'বর্তমানে কারো কাছে কোনো কোম্পানি পাওনা নেই'
+                  : 'No active company dues found'}
               </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {filteredAccounts.map((staff) => {
                 const duePercent = staff.totalDue > 0 ? Math.min(100, Math.round((staff.totalCollected / staff.totalDue) * 100)) : 100;
+                const isOwnerAcc = isOwnerRoleAccount(staff);
+                const isNonStaffAcc = isNonStaffRoleAccount(staff);
 
                 return (
                   <div
@@ -1167,7 +1397,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                     {/* Top Row: Photo + Info + Actions */}
                     <div>
                       <div className="flex items-start justify-between gap-3">
-                        {/* Clickable Staff Profile Info */}
+                        {/* Clickable Profile Info */}
                         <div 
                           onClick={() => {
                             sounds.playTap();
@@ -1176,7 +1406,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                           }}
                           className="flex items-center gap-3 cursor-pointer group flex-1"
                         >
-                          {/* Staff Photo Avatar */}
+                          {/* Photo Avatar */}
                           <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-rose-500 to-amber-500 p-0.5 shrink-0 shadow-xs group-hover:scale-105 transition-transform">
                             <div className="w-full h-full rounded-[14px] bg-slate-100 dark:bg-slate-800 overflow-hidden flex items-center justify-center">
                               {staff.avatarUrl ? (
@@ -1190,11 +1420,19 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                           </div>
 
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-1.5">
                               <h4 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-rose-600 dark:group-hover:text-rose-400 transition-colors">
                                 {staff.name}
                               </h4>
-                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                                  isOwnerAcc
+                                    ? 'bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                                    : isNonStaffAcc
+                                    ? 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800'
+                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
+                                }`}
+                              >
                                 {staff.role}
                               </span>
                             </div>
@@ -1217,7 +1455,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                           >
                             <FileText className="w-3.5 h-3.5" />
                           </button>
-                          {isAdmin && (
+                          {canManageDues && (
                             <>
                               <button
                                 onClick={() => handleOpenEditStaff(staff)}
@@ -1271,7 +1509,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
 
                     {/* Bottom Action Row */}
                     <div className="flex gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
-                      {isAdmin && (
+                      {canManageDues && (
                         <>
                           <button
                             onClick={() => handleOpenEntry(staff, 'due')}
@@ -1297,7 +1535,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                           setSelectedStaff(staff);
                           window.history.pushState({ staffModal: 'detail' }, '');
                         }}
-                        className={`${isAdmin ? 'px-3' : 'flex-1'} h-9 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center justify-center active:scale-95`}
+                        className={`${canManageDues ? 'px-3' : 'flex-1'} h-9 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center justify-center active:scale-95`}
                       >
                         {isBn ? 'খাতা' : 'Ledger'}
                       </button>
@@ -1400,7 +1638,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                         <th className="p-2 border border-slate-200 dark:border-slate-700">টাকা</th>
                         <th className="p-2 border border-slate-200 dark:border-slate-700">রেফারেন্স</th>
                         <th className="p-2 border border-slate-200 dark:border-slate-700">স্টাটাস</th>
-                        {isAdmin && (
+                        {canManageDues && (
                           <th className="p-2 border border-slate-200 dark:border-slate-700 text-center">অ্যাকশন</th>
                         )}
                       </tr>
@@ -1426,7 +1664,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                               {tx.type === 'due' ? 'পাওনা' : 'জমা'}
                             </span>
                           </td>
-                          {isAdmin && (
+                          {canManageDues && (
                             <td className="p-2 border border-slate-200 dark:border-slate-700 text-center whitespace-nowrap">
                               <div className="flex items-center justify-center gap-1.5">
                                 <button
@@ -1464,8 +1702,8 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
               )}
             </div>
 
-            {/* Modal Bottom Actions (Admin Only) */}
-            {isAdmin && (
+            {/* Modal Bottom Actions (Admin & permitted Sub-Admin) */}
+            {canManageDues && (
               <div className="flex gap-2 pt-2">
                 <button
                   onClick={() => handleOpenEntry(selectedStaff, 'due')}
@@ -1493,10 +1731,10 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
             <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
               <div>
                 <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                  {editingTx ? 'লেনদেন এডিট ও সংশোধন করুন' : (entryType === 'due' ? 'কোম্পানি পাওনা যোগ করুন' : 'স্টাফ কালেকশন জমা নিন')}
+                  {editingTx ? 'লেনদেন এডিট ও সংশোধন করুন' : (entryType === 'due' ? 'কোম্পানি পাওনা যোগ করুন' : 'কালেকশন জমা নিন')}
                 </h3>
                 <p className="text-[11px] text-slate-500">
-                  স্টাফ: <span className="font-bold text-slate-800 dark:text-slate-200">{entryStaff.name}</span> ({entryStaff.role})
+                  হিসাব: <span className="font-bold text-slate-800 dark:text-slate-200">{entryStaff.name}</span> ({entryStaff.role})
                   {editingTx && (
                     <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-400">
                       এডিট মোড
@@ -1535,6 +1773,60 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
               </button>
             </div>
 
+            {/* Quick Owner & Staff Auto-Fill Picker inside Due/Collection Modal */}
+            {(uniqueOwners.length > 0 || staffRoster.length > 0) && (
+              <div className="p-2.5 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200/80 dark:border-indigo-800/50">
+                <label className="block text-[11px] font-bold text-indigo-800 dark:text-indigo-300 mb-1">
+                  মালিক বা স্টাফ তালিকা থেকে নাম সিলেক্ট করুন (অটো-ফিল)
+                </label>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (!val) return;
+                    if (val.startsWith('owner:')) {
+                      const oid = val.slice(6);
+                      const owner = uniqueOwners.find((o) => String(o.id) === oid);
+                      if (owner) {
+                        sounds.playTap();
+                        setEntryCustomerName(owner.name.trim());
+                        if (owner.address) setEntryAddress(owner.address.trim());
+                      }
+                    } else if (val.startsWith('staff:')) {
+                      const sid = val.slice(6);
+                      const st = staffRoster.find((s) => String(s.id) === sid);
+                      if (st) {
+                        sounds.playTap();
+                        setEntryCustomerName(st.name.trim());
+                        if (st.address) setEntryAddress(st.address.trim());
+                      }
+                    }
+                  }}
+                  className="w-full h-9 px-2.5 text-xs font-semibold rounded-xl border border-indigo-200 dark:border-indigo-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                >
+                  <option value="">-- মালিক বা স্টাফ সিলেক্ট করলে নাম ও ঠিকানা অটো বসবে --</option>
+                  {uniqueOwners.length > 0 && (
+                    <optgroup label="মালিক / অংশীদার তালিকা">
+                      {uniqueOwners.map((o) => (
+                        <option key={`owner-${o.id}`} value={`owner:${o.id}`}>
+                          {o.name}{o.phone ? ` (${o.phone})` : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {staffRoster.length > 0 && (
+                    <optgroup label="স্টাফ তালিকা">
+                      {staffRoster.map((s) => (
+                        <option key={`staff-${s.id}`} value={`staff:${s.id}`}>
+                          {s.name} — {s.role}{s.phone ? ` (${s.phone})` : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+            )}
+
             {/* User ID and Name row */}
             <div className="grid grid-cols-2 gap-2.5">
               <div>
@@ -1552,7 +1844,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  নাম (গ্রাহক / কাস্টমার)
+                  নাম (মালিক / গ্রাহক)
                 </label>
                 <input
                   type="text"
@@ -1655,13 +1947,13 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
         </div>
       )}
 
-      {/* Modal 3: Add / Edit Staff Account Form (Admin Only) */}
+      {/* Modal 3: Add / Edit Company Due Account Form (Admin Only) */}
       {isAddStaffOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 select-none animate-in fade-in duration-200">
           <form onSubmit={handleSaveStaffForm} className="bg-white dark:bg-slate-900 w-full max-w-md rounded-t-[32px] sm:rounded-3xl p-5 shadow-2xl space-y-3.5 max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                {editingStaff ? 'স্টাফের তথ্য পরিবর্তন করুন' : 'নতুন স্টাফ অ্যাকাউন্ট যোগ করুন'}
+                {editingStaff ? 'হিসাবের তথ্য পরিবর্তন করুন' : 'নতুন কোম্পানি পাওনা যোগ করুন'}
               </h3>
               <button
                 type="button"
@@ -1675,17 +1967,173 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
               </button>
             </div>
 
+            {/* Source Mode Switcher & Quick Dropdowns (Staff + Owner + Custom Person) */}
+            {!editingStaff && (() => {
+              const selectedStaffObj = selectedStaffOptionId
+                ? staffRoster.find((s) => String(s.id) === String(selectedStaffOptionId))
+                : undefined;
+              const selectedOwnerObj = selectedOwnerOptionId
+                ? uniqueOwners.find((o) => String(o.id) === String(selectedOwnerOptionId))
+                : undefined;
+              const existingMatchedOwnerAcc = selectedOwnerObj
+                ? accounts.find((a) => isOwnerRoleAccount(a) && doesOwnerMatchAccount(selectedOwnerObj, a))
+                : undefined;
+
+              return (
+                <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2.5">
+                  <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-slate-200/70 dark:bg-slate-900">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sounds.playTap();
+                        setAccountSourceMode('staff');
+                        setSelectedOwnerOptionId('');
+                      }}
+                      className={`py-1.5 px-2 rounded-lg text-[11px] font-bold transition ${
+                        accountSourceMode === 'staff'
+                          ? 'bg-white dark:bg-slate-800 text-rose-600 dark:text-rose-400 shadow-xs'
+                          : 'text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      স্টাফ সিলেক্ট
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sounds.playTap();
+                        setAccountSourceMode('owner');
+                        setSelectedStaffOptionId('');
+                        setStaffRole('মালিক / অংশীদার');
+                      }}
+                      className={`py-1.5 px-2 rounded-lg text-[11px] font-bold transition ${
+                        accountSourceMode === 'owner'
+                          ? 'bg-white dark:bg-slate-800 text-amber-700 dark:text-amber-300 shadow-xs'
+                          : 'text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      মালিক সিলেক্ট
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sounds.playTap();
+                        setAccountSourceMode('custom');
+                        setSelectedStaffOptionId('');
+                        setSelectedOwnerOptionId('');
+                        setStaffName('');
+                        setStaffPhone('');
+                        setStaffAddress('');
+                        setStaffAvatar('');
+                        setStaffRole('সাধারণ সদস্য / গ্রাহক');
+                      }}
+                      className={`py-1.5 px-2 rounded-lg text-[11px] font-bold transition ${
+                        accountSourceMode === 'custom'
+                          ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-300 shadow-xs'
+                          : 'text-slate-600 dark:text-slate-300'
+                      }`}
+                    >
+                      সদস্য / অন্যান্য
+                    </button>
+                  </div>
+
+                  {accountSourceMode === 'staff' && (
+                    <div className="space-y-2">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-200">
+                        স্টাফ নির্বাচন করুন (সিলেক্ট করলে তথ্য অটো বসবে)
+                      </label>
+                      <select
+                        value={selectedStaffOptionId}
+                        onChange={(e) => handleSelectStaffForAccount(e.target.value)}
+                        className="w-full h-10 px-3 text-xs font-bold rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                      >
+                        <option value="">-- তালিকা থেকে স্টাফ সিলেক্ট করুন --</option>
+                        {staffRoster.map((s) => (
+                          <option key={s.id} value={String(s.id)}>
+                            {s.name} ({s.role}){s.remainingDue > 0 ? ` — বকেয়া ৳${s.remainingDue}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                      {selectedStaffObj && (
+                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/50 flex items-center justify-between gap-2">
+                          <p className="text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                            "{selectedStaffObj.name}" — বর্তমান বকেয়া: {formatCurrency(selectedStaffObj.remainingDue, lang)}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsAddStaffOpen(false);
+                              setEditingStaff(null);
+                              setSelectedStaffOptionId('');
+                              handleOpenEntry(selectedStaffObj, 'due');
+                            }}
+                            className="shrink-0 px-2.5 py-1.5 rounded-lg bg-[#E52E2E] text-white text-[10px] font-bold active:scale-95 transition"
+                          >
+                            + পাওনা যোগ
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {accountSourceMode === 'owner' && (
+                    <div className="space-y-2">
+                      <label className="block text-xs font-bold text-amber-900 dark:text-amber-200">
+                        মালিক / অংশীদার নির্বাচন করুন (লভ্যাংশ থেকে কর্তনযোগ্য)
+                      </label>
+                      <select
+                        value={selectedOwnerOptionId}
+                        onChange={(e) => handleSelectOwnerForAccount(e.target.value)}
+                        className="w-full h-10 px-3 text-xs font-bold rounded-xl border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                      >
+                        <option value="">-- কুইক হিসাব থেকে মালিক সিলেক্ট করুন --</option>
+                        {uniqueOwners.map((o) => (
+                          <option key={o.id} value={String(o.id)}>
+                            {o.name}{o.phone ? ` — ${o.phone}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                      {existingMatchedOwnerAcc && (
+                        <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-amber-300/80 dark:border-amber-700 flex items-center justify-between gap-2">
+                          <p className="text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                            "{existingMatchedOwnerAcc.name}" এর হিসাব আছে (বকেয়া: {formatCurrency(existingMatchedOwnerAcc.remainingDue, lang)})
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsAddStaffOpen(false);
+                              setEditingStaff(null);
+                              setSelectedOwnerOptionId('');
+                              handleOpenEntry(existingMatchedOwnerAcc, 'due');
+                            }}
+                            className="shrink-0 px-2.5 py-1.5 rounded-lg bg-[#E52E2E] text-white text-[10px] font-bold active:scale-95 transition"
+                          >
+                            + পাওনা যোগ
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {accountSourceMode === 'custom' && (
+                    <p className="text-[11px] font-semibold text-indigo-700 dark:text-indigo-300">
+                      স্টাফ বা মালিকের বাইরে যেকোনো সাধারণ সদস্য, গ্রাহক বা ব্যক্তির কোম্পানি পাওনা নিচে লিখুন।
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* Name */}
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                স্টাফের পূর্ণ নাম *
+                ব্যক্তির নাম (স্টাফ / মালিক / সদস্য) *
               </label>
               <input
                 type="text"
                 required
                 value={staffName}
                 onChange={(e) => setStaffName(e.target.value)}
-                placeholder="যেমন: কাজী রাজু আহমেদ"
+                placeholder="যেমন: মোঃ আরিফুল ইসলাম / কাজী রাজু"
                 className="w-full h-10 px-3 text-xs rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
               />
             </div>
@@ -1708,7 +2156,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
             {/* Role / Designation Dropdown */}
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                পদবি বা দায়িত্ব *
+                পরিচয় / পদবি *
               </label>
               <select
                 required
@@ -1722,7 +2170,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                 <option value="বিল সংগ্রাহক">বিল সংগ্রাহক (Bill Collector)</option>
                 <option value="মালিক / অংশীদার">মালিক / অংশীদার (Owner / Partner - লভ্যাংশ থেকে কর্তন)</option>
                 <option value="সাধারণ সদস্য / গ্রাহক">সাধারণ সদস্য / গ্রাহক (General Member / Customer - স্টাফ নয়)</option>
-                <option value="অন্যান্য">অন্যান্য (Other)</option>
+                <option value="অন্যান্য">অন্যান্য (Other - স্টাফ নয়)</option>
               </select>
             </div>
 
@@ -1757,12 +2205,12 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
             {/* Avatar Photo Upload */}
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
-                স্টাফের ছবি (ডিভাইস থেকে আপলোড)
+                ছবি (ডিভাইস থেকে আপলোড)
               </label>
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden shrink-0">
                   {staffAvatar ? (
-                    <img src={staffAvatar} alt="Staff Preview" className="w-full h-full object-cover" />
+                    <img src={staffAvatar} alt="Account Preview" className="w-full h-full object-cover" />
                   ) : (
                     <ImageIcon className="w-6 h-6 text-slate-400" />
                   )}
@@ -1775,18 +2223,19 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
               </div>
             </div>
 
-            {/* Initial Due Amount (Only for New Staff) */}
+            {/* Initial Due Amount (Only when creating/adding due) */}
             {!editingStaff && (
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  প্রারম্ভিক কোম্পানি পাওনা (ঐচ্ছিক ৳)
+                  কোম্পানি পাওনার পরিমাণ (৳) *
                 </label>
                 <input
                   type="text"
+                  required
                   value={initialDue}
                   onChange={(e) => setInitialDue(e.target.value)}
                   placeholder="যেমন: ১০০০"
-                  className="w-full h-10 px-3 text-xs rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                  className="w-full h-10 px-3 text-xs font-bold rounded-2xl border border-rose-200 dark:border-rose-800/60 bg-rose-50/40 dark:bg-slate-800 text-slate-900 dark:text-white"
                 />
               </div>
             )}
@@ -1794,13 +2243,13 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
             {/* Notes */}
             <div>
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                নোট / এলাকা বিস্তারিত
+                নোট / বিবরণ
               </label>
               <input
                 type="text"
                 value={staffNotes}
                 onChange={(e) => setStaffNotes(e.target.value)}
-                placeholder="যেমন: জোন-২ ক্যাবল নেটওয়ার্ক এলাকা"
+                placeholder="যেমন: বকেয়া বিল বা মালামালের বিবরণ"
                 className="w-full h-10 px-3 text-xs rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
               />
             </div>
@@ -1810,7 +2259,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
               className="w-full h-11 rounded-2xl bg-[#E52E2E] hover:bg-rose-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md"
             >
               <Check className="w-4 h-4 stroke-[2.5]" />
-              <span>{editingStaff ? 'তথ্য আপডেট করুন' : 'স্টাফ সংরক্ষণ করুন'}</span>
+              <span>{editingStaff ? 'তথ্য আপডেট করুন' : 'পাওনা ও হিসাব সংরক্ষণ করুন'}</span>
             </button>
 
           </form>
@@ -1825,7 +2274,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
         </div>
       )}
 
-      {/* Modal 4: Custom Delete Staff Confirmation Popup (No native alert/confirm) */}
+      {/* Modal 4: Custom Delete Account Confirmation Popup (No native alert/confirm) */}
       {deletingStaff && (
         <div className="fixed inset-0 z-[110] bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 select-none animate-in fade-in duration-200">
           <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-3xl p-5 shadow-2xl border border-slate-200 dark:border-slate-800 text-center space-y-4 animate-in zoom-in-95 duration-200">
@@ -1836,10 +2285,10 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
 
             <div>
               <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
-                স্টাফ অ্যাকাউন্ট মুছে ফেলার সম্মতি
+                হিসাব অ্যাকাউন্ট মুছে ফেলার সম্মতি
               </h3>
               <p className="text-xs text-slate-600 dark:text-slate-300 mt-2 font-medium leading-relaxed">
-                আপনি কি <span className="font-bold text-rose-600 dark:text-rose-400">"{deletingStaff.name}"</span> ({deletingStaff.role}) স্টাফের সকল হিসাব ও লেনদেন খাতা স্থায়ীভাবে মুছে ফেলতে চান?
+                আপনি কি <span className="font-bold text-rose-600 dark:text-rose-400">"{deletingStaff.name}"</span> ({deletingStaff.role}) এর সকল পাওনা ও লেনদেন খাতা স্থায়ীভাবে মুছে ফেলতে চান?
               </p>
             </div>
 

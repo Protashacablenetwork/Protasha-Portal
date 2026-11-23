@@ -4,6 +4,8 @@ import { getAuth } from 'firebase/auth';
 import {
   initializeFirestore,
   getFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   enableNetwork,
   doc,
   getDocFromServer,
@@ -17,17 +19,28 @@ import firebaseConfig from '../../firebase-applet-config.json';
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const databaseId = (firebaseConfig as any).firestoreDatabaseId || 'staff-collection-db';
 
-// Initialize Firestore against the provisioned database with long-polling auto-detection
-// to prevent NS_BINDING_ABORTED / WebChannel drops across proxies and browsers.
+// Initialize Firestore with IndexedDB persistent local cache (instant cached reads on boot)
+// + long-polling auto-detection to prevent WebChannel drops across proxies/browsers.
 export const db = (() => {
   try {
     return initializeFirestore(
       app,
-      { experimentalAutoDetectLongPolling: true },
+      {
+        experimentalAutoDetectLongPolling: true,
+        localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+      },
       databaseId
     );
   } catch {
-    return getFirestore(app, databaseId);
+    try {
+      return initializeFirestore(
+        app,
+        { experimentalAutoDetectLongPolling: true },
+        databaseId
+      );
+    } catch {
+      return getFirestore(app, databaseId);
+    }
   }
 })();
 
@@ -206,10 +219,10 @@ export async function testFirestoreConnection(): Promise<boolean> {
   }
 }
 
-// Validate connection to the provisioned Firestore database once after boot
+// Validate connection to the provisioned Firestore database once after boot without blocking startup
 if (!(globalThis as any).__PCN_FB_CONN_CHECKED__) {
   (globalThis as any).__PCN_FB_CONN_CHECKED__ = true;
   setTimeout(() => {
     void testFirestoreConnection();
-  }, 2000);
+  }, 5000);
 }

@@ -72,13 +72,22 @@ export function simulateRuleCheck(collection: string, docId: string, data: Recor
     case 'users': {
       const allowed = [
         'id', 'name', 'phone', 'pin', 'avatarUrl', 'gmail',
-        'boundMethods', 'readNotifications', 'role', 'status',
-        'virtualCardNumber', 'createdAt', 'updatedAt'
+        'boundMethods', 'readNotifications', 'role', 'permissions', 'status',
+        'virtualCardNumber', 'recordedBy', 'createdAt', 'updatedAt'
+      ];
+      const allowedPerms = [
+        'transactions', 'addTransactions', 'ledger', 'billManager',
+        'ayByay', 'quickHisab', 'staffManager', 'staffAttendance', 'supportTickets'
       ];
       const keys = Object.keys(data);
       if (!keys.every(k => allowed.includes(k))) return false;
-      if (!['admin', 'sub-admin', 'user', 'visitor'].includes(String(data.role))) return false;
+      if (!['admin', 'sub-admin', 'staff', 'user', 'visitor'].includes(String(data.role))) return false;
       if (!['active', 'suspended'].includes(String(data.status))) return false;
+      if ('permissions' in data && data.permissions !== null) {
+        if (typeof data.permissions !== 'object' || Array.isArray(data.permissions)) return false;
+        const permKeys = Object.keys(data.permissions as Record<string, unknown>);
+        if (permKeys.length > 20 || !permKeys.every(k => allowedPerms.includes(k))) return false;
+      }
       return true;
     }
     case 'quick_hisab_owners': {

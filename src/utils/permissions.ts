@@ -1,4 +1,10 @@
-import { StaffSupportSession, SupportTicket, Transaction, UserSession } from '../types';
+import {
+  StaffSupportSession,
+  SubAdminPermissionKey,
+  SupportTicket,
+  Transaction,
+  UserSession
+} from '../types';
 import { toBengaliNumber } from './formatters';
 
 export const SUB_ADMIN_EDIT_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
@@ -12,12 +18,41 @@ export function isSubAdmin(user?: UserSession | null): boolean {
   return user?.role === 'sub-admin';
 }
 
+export function isStaffRole(user?: UserSession | null): boolean {
+  return user?.role === 'staff';
+}
+
+export function hasSubAdminPermission(
+  user: UserSession | null | undefined,
+  key: SubAdminPermissionKey
+): boolean {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  if (user.role === 'staff') return key === 'staffAttendance';
+  if (user.role === 'sub-admin') {
+    if (!user.permissions || Object.keys(user.permissions).length === 0) {
+      return true; // Backward-compatible default for legacy sub-admin accounts without explicit permissions
+    }
+    return user.permissions[key] === true;
+  }
+  return false;
+}
+
 export function canAddTransactions(user?: UserSession | null): boolean {
-  return user?.role === 'admin' || user?.role === 'sub-admin';
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  if (user.role === 'sub-admin') return hasSubAdminPermission(user, 'addTransactions');
+  return false;
 }
 
 export function isLoggedInSession(user?: UserSession | null): boolean {
-  return !!user && (user.role === 'admin' || user.role === 'sub-admin' || user.role === 'user');
+  return (
+    !!user &&
+    (user.role === 'admin' ||
+      user.role === 'sub-admin' ||
+      user.role === 'staff' ||
+      user.role === 'user')
+  );
 }
 
 export function normalizePhoneNumber(phone?: string | null): string {
@@ -64,6 +99,9 @@ export function canModifyTransaction(
   }
 
   if (user.role === 'sub-admin') {
+    if (!hasSubAdminPermission(user, 'addTransactions')) {
+      return { allowed: false, isOwner: false, expired: false, remainingMs: 0 };
+    }
     const isOwner = isTransactionOwner(trx, user);
     if (!isOwner) {
       return { allowed: false, isOwner: false, expired: false, remainingMs: 0 };
@@ -154,7 +192,10 @@ export function canModifySupportTicket(
     };
   }
 
-  if (!user && !staffSession) {
+  const canActAsSubAdmin = user?.role === 'sub-admin' && hasSubAdminPermission(user, 'supportTickets');
+  const canActAsStaffSession = Boolean(staffSession) && user?.role !== 'staff';
+
+  if (!canActAsSubAdmin && !canActAsStaffSession) {
     return { allowed: false, isAdmin: false, isOwner: false, expired: false, remainingMs: 0 };
   }
 
@@ -168,8 +209,8 @@ export function canModifySupportTicket(
   const remainingMs = Math.max(0, SUPPORT_TICKET_EDIT_WINDOW_MS - elapsed);
   const withinWindow = elapsed <= SUPPORT_TICKET_EDIT_WINDOW_MS;
 
-  // Non-admins can only edit/delete their own complaint within 10 minutes of creation.
-  // After 10 minutes, only Admin controls editing/deleting.
+  // Non-admins (permitted sub-admins or staff session) can only edit/delete their own complaint within 10 minutes of creation.
+  // Regular users, attendance-only staff, and visitors are strictly read-only.
   return {
     allowed: isOwner && withinWindow,
     isAdmin: false,

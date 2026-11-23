@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { db, staffDb, safeSetDoc } from '../utils/firebase';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
-import { Language, FooterConfig, UserSession, BannerAd, StaffAccount, StaffSupportSession } from '../types';
+import { Language, FooterConfig, UserSession, BannerAd, StaffAccount, StaffSupportSession, UserRole } from '../types';
 import { translations } from '../utils/formatters';
 import { safeStorage } from '../utils/safeStorage';
 import { sounds } from '../utils/audio';
@@ -305,6 +305,24 @@ export const LoginView: React.FC<LoginViewProps> = ({
           userData = matchedDoc.data();
           userId = matchedDoc.id;
           saveStoredUser({ ...userData, id: userId });
+        } else {
+          // Normalized phone lookup fallback (e.g., +88017... vs 017...)
+          const normInput = normalizePhoneNumber(lookupPhone);
+          if (normInput.length >= 6) {
+            const allUsersSnap = await getDocs(usersRef);
+            const normMatches = allUsersSnap.docs.filter(
+              (d) => normalizePhoneNumber(d.data()?.phone) === normInput
+            );
+            if (normMatches.length > 0) {
+              const matchedDoc =
+                normMatches.find(d => d.data()?.pin === cleanPin && d.data()?.avatarUrl) ||
+                normMatches.find(d => d.data()?.pin === cleanPin) ||
+                normMatches[0];
+              userData = matchedDoc.data();
+              userId = matchedDoc.id;
+              saveStoredUser({ ...userData, id: userId });
+            }
+          }
         }
       } catch (err) {
         console.warn('Firestore login check skipped, using local store:', err);
@@ -319,15 +337,40 @@ export const LoginView: React.FC<LoginViewProps> = ({
         }
       }
 
+      // Load unified staff PIN config once if needed for staff-role verification
+      let cachedStaffAuthData: { globalPin?: string; staffPins?: Record<string, string> } | null = null;
+      const getStaffAuthConfig = async () => {
+        if (cachedStaffAuthData) return cachedStaffAuthData;
+        try {
+          const pinSnap = await getDoc(doc(db, 'settings', 'staff_support_auth'));
+          if (pinSnap.exists()) {
+            cachedStaffAuthData = pinSnap.data() as { globalPin?: string; staffPins?: Record<string, string> };
+            return cachedStaffAuthData;
+          }
+        } catch {}
+        cachedStaffAuthData = { globalPin: '1234', staffPins: {} };
+        return cachedStaffAuthData;
+      };
+
       if (userData) {
-        if (userData.pin === cleanPin) {
+        let pinMatchesUser = String(userData.pin || '') === cleanPin;
+        // If user has role 'staff', also accept the per-staff PIN from settings/staff_support_auth
+        if (!pinMatchesUser && userData.role === 'staff') {
+          const staffCfg = await getStaffAuthConfig();
+          const staffSpecificPin = staffCfg?.staffPins?.[userId];
+          if (staffSpecificPin && String(staffSpecificPin).trim() === cleanPin) {
+            pinMatchesUser = true;
+          }
+        }
+
+        if (pinMatchesUser) {
           if (userData.status === 'suspended') {
             setIsLoading(false);
             setErrorMsg(isBn ? 'আপনার অ্যাকাউন্টটি সাময়িকভাবে স্থগিত করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।' : 'Your account has been suspended. Contact admin.');
             return;
           }
 
-          const resolvedRole = userData.role || 'user';
+          const resolvedRole: UserRole = (userData.role || 'user') as UserRole;
           const resolvedId = userId || ('usr_' + Date.now());
           const lockResult = await claimDeviceSession({
             id: resolvedId,
@@ -347,6 +390,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
             id: resolvedId,
             email: `${userData.phone}@protyasha.com`,
             role: resolvedRole,
+            permissions: resolvedRole === 'sub-admin' ? userData.permissions : undefined,
             name: userData.name,
             phone: userData.phone,
             gmail: userData.gmail || undefined,
@@ -369,7 +413,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
         }
       }
 
-      // 3. Unified Staff Directory Direct Login (Staff added from Staff Manager / Ay-Byay / User Mgmt can log in right on the main page)
+      // 3. Unified Staff Directory Direct Login (Attendance-Only Staff Role)
       let staffList: StaffAccount[] = readCachedStaffAccounts();
       try {
         const staffSnap = await getDocs(collection(staffDb, 'staff'));
@@ -400,24 +444,28 @@ export const LoginView: React.FC<LoginViewProps> = ({
       });
 
       if (matchedStaff) {
-        let globalStaffPin = '1234';
-        let staffPins: Record<string, string> = {};
-        try {
-          const pinSnap = await getDoc(doc(db, 'settings', 'staff_support_auth'));
-          if (pinSnap.exists()) {
-            const pData = pinSnap.data() as { globalPin?: string; staffPins?: Record<string, string> };
-            if (pData.globalPin) globalStaffPin = String(pData.globalPin);
-            if (pData.staffPins && typeof pData.staffPins === 'object') staffPins = pData.staffPins;
-          }
-        } catch {}
+        // Respect suspended status if a corresponding `users` account exists and is suspended
+        if (userData && userData.status === 'suspended') {
+          setIsLoading(false);
+          setErrorMsg(isBn ? 'আপনার অ্যাকাউন্টটি সাময়িকভাবে স্থগিত করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।' : 'Your account has been suspended. Contact admin.');
+          return;
+        }
+
+        const staffAuthCfg = await getStaffAuthConfig();
+        const globalStaffPin = String(staffAuthCfg?.globalPin || '1234').trim() || '1234';
+        const staffPins = (staffAuthCfg?.staffPins && typeof staffAuthCfg.staffPins === 'object') ? staffAuthCfg.staffPins : {};
 
         const expectedStaffPin = String(staffPins[matchedStaff.id] || globalStaffPin || '1234').trim();
-        if (cleanPin === expectedStaffPin) {
+        const isStaffPinMatch =
+          cleanPin === expectedStaffPin ||
+          (userData && userData.role === 'staff' && String(userData.pin || '') === cleanPin);
+
+        if (isStaffPinMatch) {
           const staffPhone = matchedStaff.phone || rawId;
           const lockResult = await claimDeviceSession({
             id: matchedStaff.id,
             phone: staffPhone,
-            role: 'sub-admin',
+            role: 'staff',
             name: matchedStaff.name
           });
 
@@ -442,7 +490,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
           const staffUserSession: UserSession = {
             id: matchedStaff.id,
             email: `${staffPhone}@protyasha.com`,
-            role: 'sub-admin',
+            role: 'staff',
             name: matchedStaff.name,
             phone: staffPhone,
             avatarUrl: matchedStaff.avatarUrl || '',
@@ -908,7 +956,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                   type={showPin ? 'text' : 'password'}
                   inputMode="numeric"
                   pattern="[0-9]*"
-                  maxLength={5}
+                  maxLength={8}
                   autoComplete="new-password"
                   autoCorrect="off"
                   autoCapitalize="off"

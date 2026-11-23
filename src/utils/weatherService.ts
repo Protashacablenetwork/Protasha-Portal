@@ -279,8 +279,17 @@ export function clearUserPreferredDistrict() {
  * Lightweight Bangladesh IP Geolocation fallback for users who haven't enabled GPS yet.
  * Maps real lat/lon within Bangladesh bounds to the nearest of the 64 districts.
  */
+const IP_GEO_COOLDOWN_KEY = 'pcn_ip_geo_cooldown_until';
+
 async function detectIpDistrictFallback(): Promise<DistrictInfo | null> {
   if (typeof window === 'undefined') return null;
+
+  try {
+    const cooldownUntil = Number(sessionStorage.getItem(IP_GEO_COOLDOWN_KEY) || '0');
+    if (cooldownUntil > Date.now()) {
+      return null;
+    }
+  } catch {}
 
   const tryParseCoords = (lat: unknown, lon: unknown): DistrictInfo | null => {
     const latNum = Number(lat);
@@ -307,7 +316,7 @@ async function detectIpDistrictFallback(): Promise<DistrictInfo | null> {
   };
 
   try {
-    const res = await fetch('https://ipwho.is/', { signal: AbortSignal.timeout(2500) });
+    const res = await fetch('https://ipwho.is/', { signal: AbortSignal.timeout(2200) });
     if (res.ok) {
       const data = await res.json();
       if (data && data.success !== false) {
@@ -327,7 +336,7 @@ async function detectIpDistrictFallback(): Promise<DistrictInfo | null> {
   } catch {}
 
   try {
-    const res = await fetch('https://get.geojs.io/v1/ip/geo.json', { signal: AbortSignal.timeout(2500) });
+    const res = await fetch('https://get.geojs.io/v1/ip/geo.json', { signal: AbortSignal.timeout(2200) });
     if (res.ok) {
       const data = await res.json();
       const byCoords = tryParseCoords(data?.latitude, data?.longitude);
@@ -342,6 +351,10 @@ async function detectIpDistrictFallback(): Promise<DistrictInfo | null> {
         return matched;
       }
     }
+  } catch {}
+
+  try {
+    sessionStorage.setItem(IP_GEO_COOLDOWN_KEY, String(Date.now() + 10 * 60 * 1000));
   } catch {}
 
   return null;

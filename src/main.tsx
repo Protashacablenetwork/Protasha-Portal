@@ -9,16 +9,11 @@ import { Language } from './types';
 import { safeStorage } from './utils/safeStorage';
 import './index.css';
 
-const loadApp = () => import('./App.tsx');
+import App from './App.tsx';
+
 const loadPublicTicketTracker = () =>
   import('./components/PublicTicketTracker').then((m) => ({ default: m.PublicTicketTracker }));
 
-// Kick off App chunk download immediately on normal routes so there is no Suspense waterfall
-if (typeof window !== 'undefined' && !extractTrackTicketIdFromLocation()) {
-  void loadApp();
-}
-
-const App = React.lazy(loadApp);
 const PublicTicketTracker = React.lazy(loadPublicTicketTracker);
 
 // Self-heal once if a lazy chunk fails to load transiently on mobile networks or right after deploy

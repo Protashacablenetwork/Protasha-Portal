@@ -37,7 +37,8 @@ import {
   Download
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { Language, UserSession } from '../types';
+import { Language, SUB_ADMIN_PERMISSION_ITEMS, UserSession } from '../types';
+import { hasSubAdminPermission } from '../utils/permissions';
 import { translations } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import { safeStorage } from '../utils/safeStorage';
@@ -115,7 +116,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const isBn = lang === 'bn';
   const isAdmin = user?.role === 'admin';
   const isSubAdmin = user?.role === 'sub-admin';
-  const isRegisteredUser = user?.role === 'user' || isSubAdmin;
+  const isStaff = user?.role === 'staff';
+  const isRegisteredUser = user?.role === 'user' || isSubAdmin || isStaff;
   const isLoggedIn = !!user && (isAdmin || isRegisteredUser);
 
   // Active display values
@@ -451,7 +453,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const displayAvatar = avatarUrl && !avatarUrl.startsWith('/uploads/') ? avatarUrl : (avatarUrl.startsWith('data:image/') ? avatarUrl : '');
 
   return (
-    <div className={isTabMode ? "w-full min-h-[calc(100vh-4rem)] bg-slate-100 dark:bg-slate-950 flex flex-col select-none pb-24" : "fixed inset-0 z-50 bg-slate-100 dark:bg-slate-950 flex flex-col select-none animate-in slide-in-from-right duration-200 pb-24"}>
+    <div className={isTabMode ? "w-full bg-slate-100 dark:bg-slate-950 flex flex-col select-none" : "fixed inset-0 z-50 bg-slate-100 dark:bg-slate-950 flex flex-col select-none animate-in slide-in-from-right duration-200"}>
       {/* Top Header */}
       <div className="sticky top-0 z-10 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 h-14 flex items-center justify-between shadow-xs">
         <div className="flex items-center gap-3">
@@ -505,7 +507,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       )}
 
       {/* Profile Content */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-28">
+      <div className={isTabMode ? "px-4 py-4 space-y-4 pb-3" : "flex-1 overflow-y-auto px-4 py-4 space-y-4 pb-8"}>
         {/* User Card: Clean, High-Contrast with One Distinct Edit Button */}
         {isLoggedIn ? (
           <div className="p-4 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm">
@@ -566,10 +568,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                       <ShieldCheck className="w-3 h-3" />
                       <span>{isBn ? 'ভেরিফায়েড সাব-অ্যাডমিন' : 'Verified Sub-Admin'}</span>
                     </span>
+                  ) : isStaff ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-300 border border-teal-200/60">
+                      <ShieldCheck className="w-3 h-3" />
+                      <span>{isBn ? 'স্টাফ (শুধু হাজিরা)' : 'Staff (Attendance Only)'}</span>
+                    </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400 border border-blue-200/50">
                       <ShieldCheck className="w-3 h-3" />
-                      <span>{isBn ? 'নিবন্ধিত সম্মানিত সদস্য' : 'Registered Member'}</span>
+                      <span>{isBn ? 'নিবন্ধিত সম্মানিত সদস্য (শুধু দেখা)' : 'Registered Member (Read-Only)'}</span>
                     </span>
                   )}
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700">
@@ -705,7 +712,33 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
           </div>
 
-          {/* Sub-Admin Control & Permissions Info Card */}
+          {/* Staff Role Attendance-Only Notice Card */}
+          {isStaff && (
+            <div className="p-4 bg-gradient-to-r from-teal-50/70 to-emerald-50/40 dark:from-teal-950/20 dark:to-emerald-950/10 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-2xl bg-teal-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                    <Shield className="w-4.5 h-4.5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                      {isBn ? 'স্টাফ হাজিরা অ্যাকাউন্ট' : 'Staff Attendance Account'}
+                    </h4>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                      {isBn
+                        ? 'আপনি শুধুমাত্র স্টাফ হাজিরা অপশনে নিজের হাজিরা ও ছুটি দিতে এবং পিন পরিবর্তন করতে পারবেন।'
+                        : 'You can mark your own attendance & leave and update your own PIN.'}
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-teal-200/80 text-teal-900 dark:bg-teal-900/60 dark:text-teal-200 shrink-0">
+                  {isBn ? 'হাজিরা' : 'Attendance'}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Sub-Admin Control & Permissions Info Card (Dynamically driven by Admin permissions) */}
           {isSubAdmin && (
             <div className="p-4 bg-gradient-to-r from-amber-50/70 to-orange-50/40 dark:from-amber-950/20 dark:to-orange-950/10 space-y-2">
               <div className="flex items-center justify-between gap-2">
@@ -715,10 +748,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   </div>
                   <div>
                     <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                      {isBn ? 'সাব-অ্যাডমিন নিয়ন্ত্রণ ও ক্ষমতা' : 'Sub-Admin Access & Permissions'}
+                      {isBn ? 'সাব-অ্যাডমিন অনুমোদিত সেবাসমূহ' : 'Sub-Admin Permitted Services'}
                     </h4>
                     <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                      {isBn ? 'আপনার একাউন্টের জন্য অনুমোদিত কার্যক্রম' : 'Enabled permissions for your account'}
+                      {isBn ? 'মেইন অ্যাডমিনের নির্ধারিত পেইজ ও সেবার অনুমতি' : 'Services & pages enabled by Main Admin'}
                     </p>
                   </div>
                 </div>
@@ -727,23 +760,25 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px] text-slate-700 dark:text-slate-300 pt-1">
-                <div className="flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span>{isBn ? 'নতুন আয় ও খরচ লেনদেন যোগ করা' : 'Add new income/expense entries'}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                  <span>{isBn ? 'নিজের এন্ট্রি ৩০ মিনিট পর্যন্ত এডিট ও ডিলিট' : 'Edit/delete own entries up to 30 mins'}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span>{isBn ? 'তালিকায় নিজের লেনদেন ও ড্যাশবোর্ডে সম্পূর্ণ হিসাব' : 'Own list & full dashboard balance'}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span>{isBn ? 'নিজ বা সম্পূর্ণ হিসাবের PDF ডাউনলোড অপশন' : 'Download own or full PDF report'}</span>
-                </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px] pt-1">
+                {SUB_ADMIN_PERMISSION_ITEMS.map((item) => {
+                  const allowed = hasSubAdminPermission(user, item.key);
+                  return (
+                    <div
+                      key={item.key}
+                      className={`flex items-center gap-1.5 ${
+                        allowed ? 'text-slate-800 dark:text-slate-200 font-semibold' : 'text-slate-400 dark:text-slate-500 line-through'
+                      }`}
+                    >
+                      {allowed ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      ) : (
+                        <X className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                      )}
+                      <span>{isBn ? item.labelBn : item.labelEn}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

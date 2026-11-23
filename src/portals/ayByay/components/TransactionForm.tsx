@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { TransactionType } from '../types';
 import { 
   INCOME_CATEGORIES, 
   EXPENSE_CATEGORIES, 
   PAYMENT_METHODS, 
   QUICK_TEMPLATES,
-  parseNumber
+  parseNumber,
+  getPrevMonthKey
 } from '../data/categories';
 import { 
   PlusCircle, 
@@ -28,6 +29,9 @@ import {
   Download
 } from 'lucide-react';
 import { showToast } from '../../../utils/uiFeedback';
+import { ALL_MONTHS, getActiveSheetLink } from '../../billManager/constants';
+import { fetchSheetRecordsFast } from '../../billManager/utils';
+import { safeStorage } from '../../../utils/safeStorage';
 
 interface TransactionFormProps {
   onAddTransaction: (data: {
@@ -118,52 +122,243 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
   const [isFetchingSummary, setIsFetchingSummary] = useState(false);
   const [fetchError, setFetchError] = useState<{ message: string; needsAuth?: boolean; target?: string } | null>(null);
   const [showJsonPaste, setShowJsonPaste] = useState(false);
+  const [billSyncStatus, setBillSyncStatus] = useState<{
+    month: string;
+    count: number;
+    grandTotal: number;
+    totalDue: number;
+    totalPay: number;
+    source: 'live' | 'cache' | 'api';
+  } | null>(null);
 
-  // Calculate Net Bill for Monthly Internet Bill
+  const fetchRequestIdRef = useRef(0);
+  const lastAutoSyncKeyRef = useRef<string>('');
+
+  const activeMonthYM = useMemo(() => {
+    if (date && /^\d{4}-\d{2}/.test(date)) {
+      return date.substring(0, 7);
+    }
+    if (selectedMonth && /^\d{4}-\d{2}/.test(selectedMonth)) {
+      return selectedMonth.substring(0, 7);
+    }
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }, [date, selectedMonth]);
+
+  const activeBnMonth = useMemo(() => {
+    const monthPart = parseInt((activeMonthYM.split('-')[1] || ''), 10);
+    return monthPart >= 1 && monthPart <= 12 ? ALL_MONTHS[monthPart - 1] : '';
+  }, [activeMonthYM]);
+
+  const isBillAutoCategory =
+    category === 'মাসিক ইন্টারনেট বিল' ||
+    category === 'নেট সংযোগ' ||
+    category === 'বকেয়া বিল';
+
+  const effectiveTargetMonthYM = useMemo(() => {
+    if (category === 'বকেয়া বিল') {
+      return getPrevMonthKey(activeMonthYM);
+    }
+    return activeMonthYM;
+  }, [category, activeMonthYM]);
+
+  const effectiveTargetBnMonth = useMemo(() => {
+    const monthPart = parseInt((effectiveTargetMonthYM.split('-')[1] || ''), 10);
+    return monthPart >= 1 && monthPart <= 12 ? ALL_MONTHS[monthPart - 1] : '';
+  }, [effectiveTargetMonthYM]);
+
+  // Calculate Net Bill for auto-synced Bill Manager Pro categories
   useEffect(() => {
-    if (category === 'মাসিক ইন্টারনেট বিল') {
+    if (isBillAutoCategory) {
       const gTotal = parseFloat(billGrandTotal) || 0;
       const deduct = parseFloat(billDeduction) || 0;
       const due = parseFloat(billDue) || 0;
-      const net = gTotal - deduct - due;
+      const net = Math.max(0, gTotal - deduct - due);
       setAmount(String(net));
     }
-  }, [category, billGrandTotal, billDeduction, billDue]);
+  }, [isBillAutoCategory, billGrandTotal, billDeduction, billDue]);
 
-  const fetchSummaryData = async () => {
-    setIsFetchingSummary(true);
-    setFetchError(null);
+  const fetchSummaryData = useCallback(
+    async (
+      targetYM: string = activeMonthYM,
+      isManual: boolean = false,
+      targetCategory: string = category
+    ) => {
+      const reqId = ++fetchRequestIdRef.current;
+      const resolvedYM =
+        targetCategory === 'বকেয়া বিল' ? getPrevMonthKey(targetYM) : targetYM;
+      const sheetService: 'নেট বিল' | 'নেট সংযোগ' | 'বকেয়া বিল' =
+        targetCategory === 'নেট সংযোগ'
+          ? 'নেট সংযোগ'
+          : targetCategory === 'বকেয়া বিল'
+          ? 'বকেয়া বিল'
+          : 'নেট বিল';
 
-    try {
-      const proxyResponse = await fetch('/api/ay-byay/external/summary', {
-        headers: { 'Accept': 'application/json' }
-      });
+      const monthPart = parseInt((resolvedYM.split('-')[1] || ''), 10);
+      const targetBnMonth = monthPart >= 1 && monthPart <= 12 ? ALL_MONTHS[monthPart - 1] : '';
 
-      const contentType = proxyResponse.headers.get('content-type') || '';
-      if (proxyResponse.ok && contentType.includes('application/json')) {
-        const proxyResult = await proxyResponse.json();
-        const source = proxyResult.data || proxyResult;
-        if (proxyResult.success !== false && (source.grandTotal !== undefined || source.totalBill !== undefined || source.totalDue !== undefined)) {
-          const gTotal = source.grandTotal ?? source.totalBill ?? source.total ?? source.totalPay ?? 0;
-          const tDue = source.totalDue ?? source.due ?? source.dueBill ?? source.dueAmount ?? 0;
-          setBillGrandTotal(String(gTotal));
-          setBillDue(String(tDue));
-          setFetchError(null);
-          return;
+      setIsFetchingSummary(true);
+      setFetchError(null);
+
+      const applyBillTotals = (
+        grandTotal: number,
+        totalDue: number,
+        count: number,
+        source: 'live' | 'cache' | 'api',
+        totalPay?: number
+      ) => {
+        const roundedGrand = Math.round(grandTotal);
+        const roundedDue = Math.round(totalDue);
+        const roundedPay = Math.round(totalPay ?? Math.max(0, roundedGrand - roundedDue));
+        setBillGrandTotal(String(roundedGrand));
+        setBillDue(String(roundedDue));
+        setFetchError(null);
+        setBillSyncStatus({
+          month: targetBnMonth || resolvedYM,
+          count,
+          grandTotal: roundedGrand,
+          totalDue: roundedDue,
+          totalPay: roundedPay,
+          source
+        });
+      };
+
+      let hydratedFromCache = false;
+
+      // 1. Instant local cache hydration from Bill Manager Pro storage
+      if (targetBnMonth) {
+        try {
+          const cachedRaw = safeStorage.getItem(`bill_v4_${sheetService}_${targetBnMonth}`);
+          if (cachedRaw) {
+            const cachedRecs = JSON.parse(cachedRaw) as Array<{ pay?: number; due?: number }>;
+            if (Array.isArray(cachedRecs) && cachedRecs.length > 0) {
+              const totalPay = cachedRecs.reduce((s, r) => s + (Number(r.pay) || 0), 0);
+              const totalDue = cachedRecs.reduce((s, r) => s + (Number(r.due) || 0), 0);
+              const grandTotal = totalPay + totalDue;
+              if (reqId !== fetchRequestIdRef.current) return;
+              applyBillTotals(grandTotal, totalDue, cachedRecs.length, 'cache', totalPay);
+              hydratedFromCache = true;
+            }
+          }
+        } catch {
+          // ignore cache parse errors
         }
       }
 
-      setFetchError({
-        message: 'বিলিং ডেটা স্বয়ংক্রিয়ভাবে পাওয়া যায়নি। অনুগ্রহ করে নিচে মোট বিল, কর্তন ও বকেয়া লিখুন অথবা JSON পেস্ট করুন।'
-      });
-    } catch {
-      setFetchError({
-        message: 'অটো-লোড সার্ভার সংযোগ পাওয়া যায়নি। অনুগ্রহ করে ম্যানুয়ালি বিলের তথ্য দিন।'
-      });
-    } finally {
-      setIsFetchingSummary(false);
+      const sheetUrl = targetBnMonth ? getActiveSheetLink(sheetService, targetBnMonth) : '';
+
+      try {
+        // 2. Live Google Sheet fetch via fast CSV Bill Manager pipeline
+        if (sheetUrl) {
+          const recs = await fetchSheetRecordsFast(sheetUrl, sheetService, { forceFresh: isManual });
+          if (reqId !== fetchRequestIdRef.current) return;
+          if (recs && recs.length > 0) {
+            const totalPay = recs.reduce((s, r) => s + (r.pay || 0), 0);
+            const totalDue = recs.reduce((s, r) => s + (r.due || 0), 0);
+            const grandTotal = totalPay + totalDue;
+
+            safeStorage.setItem(`bill_v4_${sheetService}_${targetBnMonth}`, JSON.stringify(recs));
+            if (sheetService === 'নেট বিল') {
+              try {
+                const aggRaw = safeStorage.getItem('bill_monthly_aggregates');
+                const parsedAgg = aggRaw ? JSON.parse(aggRaw) : { net: {}, dis: {} };
+                const nextAgg = {
+                  net: { ...(parsedAgg?.net || {}), [targetBnMonth]: totalPay },
+                  dis: { ...(parsedAgg?.dis || {}) }
+                };
+                safeStorage.setItem('bill_monthly_aggregates', JSON.stringify(nextAgg));
+              } catch {
+                // ignore aggregates update failure
+              }
+            }
+
+            applyBillTotals(grandTotal, totalDue, recs.length, 'live', totalPay);
+            if (isManual) {
+              showToast(`✅ ${targetBnMonth} মাসের ${sheetService} (${recs.length} জন) অটো আপডেট হয়েছে`, 'success');
+            }
+            return;
+          }
+        }
+
+        // 3. Secondary optional proxy fallback (only for মাসিক ইন্টারনেট বিল)
+        if (sheetService === 'নেট বিল') {
+          const proxyResponse = await fetch(`/api/ay-byay/external/summary?month=${encodeURIComponent(resolvedYM)}`, {
+            headers: { 'Accept': 'application/json' }
+          });
+          if (reqId !== fetchRequestIdRef.current) return;
+
+          const contentType = proxyResponse.headers.get('content-type') || '';
+          if (proxyResponse.ok && contentType.includes('application/json')) {
+            const proxyResult = await proxyResponse.json();
+            const source = proxyResult.data || proxyResult;
+            if (
+              proxyResult.success !== false &&
+              (source.grandTotal !== undefined || source.totalBill !== undefined || source.totalDue !== undefined)
+            ) {
+              const gTotal = Number(source.grandTotal ?? source.totalBill ?? source.total ?? source.totalPay ?? 0);
+              const tDue = Number(source.totalDue ?? source.due ?? source.dueBill ?? source.dueAmount ?? 0);
+              applyBillTotals(gTotal, tDue, Number(source.count || 0), 'api');
+              if (isManual) {
+                showToast(`✅ ${targetBnMonth || resolvedYM} মাসের বিল আপডেট হয়েছে`, 'success');
+              }
+              return;
+            }
+          }
+        }
+
+        if (!hydratedFromCache) {
+          setBillGrandTotal('');
+          setBillDue('');
+          setBillSyncStatus(null);
+          setFetchError({
+            message: !sheetUrl
+              ? `${targetBnMonth || resolvedYM} মাসের অনলাইন ${sheetService} শিট লিংক নেই — নিচে ম্যানুয়ালি লিখুন অথবা তারিখ থেকে সঠিক মাস বেছে নিন।`
+              : `${targetBnMonth || resolvedYM} মাসের ${sheetService} ডেটা লোড করা যায়নি। নিচে ম্যানুয়ালি তথ্য দিন অথবা পুনরায় চেষ্টা করুন।`
+          });
+        }
+      } catch {
+        if (reqId !== fetchRequestIdRef.current) return;
+        if (!hydratedFromCache) {
+          setBillGrandTotal('');
+          setBillDue('');
+          setBillSyncStatus(null);
+          setFetchError({
+            message: 'অটো-লোড সার্ভার সংযোগ পাওয়া যায়নি। অনুগ্রহ করে ম্যানুয়ালি বিলের তথ্য দিন।'
+          });
+        }
+      } finally {
+        if (reqId === fetchRequestIdRef.current) {
+          setIsFetchingSummary(false);
+        }
+      }
+    },
+    [activeMonthYM, category]
+  );
+
+  // Auto-sync Monthly Internet Bill, Net Connection, and Previous-Month Due Bill whenever form is open or real-time updates arrive
+  useEffect(() => {
+    if (!isOpen) {
+      lastAutoSyncKeyRef.current = '';
+      return;
     }
-  };
+    if (type === 'income' && isBillAutoCategory) {
+      const syncKey = `${activeMonthYM}:${category}`;
+      if (lastAutoSyncKeyRef.current !== syncKey) {
+        lastAutoSyncKeyRef.current = syncKey;
+        fetchSummaryData(activeMonthYM, false, category);
+      }
+    }
+  }, [isOpen, type, category, isBillAutoCategory, activeMonthYM, fetchSummaryData]);
+
+  // Listen to real-time updates from Bill Manager Pro portal
+  useEffect(() => {
+    if (!isOpen || type !== 'income' || !isBillAutoCategory) return;
+    const handleBillUpdate = () => {
+      fetchSummaryData(activeMonthYM, false, category);
+    };
+    window.addEventListener('bill-manager-data-updated', handleBillUpdate);
+    return () => window.removeEventListener('bill-manager-data-updated', handleBillUpdate);
+  }, [isOpen, type, category, isBillAutoCategory, activeMonthYM, fetchSummaryData]);
 
   const handleJsonPaste = (jsonStr: string) => {
     try {
@@ -270,8 +465,13 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
     setCategory(tpl.category);
     setCustomCategory('');
     setAmount(String(tpl.amount));
-    if (tpl.category === 'মাসিক ইন্টারনেট বিল') {
-      fetchSummaryData();
+    if (
+      tpl.category === 'মাসিক ইন্টারনেট বিল' ||
+      tpl.category === 'নেট সংযোগ' ||
+      tpl.category === 'বকেয়া বিল'
+    ) {
+      lastAutoSyncKeyRef.current = `${activeMonthYM}:${tpl.category}`;
+      fetchSummaryData(activeMonthYM, false, tpl.category);
     }
     if (!isOpen) setIsOpen(true);
   };
@@ -324,6 +524,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
       setBillGrandTotal('');
       setBillDeduction('');
       setBillDue('');
+      setBillSyncStatus(null);
       setCustomCategory('');
       setNote('');
       sessionStorage.removeItem(DRAFT_STORAGE_KEY);
@@ -523,8 +724,13 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                 onChange={(e) => {
                   const newCategory = e.target.value;
                   setCategory(newCategory);
-                  if (newCategory === 'মাসিক ইন্টারনেট বিল') {
-                    fetchSummaryData();
+                  if (
+                    newCategory === 'মাসিক ইন্টারনেট বিল' ||
+                    newCategory === 'নেট সংযোগ' ||
+                    newCategory === 'বকেয়া বিল'
+                  ) {
+                    lastAutoSyncKeyRef.current = `${activeMonthYM}:${newCategory}`;
+                    fetchSummaryData(activeMonthYM, false, newCategory);
                   }
                 }}
                 className="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl text-sm font-semibold text-slate-900 dark:text-slate-100 focus:bg-white dark:focus:bg-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200/20 transition"
@@ -555,33 +761,66 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
               )}
             </div>
 
-            {/* 3. Amount of Money (টাকার অংক / পরিমাণ - Conditional for Internet Bill) */}
+            {/* 3. Amount of Money (টাকার অংক / পরিমাণ - Auto Calculator for Bill Manager Pro categories) */}
             <div>
-              {category === 'মাসিক ইন্টারনেট বিল' ? (
+              {isBillAutoCategory ? (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between mb-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
                     <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 ml-1">
-                      ইন্টারনেট বিল অটো-ক্যালকুলেটর (টাকার পরিমাণ)
+                      {category === 'নেট সংযোগ'
+                        ? `নেট সংযোগ অটো-ক্যালকুলেটর (${effectiveTargetBnMonth || effectiveTargetMonthYM})`
+                        : category === 'বকেয়া বিল'
+                        ? `আগের মাসের বকেয়া বিল অটো-ক্যালকুলেটর (${effectiveTargetBnMonth || effectiveTargetMonthYM})`
+                        : `ইন্টারনেট বিল অটো-ক্যালকুলেটর (${effectiveTargetBnMonth || effectiveTargetMonthYM})`}
                     </label>
                     <div className="flex items-center gap-3">
                       <button 
                         type="button"
                         onClick={() => setShowJsonPaste(!showJsonPaste)}
-                        className="text-[10px] font-bold text-slate-500 hover:text-indigo-600 flex items-center gap-1 cursor-pointer transition"
+                        className="text-[11px] font-bold text-slate-500 hover:text-indigo-600 dark:text-slate-400 dark:hover:text-indigo-400 flex items-center gap-1 cursor-pointer transition"
                       >
                         <FileText className="w-3 h-3" />
                         <span>{showJsonPaste ? 'পেস্ট লুকান' : 'ডেটা পেস্ট করুন'}</span>
                       </button>
                       <button 
                         type="button"
-                        onClick={fetchSummaryData}
-                        className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer transition"
+                        onClick={() => fetchSummaryData(activeMonthYM, true, category)}
+                        className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 flex items-center gap-1 cursor-pointer transition"
                       >
                         <RefreshCw className={`w-3 h-3 ${isFetchingSummary ? 'animate-spin' : ''}`} />
-                        <span>অটো লোড</span>
+                        <span>অটো আপডেট</span>
                       </button>
                     </div>
                   </div>
+
+                  {billSyncStatus && !fetchError && (
+                    <div
+                      id="bill-auto-sync-status"
+                      className={`p-2.5 rounded-xl border text-[11px] font-semibold flex flex-wrap items-center justify-between gap-2 tabular-nums ${
+                        billSyncStatus.source === 'live'
+                          ? 'bg-emerald-50/90 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/70 text-emerald-800 dark:text-emerald-300'
+                          : 'bg-indigo-50/80 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-800/70 text-indigo-800 dark:text-indigo-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                        <span>
+                          বিল ম্যানেজার প্রো ({category === 'বকেয়া বিল' ? `পূর্ববর্তী ${billSyncStatus.month}` : billSyncStatus.month} মাস):{' '}
+                          {billSyncStatus.count > 0
+                            ? `${billSyncStatus.count.toLocaleString('bn-BD')} জন — `
+                            : ''}
+                          আদায় ৳{billSyncStatus.totalPay.toLocaleString('bn-BD')}, বাকি বকেয়া ৳{billSyncStatus.totalDue.toLocaleString('bn-BD')}
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/80 dark:bg-slate-900/70 border border-current/15 shrink-0">
+                        {billSyncStatus.source === 'live'
+                          ? 'লাইভ শিট সিঙ্ক'
+                          : billSyncStatus.source === 'cache'
+                          ? 'ক্যাশ থেকে লোড'
+                          : 'সার্ভার সিঙ্ক'}
+                      </span>
+                    </div>
+                  )}
 
                   {showJsonPaste && (
                     <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/50 rounded-xl animate-in fade-in zoom-in-95 duration-200">
@@ -600,13 +839,13 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                   {isFetchingSummary && (
                     <div className="flex items-center gap-2 text-xs font-bold text-indigo-600 dark:text-indigo-400 animate-pulse ml-1">
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>এপিআই থেকে তথ্য লোড হচ্ছে...</span>
+                      <span>বিল ম্যানেজার প্রো ({effectiveTargetBnMonth || effectiveTargetMonthYM}) থেকে লাইভ তথ্য আপডেট হচ্ছে...</span>
                     </div>
                   )}
                   {fetchError && (
                     <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300">
                       <div className="flex items-center gap-2 font-bold mb-1">
-                        <AlertCircle className="w-4 h-4" />
+                        <AlertCircle className="w-4 h-4 shrink-0" />
                         <span>{fetchError.message}</span>
                       </div>
                       {fetchError.needsAuth && fetchError.target && (
@@ -626,7 +865,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({
                             </a>
                             <button
                               type="button"
-                              onClick={fetchSummaryData}
+                              onClick={() => fetchSummaryData(activeMonthYM, true)}
                               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg font-bold hover:bg-slate-300 dark:hover:bg-slate-600 transition"
                             >
                               <RefreshCw className="w-3.5 h-3.5" />

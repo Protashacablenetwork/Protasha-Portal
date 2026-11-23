@@ -7,12 +7,14 @@ import {
   Headphones,
   UserCheck
 } from 'lucide-react';
-import { Language } from '../types';
+import { Language, SubAdminPermissionKey, UserSession } from '../types';
 import { sounds } from '../utils/audio';
 import { toBengaliNumber } from '../utils/formatters';
+import { hasSubAdminPermission } from '../utils/permissions';
 
 interface PrimaryFeatureCardsProps {
   lang: Language;
+  user?: UserSession | null;
   serviceStatuses: Record<string, any>;
   onOpenBillManager: () => void;
   onOpenAyByay: () => void;
@@ -21,6 +23,7 @@ interface PrimaryFeatureCardsProps {
 
 export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
   lang,
+  user,
   serviceStatuses,
   onOpenBillManager,
   onOpenAyByay,
@@ -28,9 +31,19 @@ export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
 }) => {
   const isBn = lang === 'bn';
 
-  const isBillLocked = serviceStatuses.billManager?.isActive === false || String(serviceStatuses.billManager?.isActive) === 'false';
-  const isAyByayLocked = serviceStatuses.ayByay?.isActive === false || String(serviceStatuses.ayByay?.isActive) === 'false';
-  const isQuickHisabLocked = serviceStatuses.quickHisab?.isActive === false || String(serviceStatuses.quickHisab?.isActive) === 'false';
+  const isRoleBlocked = (key: SubAdminPermissionKey) => {
+    if (user?.role === 'staff') return key !== 'staffAttendance';
+    if (user?.role === 'sub-admin') return !hasSubAdminPermission(user, key);
+    return false;
+  };
+
+  const isBillRestricted = isRoleBlocked('billManager');
+  const isAyByayRestricted = isRoleBlocked('ayByay');
+  const isQuickHisabRestricted = isRoleBlocked('quickHisab');
+
+  const isBillLocked = isBillRestricted || serviceStatuses.billManager?.isActive === false || String(serviceStatuses.billManager?.isActive) === 'false';
+  const isAyByayLocked = isAyByayRestricted || serviceStatuses.ayByay?.isActive === false || String(serviceStatuses.ayByay?.isActive) === 'false';
+  const isQuickHisabLocked = isQuickHisabRestricted || serviceStatuses.quickHisab?.isActive === false || String(serviceStatuses.quickHisab?.isActive) === 'false';
 
   return (
     <div className="px-4 pt-1 pb-3 select-none space-y-2.5 sm:space-y-3.5">
@@ -61,9 +74,15 @@ export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
             <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-white/20 backdrop-blur-md flex items-center justify-center text-white">
               <Zap className="w-4 h-4 stroke-[2.2]" />
             </div>
-            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-white/15 backdrop-blur-md flex items-center justify-center text-white group-hover:translate-x-0.5 transition-transform">
-              <ArrowRight className="w-3.5 h-3.5 stroke-[2.5]" />
-            </div>
+            {isBillRestricted ? (
+              <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-black/35 text-white">
+                {isBn ? 'সীমিত' : 'Locked'}
+              </span>
+            ) : (
+              <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-white/15 backdrop-blur-md flex items-center justify-center text-white group-hover:translate-x-0.5 transition-transform">
+                <ArrowRight className="w-3.5 h-3.5 stroke-[2.5]" />
+              </div>
+            )}
           </div>
 
           {/* Card Content */}
@@ -72,7 +91,9 @@ export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
               {isBn ? 'বিল ম্যানেজমেন্ট প্রো' : 'Bill Management Pro'}
             </h3>
             <p className="text-[10px] sm:text-[11px] text-white/90 font-medium mt-0.5 truncate">
-              {isBn ? 'স্মার্ট বিলিং ও কালেকশন' : 'Smart Billing System'}
+              {isBillRestricted
+                ? isBn ? 'অনুমতি সীমাবদ্ধ' : 'Access restricted'
+                : isBn ? 'স্মার্ট বিলিং ও কালেকশন' : 'Smart Billing System'}
             </p>
           </div>
         </div>
@@ -105,9 +126,15 @@ export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
                 className="w-full h-full object-contain rounded-lg"
               />
             </div>
-            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center text-teal-300 group-hover:translate-x-0.5 transition-transform">
-              <ArrowRight className="w-3.5 h-3.5 stroke-[2.5]" />
-            </div>
+            {isAyByayRestricted ? (
+              <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-black/35 text-white">
+                {isBn ? 'সীমিত' : 'Locked'}
+              </span>
+            ) : (
+              <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center text-teal-300 group-hover:translate-x-0.5 transition-transform">
+                <ArrowRight className="w-3.5 h-3.5 stroke-[2.5]" />
+              </div>
+            )}
           </div>
 
           {/* Card Content */}
@@ -119,7 +146,9 @@ export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
               <span className="text-white ml-1">{isBn ? 'হিসাব' : 'Ledger'}</span>
             </h3>
             <p className="text-[10px] sm:text-[11px] text-slate-300 font-medium mt-0.5 truncate">
-              {isBn ? 'স্মার্ট দৈনন্দিন খাতা' : 'Daily Accounts'}
+              {isAyByayRestricted
+                ? isBn ? 'অনুমতি সীমাবদ্ধ' : 'Access restricted'
+                : isBn ? 'স্মার্ট দৈনন্দিন খাতা' : 'Daily Accounts'}
             </p>
           </div>
         </div>
@@ -159,7 +188,9 @@ export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
               </h3>
               {isQuickHisabLocked && (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-600">
-                  {isBn ? 'বন্ধ রয়েছে' : 'Offline'}
+                  {isQuickHisabRestricted
+                    ? isBn ? 'অনুমতি সীমাবদ্ধ' : 'Restricted'
+                    : isBn ? 'বন্ধ রয়েছে' : 'Offline'}
                 </span>
               )}
             </div>
@@ -179,6 +210,7 @@ export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
 
 interface OperationsHubCardsProps {
   lang: Language;
+  user?: UserSession | null;
   serviceStatuses?: Record<string, any>;
   openTicketsCount?: number;
   todayPresentCount?: number;
@@ -189,6 +221,7 @@ interface OperationsHubCardsProps {
 
 export const OperationsHubCards: React.FC<OperationsHubCardsProps> = ({
   lang,
+  user,
   serviceStatuses = {},
   openTicketsCount = 0,
   todayPresentCount = 0,
@@ -199,10 +232,18 @@ export const OperationsHubCards: React.FC<OperationsHubCardsProps> = ({
   if (!onOpenSupportTickets && !onOpenStaffAttendance) return null;
 
   const isBn = lang === 'bn';
+  const isTicketsRestricted =
+    user?.role === 'staff' ||
+    (user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'supportTickets'));
+  const isAttendanceRestricted =
+    user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'staffAttendance');
+
   const isTicketsLocked =
+    isTicketsRestricted ||
     serviceStatuses.supportTickets?.isActive === false ||
     String(serviceStatuses.supportTickets?.isActive) === 'false';
   const isAttendanceLocked =
+    isAttendanceRestricted ||
     serviceStatuses.staffAttendance?.isActive === false ||
     String(serviceStatuses.staffAttendance?.isActive) === 'false';
 
@@ -228,7 +269,7 @@ export const OperationsHubCards: React.FC<OperationsHubCardsProps> = ({
             </div>
             {isTicketsLocked ? (
               <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
-                {isBn ? 'বন্ধ' : 'Off'}
+                {isTicketsRestricted ? (isBn ? 'সীমিত' : 'Locked') : (isBn ? 'বন্ধ' : 'Off')}
               </span>
             ) : (
               openTicketsCount > 0 && (
@@ -244,9 +285,13 @@ export const OperationsHubCards: React.FC<OperationsHubCardsProps> = ({
             </p>
             <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 truncate mt-0.5">
               {isTicketsLocked
-                ? isBn
-                  ? 'সাময়িকভাবে বন্ধ'
-                  : 'Temporarily off'
+                ? isTicketsRestricted
+                  ? isBn
+                    ? 'শুধুমাত্র অনুমোদিতদের জন্য'
+                    : 'Permission required'
+                  : isBn
+                    ? 'সাময়িকভাবে বন্ধ'
+                    : 'Temporarily off'
                 : openTicketsCount > 0
                   ? isBn
                     ? `${toBengaliNumber(openTicketsCount)}টি খোলা`
@@ -277,7 +322,7 @@ export const OperationsHubCards: React.FC<OperationsHubCardsProps> = ({
             </div>
             {isAttendanceLocked ? (
               <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
-                {isBn ? 'বন্ধ' : 'Off'}
+                {isAttendanceRestricted ? (isBn ? 'সীমিত' : 'Locked') : (isBn ? 'বন্ধ' : 'Off')}
               </span>
             ) : (
               totalStaffCount > 0 && (
@@ -295,9 +340,13 @@ export const OperationsHubCards: React.FC<OperationsHubCardsProps> = ({
             </p>
             <p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 truncate mt-0.5">
               {isAttendanceLocked
-                ? isBn
-                  ? 'সাময়িকভাবে বন্ধ'
-                  : 'Temporarily off'
+                ? isAttendanceRestricted
+                  ? isBn
+                    ? 'অনুমতি সীমাবদ্ধ'
+                    : 'Permission required'
+                  : isBn
+                    ? 'সাময়িকভাবে বন্ধ'
+                    : 'Temporarily off'
                 : isBn
                   ? 'হাজিরা ও ছুটি'
                   : 'Daily & Leaves'}

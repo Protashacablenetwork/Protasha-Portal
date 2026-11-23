@@ -22,7 +22,15 @@ import {
 } from 'lucide-react';
 import { db, safeSetDoc, safeDeleteDoc, handleFirestoreError, OperationType } from '../utils/firebase';
 import { collection, getDocs, onSnapshot, doc, query, where } from 'firebase/firestore';
-import { Language, AppUser, UserRole } from '../types';
+import {
+  Language,
+  AppUser,
+  UserRole,
+  SubAdminPermissionKey,
+  SubAdminPermissions,
+  SUB_ADMIN_PERMISSION_ITEMS,
+  DEFAULT_SUB_ADMIN_PERMISSIONS
+} from '../types';
 import { sounds } from '../utils/audio';
 import { safeStorage } from '../utils/safeStorage';
 import { compressImage } from '../utils/imageCompressor';
@@ -34,7 +42,7 @@ import {
   adminForceReleaseSession,
   DeviceSessionRecord
 } from '../utils/deviceSession';
-import { syncSubAdminUserToStaffDirectory } from '../utils/staffSync';
+import { syncStaffOrSubAdminUserToDirectory, syncStaffPinEverywhere } from '../utils/staffSync';
 import { useSubViewBack } from '../utils/useSubViewBack';
 import { showConfirm } from '../utils/uiFeedback';
 
@@ -57,7 +65,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
   const [users, setUsers] = useState<AppUser[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState<'all' | 'sub-admin' | 'user' | 'admin'>('all');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'sub-admin' | 'staff' | 'user' | 'admin'>('all');
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
@@ -74,6 +82,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   const [editAvatar, setEditAvatar] = useState('');
   const [editStatus, setEditStatus] = useState<'active' | 'suspended'>('active');
   const [editRole, setEditRole] = useState<UserRole>('user');
+  const [editPermissions, setEditPermissions] = useState<SubAdminPermissions>({ ...DEFAULT_SUB_ADMIN_PERMISSIONS });
   const [showEditPin, setShowEditPin] = useState(false);
 
   // New User State
@@ -205,6 +214,11 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
     setEditStatus(user.status);
     setEditRole(user.role);
+    setEditPermissions(
+      user.permissions && Object.keys(user.permissions).length > 0
+        ? { ...DEFAULT_SUB_ADMIN_PERMISSIONS, ...user.permissions }
+        : { ...DEFAULT_SUB_ADMIN_PERMISSIONS }
+    );
     setIsAddingNew(false);
     setErrorMsg('');
   };
@@ -220,7 +234,24 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
     setEditAvatar('');
     setEditStatus('active');
     setEditRole('user');
+    setEditPermissions({ ...DEFAULT_SUB_ADMIN_PERMISSIONS });
     setErrorMsg('');
+  };
+
+  const toggleSubAdminPermission = (key: SubAdminPermissionKey) => {
+    sounds.playTap();
+    setEditPermissions((prev) => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
+
+  const buildSanitizedPermissions = (): SubAdminPermissions => {
+    const clean: SubAdminPermissions = {};
+    SUB_ADMIN_PERMISSION_ITEMS.forEach((item) => {
+      clean[item.key] = Boolean(editPermissions[item.key]);
+    });
+    return clean;
   };
 
   // Save Edit to Server
@@ -238,8 +269,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       sounds.playTap();
       return;
     }
-    if (!editPin.trim()) {
-      setErrorMsg(isBn ? 'লগইন পিন আবশ্যক' : 'PIN is required');
+    if (!/^\d{4,8}$/.test(editPin.trim())) {
+      setErrorMsg(isBn ? 'লগইন পিন অবশ্যই ৪ থেকে ৮ সংখ্যার হতে হবে' : 'PIN must be 4 to 8 digits');
       sounds.playTap();
       return;
     }
@@ -250,6 +281,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
     try {
       const cleanAvatar = editAvatar && !editAvatar.startsWith('/uploads/') ? editAvatar : '';
+      const resolvedPermissions = editRole === 'sub-admin' ? buildSanitizedPermissions() : undefined;
       const updatedUser: AppUser = {
         ...editingUser,
         name: editName.trim(),
@@ -258,6 +290,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
         avatarUrl: cleanAvatar,
         status: editStatus,
         role: editRole,
+        ...(resolvedPermissions ? { permissions: resolvedPermissions } : { permissions: {} }),
         updatedAt: new Date().toISOString()
       };
 
@@ -269,6 +302,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
         pin: updatedUser.pin,
         avatarUrl: cleanAvatar,
         role: updatedUser.role,
+        permissions: resolvedPermissions || {},
         status: updatedUser.status,
         updatedAt: updatedUser.updatedAt,
         ...(updatedUser.createdAt ? { createdAt: updatedUser.createdAt } : {}),
@@ -282,9 +316,16 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       saveStoredUser(updatedUser);
       await safeSetDoc(doc(db, 'users', editingUser.id), firestorePayload, { merge: true });
 
-      // Auto-sync Sub-Admin (Staff) accounts into unified staff directory across the whole app
-      if (updatedUser.role === 'sub-admin') {
-        await syncSubAdminUserToStaffDirectory(updatedUser).catch(() => {});
+      // Auto-sync Sub-Admin & Staff accounts into unified staff directory
+      if (updatedUser.role === 'sub-admin' || updatedUser.role === 'staff') {
+        await syncStaffOrSubAdminUserToDirectory(updatedUser).catch(() => {});
+      }
+      if (updatedUser.role === 'staff') {
+        await syncStaffPinEverywhere({
+          staffId: updatedUser.id,
+          phone: updatedUser.phone,
+          newPin: updatedUser.pin
+        }).catch(() => {});
       }
 
       if (editStatus === 'suspended') {
@@ -313,7 +354,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
               name: editName.trim(),
               phone: editPhone.trim(),
               avatarUrl: editAvatar || cur.avatarUrl,
-              role: editRole
+              role: editRole,
+              ...(resolvedPermissions ? { permissions: resolvedPermissions } : { permissions: undefined })
             };
             safeStorage.setItem('protyasha_user', JSON.stringify(updatedSession));
             safeStorage.setItem('protyasha_admin_name', editName.trim());
@@ -363,8 +405,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       sounds.playTap();
       return;
     }
-    if (!editPin.trim()) {
-      setErrorMsg(isBn ? 'লগইন পিন আবশ্যক' : 'PIN is required');
+    if (!/^\d{4,8}$/.test(editPin.trim())) {
+      setErrorMsg(isBn ? 'লগইন পিন অবশ্যই ৪ থেকে ৮ সংখ্যার হতে হবে' : 'PIN must be 4 to 8 digits');
       sounds.playTap();
       return;
     }
@@ -398,6 +440,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       }
 
       const newId = 'usr_' + Date.now();
+      const resolvedPermissions = editRole === 'sub-admin' ? buildSanitizedPermissions() : undefined;
       const newUser: AppUser = {
         id: newId,
         name: editName.trim(),
@@ -405,6 +448,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
         avatarUrl: editAvatar || '',
         pin: editPin.trim(),
         role: editRole,
+        ...(resolvedPermissions ? { permissions: resolvedPermissions } : { permissions: {} }),
         createdAt: new Date().toISOString(),
         status: editStatus
       };
@@ -415,9 +459,16 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       // 2. Save in Firestore
       await safeSetDoc(doc(db, 'users', newId), newUser);
 
-      // 3. Auto-sync Sub-Admin (Staff) accounts into unified staff directory across the whole app
-      if (newUser.role === 'sub-admin') {
-        await syncSubAdminUserToStaffDirectory(newUser).catch(() => {});
+      // 3. Auto-sync Sub-Admin & Staff accounts into unified staff directory
+      if (newUser.role === 'sub-admin' || newUser.role === 'staff') {
+        await syncStaffOrSubAdminUserToDirectory(newUser).catch(() => {});
+      }
+      if (newUser.role === 'staff') {
+        await syncStaffPinEverywhere({
+          staffId: newUser.id,
+          phone: newUser.phone,
+          newPin: newUser.pin
+        }).catch(() => {});
       }
 
       sounds.playSuccess();
@@ -725,23 +776,112 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                     onChange={(e) => setEditRole(e.target.value as any)}
                     className="w-full h-11 px-3 text-xs font-bold bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700"
                   >
-                    <option value="user">{isBn ? 'সাধারণ ইউজার' : 'Regular User'}</option>
-                    <option value="sub-admin">{isBn ? 'সাব-অ্যাডমিন' : 'Sub-Admin'}</option>
+                    <option value="user">{isBn ? 'সাধারণ ইউজার (শুধু দেখা)' : 'Regular User (Read-Only)'}</option>
+                    <option value="staff">{isBn ? 'স্টাফ (শুধু হাজিরা)' : 'Staff (Attendance Only)'}</option>
+                    <option value="sub-admin">{isBn ? 'সাব-অ্যাডমিন (নির্ধারিত সেবা)' : 'Sub-Admin (Custom Access)'}</option>
                     <option value="admin">{isBn ? 'অ্যাডমিন' : 'Admin'}</option>
                   </select>
                 </div>
               </div>
 
-              {editRole === 'sub-admin' && (
-                <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 text-[11px] text-amber-900 dark:text-amber-200 space-y-1">
+              {editRole === 'staff' && (
+                <div className="p-3 rounded-xl bg-teal-50 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-900/50 text-[11px] text-teal-900 dark:text-teal-200 space-y-1">
                   <p className="font-bold">
-                    {isBn ? 'সাব-অ্যাডমিন নিয়ন্ত্রণ ক্ষমতা:' : 'Sub-Admin Permissions:'}
+                    {isBn ? 'স্টাফ অ্যাকাউন্ট সীমাবদ্ধতা:' : 'Staff Account Access:'}
                   </p>
                   <p>
                     {isBn
-                      ? '• নিজের লেনদেন যোগ, ৩০ মিনিট পর্যন্ত এডিট ও ডিলিট করতে পারবেন। • লেনদেন তালিকায় শুধু নিজের এন্ট্রি দেখবেন এবং ড্যাশবোর্ডে পুরো হিসাব দেখাবে। • PDF রিপোর্টে নিজের বা পুরো হিসাব সিলেক্ট করে ডাউনলোড করতে পারবেন।'
-                      : '• Can add transactions, edit/delete own entries up to 30 mins. • Sees own entries in transaction list while full balance remains on dashboard. • Can select Own or Full PDF report.'}
+                      ? '• এই নাম্বার ও পিন দিয়ে মূল অ্যাপে লগইন করে শুধুমাত্র "স্টাফ হাজিরা ও ছুটি" অপশনে নিজের হাজিরা দিতে পারবেন ও নিজের পিন পরিবর্তন করতে পারবেন। অন্য কোনো হিসাব বা ডেটা পরিবর্তন করতে পারবেন না।'
+                      : '• Logs in with phone & PIN exclusively for Staff Attendance (self check-in & own PIN change). Cannot access or modify other sections.'}
                   </p>
+                </div>
+              )}
+
+              {editRole === 'user' && (
+                <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 text-[11px] text-blue-900 dark:text-blue-200 space-y-1">
+                  <p className="font-bold">
+                    {isBn ? 'সাধারণ ইউজার (রিড-অনলি):' : 'Regular User (Read-Only):'}
+                  </p>
+                  <p>
+                    {isBn
+                      ? '• মোবাইল নাম্বার ও পিন দিয়ে লগইন করতে ও তথ্য দেখতে পারবেন, তবে অ্যাপের কোনো ডেটা যোগ, এডিট বা ডিলিট করতে পারবেন না।'
+                      : '• Can sign in and view permitted pages, but cannot add, edit, or delete any records.'}
+                  </p>
+                </div>
+              )}
+
+              {editRole === 'sub-admin' && (
+                <div className="p-3.5 rounded-2xl bg-amber-50/90 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div>
+                      <p className="text-xs font-extrabold text-amber-950 dark:text-amber-200">
+                        {isBn ? 'সাব-অ্যাডমিন নির্দিষ্ট সেবা ও পেইজ পারমিশন' : 'Sub-Admin Service & Page Permissions'}
+                      </p>
+                      <p className="text-[10px] text-amber-800/80 dark:text-amber-300/80">
+                        {isBn ? 'যেসব অপশন চালু রাখবেন শুধু সেগুলোই ব্যবহার করতে পারবেন' : 'Only enabled sections below will be accessible'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          sounds.playTap();
+                          setEditPermissions({ ...DEFAULT_SUB_ADMIN_PERMISSIONS });
+                        }}
+                        className="px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-bold cursor-pointer"
+                      >
+                        {isBn ? 'সব চালু' : 'All On'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          sounds.playTap();
+                          const allOff: SubAdminPermissions = {};
+                          SUB_ADMIN_PERMISSION_ITEMS.forEach((it) => {
+                            allOff[it.key] = false;
+                          });
+                          setEditPermissions(allOff);
+                        }}
+                        className="px-2 py-1 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-bold cursor-pointer"
+                      >
+                        {isBn ? 'সব বন্ধ' : 'All Off'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {SUB_ADMIN_PERMISSION_ITEMS.map((item) => {
+                      const enabled = Boolean(editPermissions[item.key]);
+                      return (
+                        <button
+                          key={item.key}
+                          type="button"
+                          onClick={() => toggleSubAdminPermission(item.key)}
+                          className={`p-2.5 rounded-xl border text-left transition-all flex items-center justify-between gap-2 cursor-pointer ${
+                            enabled
+                              ? 'bg-white dark:bg-slate-900 border-emerald-400 dark:border-emerald-700 shadow-2xs'
+                              : 'bg-slate-100/80 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800 opacity-70'
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-extrabold text-slate-900 dark:text-white truncate">
+                              {isBn ? item.labelBn : item.labelEn}
+                            </p>
+                            <p className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-1">
+                              {isBn ? item.descBn : item.descEn}
+                            </p>
+                          </div>
+                          <span
+                            className={`w-9 h-5 rounded-full p-0.5 transition-colors shrink-0 flex items-center ${
+                              enabled ? 'bg-emerald-600 justify-end' : 'bg-slate-300 dark:bg-slate-700 justify-start'
+                            }`}
+                          >
+                            <span className="w-4 h-4 rounded-full bg-white shadow-xs" />
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 
@@ -791,10 +931,11 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
               </div>
 
               {/* Role Filter Tabs */}
-              <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
+              <div className="grid grid-cols-5 gap-1 p-1 rounded-xl bg-slate-100 dark:bg-slate-800">
                 {[
                   { id: 'all', bn: 'সব', en: 'All' },
                   { id: 'sub-admin', bn: 'সাব-অ্যাডমিন', en: 'Sub-Admin' },
+                  { id: 'staff', bn: 'স্টাফ', en: 'Staff' },
                   { id: 'user', bn: 'ইউজার', en: 'User' },
                   { id: 'admin', bn: 'অ্যাডমিন', en: 'Admin' }
                 ].map((tab) => (
@@ -805,7 +946,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                       sounds.playTap();
                       setRoleFilter(tab.id as any);
                     }}
-                    className={`py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                    className={`py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer truncate px-1 ${
                       roleFilter === tab.id
                         ? 'bg-[#E52E2E] text-white shadow-xs'
                         : 'text-slate-600 dark:text-slate-300 hover:bg-white/60 dark:hover:bg-slate-700'
@@ -870,9 +1011,17 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                                 ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300' 
                                 : u.role === 'sub-admin'
                                 ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                                : u.role === 'staff'
+                                ? 'bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300'
                                 : 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
                             }`}>
-                              {isAdmin ? (isBn ? 'অ্যাডমিন' : 'Admin') : (u.role === 'sub-admin' ? (isBn ? 'সাব-অ্যাডমিন' : 'Sub-Admin') : (isBn ? 'ইউজার' : 'User'))}
+                              {isAdmin
+                                ? (isBn ? 'অ্যাডমিন' : 'Admin')
+                                : u.role === 'sub-admin'
+                                ? (isBn ? 'সাব-অ্যাডমিন' : 'Sub-Admin')
+                                : u.role === 'staff'
+                                ? (isBn ? 'স্টাফ' : 'Staff')
+                                : (isBn ? 'ইউজার' : 'User')}
                             </span>
                             {isSuspended && (
                               <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-red-100 text-red-700">

@@ -1,0 +1,41 @@
+<IfModule mod_mime.c>
+  AddType application/javascript .js .mjs
+  AddType text/css .css
+  AddType application/json .json
+  AddType image/svg+xml .svg
+  AddType image/webp .webp
+  AddType font/woff2 .woff2
+</IfModule>
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+
+  # Serve root index.html directly
+  RewriteRule ^index\.html$ - [L]
+
+  # Fix relative ./assets/... and ./version.json requests when loaded from nested SPA URLs (works on both root / and subfolder /app/)
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteRule ^.+/assets/(.+)$ assets/$1 [L]
+
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteRule ^.+/version\.json$ version.json [L]
+
+  # Never rewrite missing files inside assets/ to index.html
+  RewriteCond %{REQUEST_URI} (^|/)assets/ [NC]
+  RewriteRule ^ - [L]
+
+  # SPA fallback for all other non-file, non-directory routes
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ index.html [L,QSA]
+</IfModule>
+
+<IfModule mod_headers.c>
+  <FilesMatch "^(index\.html|version\.json)$">
+    Header set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+    Header set Pragma "no-cache"
+  </FilesMatch>
+  <FilesMatch "\.(js|mjs|css)$">
+    Header set Cache-Control "no-cache, must-revalidate, max-age=0"
+  </FilesMatch>
+</IfModule>

@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="bn">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>প্রত্যাশা ক্যাবল নেটওয়ার্ক</title>
+    <meta name="description" content="প্রত্যাশা স্মার্ট ক্যাবল নেটওয়ার্ক ও লেনদেন ব্যবস্থাপনা - মোবাইল ফিনান্সিয়াল সার্ভিসেস স্টাইল হিসাব খাতা" />
+    <meta property="og:title" content="প্রত্যাশা ক্যাবল নেটওয়ার্ক" />
+    <meta property="og:description" content="প্রত্যাশা স্মার্ট ক্যাবল নেটওয়ার্ক ও লেনদেন ব্যবস্থাপনা - মোবাইল ফিনান্সিয়াল সার্ভিসেস স্টাইল হিসাব খাতা" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+    <link rel="dns-prefetch" href="https://docs.google.com">
+    <link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap" rel="stylesheet"></noscript>
+    <style>
+      #app-splash {
+        position: fixed;
+        inset: 0;
+        background: #ffffff;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        transition: opacity 0.12s ease-out, visibility 0.12s;
+      }
+      .dark #app-splash { background: #0f172a; }
+      .splash-logo {
+        width: 80px;
+        height: 80px;
+        background: #E52E2E;
+        border-radius: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 24px;
+        animation: splash-pulse 2s infinite ease-in-out;
+        box-shadow: 0 10px 25px -5px rgba(229, 46, 46, 0.4);
+      }
+      .splash-logo svg { color: white; width: 40px; height: 40px; }
+      @keyframes splash-pulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.1); opacity: 0.8; }
+      }
+      .splash-text {
+        font-family: 'Hind Siliguri', sans-serif;
+        font-weight: 600;
+        font-size: 1.25rem;
+        color: #1e293b;
+      }
+      .dark .splash-text { color: #f1f5f9; }
+      .splash-sub {
+        font-family: 'Hind Siliguri', sans-serif;
+        font-size: 0.875rem;
+        color: #64748b;
+        margin-top: 8px;
+        text-align: center;
+        padding: 0 24px;
+      }
+      .dark .splash-sub { color: #94a3b8; }
+      .splash-actions {
+        display: none;
+        margin-top: 20px;
+        gap: 10px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+      .splash-actions.visible { display: flex; }
+      .splash-btn {
+        font-family: 'Hind Siliguri', sans-serif;
+        font-weight: 700;
+        font-size: 0.875rem;
+        padding: 10px 20px;
+        border-radius: 12px;
+        border: none;
+        cursor: pointer;
+      }
+      .splash-btn-primary { background: #E52E2E; color: #ffffff; }
+      .splash-btn-secondary { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
+      .splash-detail {
+        display: none;
+        margin-top: 10px;
+        max-width: 90vw;
+        padding: 6px 10px;
+        border-radius: 8px;
+        background: #f1f5f9;
+        color: #475569;
+        font-family: monospace;
+        font-size: 11px;
+        word-break: break-all;
+        text-align: center;
+      }
+      .splash-detail.visible { display: block; }
+      body.app-ready #app-splash { opacity: 0; visibility: hidden; pointer-events: none; }
+    </style>
+    <script type="module" crossorigin src="./assets/app.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/chunk-rolldown-runtime.js">
+    <link rel="modulepreload" crossorigin href="./assets/chunk-vendor-icons.js">
+    <link rel="modulepreload" crossorigin href="./assets/chunk-vendor-react.js">
+    <link rel="modulepreload" crossorigin href="./assets/chunk-vendor-firebase.js">
+    <link rel="modulepreload" crossorigin href="./assets/chunk-safeStorage.js">
+    <link rel="modulepreload" crossorigin href="./assets/chunk-formatters.js">
+    <link rel="stylesheet" crossorigin href="./assets/app.css">
+  </head>
+  <body class="bg-slate-100 text-slate-800 antialiased selection:bg-rose-500 selection:text-white">
+    <div id="app-splash">
+      <div class="splash-logo">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>
+      </div>
+      <div class="splash-text">প্রত্যাশা ক্যাবল নেটওয়ার্ক</div>
+      <div id="splash-status" class="splash-sub">অ্যাপ লোড হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন...</div>
+      <div id="splash-detail" class="splash-detail"></div>
+      <div id="splash-actions" class="splash-actions">
+        <button type="button" class="splash-btn splash-btn-primary" onclick="window.location.reload()">পুনরায় লোড করুন</button>
+        <button type="button" class="splash-btn splash-btn-secondary" onclick="try{localStorage.removeItem('protyasha_user');sessionStorage.clear();if(typeof indexedDB!=='undefined'){indexedDB.deleteDatabase('pcn_static_runtime_cache_v4');indexedDB.deleteDatabase('pcn_static_runtime_cache_v5');}}catch(e){} window.location.href=window.location.pathname+'?r='+Date.now()">ক্যাশ ক্লিয়ার ও রিলোড</button>
+      </div>
+    </div>
+    <div id="root"></div>
+    <script>
+      (function () {
+        var rootEl = document.getElementById('root');
+        var statusEl = document.getElementById('splash-status');
+        var detailEl = document.getElementById('splash-detail');
+        var actionsEl = document.getElementById('splash-actions');
+
+        var hasSpecificError = false;
+        var scriptRetryCount = 0;
+
+        function hasAppRendered() {
+          return !!(rootEl && rootEl.childElementCount > 0);
+        }
+
+        function hideSplashIfRendered() {
+          if (hasAppRendered()) {
+            document.body.classList.add('app-ready');
+            return true;
+          }
+          return false;
+        }
+
+        function showRecovery(msg, detail, isSpecific) {
+          if (hasAppRendered()) return;
+          if (isSpecific) hasSpecificError = true;
+          if (statusEl) statusEl.textContent = msg;
+          if (detailEl && detail) {
+            detailEl.textContent = detail;
+            detailEl.classList.add('visible');
+          }
+          if (actionsEl) actionsEl.classList.add('visible');
+        }
+
+        function scheduleScriptRetry(srcUrl) {
+          if (hasAppRendered() || scriptRetryCount >= 3) return false;
+          scriptRetryCount += 1;
+          if (statusEl) {
+            statusEl.textContent = 'সার্ভার সংযোগ স্থাপন হচ্ছে... (চেষ্টা ' + scriptRetryCount + '/3)';
+          }
+          setTimeout(function () {
+            if (hasAppRendered()) return;
+            var sep = srcUrl.indexOf('?') === -1 ? '?' : '&';
+            var s = document.createElement('script');
+            s.type = 'module';
+            if (srcUrl.indexOf('/assets/') !== -1 || srcUrl.indexOf('./assets/') === 0) {
+              s.crossOrigin = 'anonymous';
+            }
+            s.src = srcUrl + sep + 'retry=' + Date.now();
+            document.head.appendChild(s);
+          }, 2000);
+          return true;
+        }
+
+        if (rootEl && typeof MutationObserver !== 'undefined') {
+          var obs = new MutationObserver(function () {
+            if (hideSplashIfRendered()) obs.disconnect();
+          });
+          obs.observe(rootEl, { childList: true });
+        }
+
+        window.addEventListener('error', function (ev) {
+          if (hasAppRendered()) return;
+          var target = ev && ev.target;
+          var tag = target && target.tagName ? String(target.tagName).toUpperCase() : '';
+          // Ignore non-fatal font/stylesheet/image load failures so Google Fonts never blocks boot
+          if (tag === 'LINK' || tag === 'IMG') return;
+          if (tag === 'SCRIPT') {
+            var rawSrc = target.getAttribute ? (target.getAttribute('src') || target.src || '') : '';
+            var cleanSrc = rawSrc.split('?')[0];
+            // Ignore optional helper scripts (like preview iframe scripts)
+            if (cleanSrc && cleanSrc.indexOf('_aistudio') !== -1) return;
+
+            // If opened directly via file:// protocol, ES module scripts are blocked by browser CORS
+            if (window.location && window.location.protocol === 'file:') {
+              showRecovery(
+                'লোকাল ফাইল (file://) থেকে সরাসরি ওপেন করলে অ্যাপ চালু হয় না। লাইভ ওয়েব লিংক বা সার্ভার থেকে ওপেন করুন।',
+                'PROTOCOL: file:// (' + (cleanSrc || 'unknown') + ')',
+                true
+              );
+              return;
+            }
+
+            // Self-healing fallback: if relative ./assets/... failed on a nested route, walk up parent folders (supports both root / and subfolder /app/)
+            if (cleanSrc && cleanSrc.indexOf('./assets/') === 0 && !window.__PCN_FALLBACK_INIT__) {
+              window.__PCN_FALLBACK_INIT__ = true;
+              var assetSuffix = cleanSrc.slice(2);
+              var segs = (window.location.pathname || '/').split('/').filter(Boolean);
+              var q = [];
+              for (var depth = segs.length - 1; depth >= 1; depth--) {
+                q.push('/' + segs.slice(0, depth).join('/') + '/' + assetSuffix);
+              }
+              q.push('/' + assetSuffix);
+              window.__PCN_FALLBACK_QUEUE__ = q;
+            }
+            if (window.__PCN_FALLBACK_QUEUE__ && window.__PCN_FALLBACK_QUEUE__.length > 0) {
+              var nextSrc = window.__PCN_FALLBACK_QUEUE__.shift();
+              var retryScript = document.createElement('script');
+              retryScript.type = 'module';
+              retryScript.crossOrigin = 'anonymous';
+              retryScript.src = nextSrc;
+              document.head.appendChild(retryScript);
+              return;
+            }
+
+            var detailText = 'SCRIPT: ' + (cleanSrc || 'unknown');
+
+            if (cleanSrc && typeof fetch === 'function') {
+              fetch(cleanSrc, { method: 'GET', cache: 'no-store' })
+                .then(function (r) {
+                  var ct = ((r.headers && r.headers.get('content-type')) || '').toLowerCase();
+                  var isJs = ct.indexOf('javascript') !== -1 || ct.indexOf('ecmascript') !== -1;
+
+                  // Transient restart / Vite dep optimize (502/503/504) or server already healthy (200 JS)
+                  if (r.status === 502 || r.status === 503 || r.status === 504 || (r.ok && isJs)) {
+                    if (scheduleScriptRetry(cleanSrc)) return;
+                  }
+
+                  if (cleanSrc.indexOf('.tsx') !== -1 && (!r.ok || !isJs)) {
+                    // Static host detected (raw Download ZIP uploaded directly without running npm run build).
+                    // Automatically probe prebuilt bundles (HTDOCS_UPLOAD/ or dist/ or assets/) and boot seamlessly!
+                    if (!window.__PCN_STATIC_AUTOBOOT__) {
+                      window.__PCN_STATIC_AUTOBOOT__ = true;
+                      if (statusEl) statusEl.textContent = 'অ্যাপ চালু হচ্ছে...';
+
+                      // Preload static-runtime.js immediately so zero wait if no prebuilt folder exists
+                      try {
+                        var pre = document.createElement('link');
+                        pre.rel = 'preload';
+                        pre.as = 'script';
+                        pre.href = './static-runtime.js';
+                        document.head.appendChild(pre);
+                      } catch (e) {}
+
+                      var startStaticRuntime = function () {
+                        if (hasAppRendered() || window.__PCN_STATIC_RUNTIME_LOADED__) return;
+                        window.__PCN_STATIC_RUNTIME_LOADED__ = true;
+                        var loadRuntime = function (rtUrl, nextUrl) {
+                          var rtScript = document.createElement('script');
+                          rtScript.src = rtUrl;
+                          rtScript.onerror = function () {
+                            if (nextUrl) {
+                              loadRuntime(nextUrl, null);
+                              return;
+                            }
+                            showRecovery(
+                              'সার্ভারে static-runtime.js পাওয়া যায়নি। সম্পূর্ণ ZIP ফাইল আপলোড করে পুনরায় লোড করুন।',
+                              detailText + ' | Missing static-runtime.js',
+                              true
+                            );
+                          };
+                          document.head.appendChild(rtScript);
+                        };
+                        loadRuntime('./static-runtime.js', '/static-runtime.js');
+                      };
+
+                      // Probe prebuilt folders in parallel with a short timeout so static hosts never stall on sequential 404s
+                      var probeBase = function (base) {
+                        var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+                        var tId = ctrl ? setTimeout(function () { ctrl.abort(); }, 1800) : null;
+                        return fetch(base + 'assets/app.js', {
+                          method: 'HEAD',
+                          cache: 'no-store',
+                          signal: ctrl ? ctrl.signal : undefined
+                        })
+                          .then(function (jr) {
+                            if (tId) clearTimeout(tId);
+                            var jct = ((jr.headers && jr.headers.get('content-type')) || '').toLowerCase();
+                            var looksJs = jct.indexOf('javascript') !== -1 || jct.indexOf('ecmascript') !== -1;
+                            if (jr.ok && jct.indexOf('text/html') === -1 && looksJs) return base;
+                            return null;
+                          })
+                          .catch(function () {
+                            if (tId) clearTimeout(tId);
+                            return null;
+                          });
+                      };
+
+                      Promise.all([probeBase('./HTDOCS_UPLOAD/'), probeBase('./dist/')]).then(function (foundList) {
+                        if (hasAppRendered()) return;
+                        var base = foundList[0] || foundList[1];
+                        if (!base) {
+                          startStaticRuntime();
+                          return;
+                        }
+                        window.__PCN_ASSET_BASE__ = base;
+                        var link = document.createElement('link');
+                        link.rel = 'stylesheet';
+                        link.crossOrigin = 'anonymous';
+                        link.href = base + 'assets/app.css';
+                        document.head.appendChild(link);
+
+                        var mod = document.createElement('script');
+                        mod.type = 'module';
+                        mod.crossOrigin = 'anonymous';
+                        mod.src = base + 'assets/app.js';
+                        document.head.appendChild(mod);
+                      });
+                      return;
+                    }
+                    showRecovery(
+                      'অ্যাপের বিল্ড ফাইল (HTDOCS_UPLOAD বা dist) সার্ভারে পাওয়া যায়নি। সম্পূর্ণ ZIP ফাইল আপলোড করুন।',
+                      detailText + ' | HTTP ' + r.status + (ct ? ' (' + ct.split(';')[0] + ')' : ''),
+                      true
+                    );
+                    return;
+                  }
+
+                  if (!r.ok || ct.indexOf('text/html') !== -1) {
+                    showRecovery(
+                      'সার্ভারে assets/app.js ফাইলটি পাওয়া যায়নি। হোস্টিংয়ে সম্পূর্ণ dist বা HTDOCS_UPLOAD ফোল্ডারের সাথে assets ফোল্ডারটিও আপলোড করুন।',
+                      detailText + ' | HTTP ' + r.status + (ct ? ' (' + ct.split(';')[0] + ')' : ''),
+                      true
+                    );
+                    return;
+                  }
+
+                  showRecovery(
+                    'অ্যাপের মূল স্ক্রিপ্ট লোড হতে পারেনি। ইন্টারনেট চেক করে পুনরায় লোড করুন।',
+                    detailText + ' | HTTP ' + r.status + (ct ? ' (' + ct.split(';')[0] + ')' : ''),
+                    true
+                  );
+                })
+                .catch(function () {
+                  if (scheduleScriptRetry(cleanSrc)) return;
+                  showRecovery(
+                    'অ্যাপের মূল স্ক্রিপ্ট লোড হতে পারেনি। ইন্টারনেট চেক করে পুনরায় লোড করুন।',
+                    detailText + ' | Network error',
+                    true
+                  );
+                });
+            } else {
+              showRecovery(
+                'অ্যাপের মূল স্ক্রিপ্ট লোড হতে পারেনি। ইন্টারনেট চেক করে পুনরায় লোড করুন।',
+                detailText,
+                true
+              );
+            }
+            return;
+          }
+          if (ev && ev.message) {
+            var loc = ev.filename ? (' (' + ev.filename + ':' + (ev.lineno || 0) + ')') : '';
+            showRecovery('লোডিং ত্রুটি ঘটেছে। নিচের বাটনে চাপুন।', String(ev.message) + loc, true);
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function (ev) {
+          if (hasAppRendered()) return;
+          var reason = ev && ev.reason ? (ev.reason.message || String(ev.reason)) : '';
+          if (reason && reason.toLowerCase().indexOf('websocket') !== -1) return;
+          showRecovery('লোডিং সমস্যা হয়েছে। পুনরায় চেষ্টা করুন।', reason || 'Promise rejection', true);
+        });
+
+        setTimeout(function () {
+          if (window.__PCN_STATIC_RUNTIME_LOADED__ && !hasAppRendered()) {
+            setTimeout(function () {
+              if (!hideSplashIfRendered() && !hasSpecificError) {
+                var hint2 = (typeof navigator !== 'undefined' && navigator.onLine === false)
+                  ? 'ইন্টারনেট সংযোগ বিচ্ছিন্ন রয়েছে।'
+                  : 'লোড হতে স্বাভাবিকের চেয়ে বেশি সময় লাগছে। ইন্টারনেট চেক করে পুনরায় লোড করুন।';
+                showRecovery(hint2, 'Timeout waiting for #root mount', false);
+              }
+            }, 25000);
+            return;
+          }
+          if (!hideSplashIfRendered() && !hasSpecificError) {
+            var hint = (typeof navigator !== 'undefined' && navigator.onLine === false)
+              ? 'ইন্টারনেট সংযোগ বিচ্ছিন্ন রয়েছে।'
+              : 'লোড হতে স্বাভাবিকের চেয়ে বেশি সময় লাগছে। ইন্টারনেট চেক করে পুনরায় লোড করুন।';
+            showRecovery(hint, 'Timeout waiting for #root mount', false);
+          }
+        }, 25000);
+      })();
+    </script>
+  </body>
+</html>
+

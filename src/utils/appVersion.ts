@@ -3,9 +3,10 @@ import { db } from './firebase';
 import { NotificationItem } from '../types';
 import { safeStorage } from './safeStorage';
 
-export const CURRENT_APP_VERSION = '2.6.4';
-export const CURRENT_BUILD_NUMBER = 264;
+export const CURRENT_APP_VERSION = '2.6.5';
+export const CURRENT_BUILD_NUMBER = 265;
 export const LAST_ACK_VERSION_KEY = 'protyasha_last_ack_app_version';
+export const LAST_NOTIFIED_UPDATE_KEY = 'protyasha_last_notified_update_key';
 export const LAST_CHECKED_AT_KEY = 'protyasha_last_update_checked_at';
 
 export interface AppVersionInfo {
@@ -21,20 +22,20 @@ export interface AppVersionInfo {
 export const CURRENT_RELEASE_INFO: AppVersionInfo = {
   version: CURRENT_APP_VERSION,
   buildNumber: CURRENT_BUILD_NUMBER,
-  releaseDate: '2026-11-21',
-  titleBn: 'নেটিভ বিল ম্যানেজার প্রো ও স্মার্ট ব্যাক-বাটন আপডেট',
-  titleEn: 'Native Bill Manager Pro & Hardware Back-Button Update',
+  releaseDate: '2026-11-23',
+  titleBn: 'স্টাফ বেতন রশিদ PDF, রিয়েল-টাইম বিল সিঙ্ক ও পারফরম্যান্স আপডেট',
+  titleEn: 'Staff Salary PDF Receipt, Real-Time Bill Sync & Performance Update',
   featuresBn: [
-    'মূল অ্যাপের ভেতরেই সম্পূর্ণ নেটিভ বিল ম্যানেজার প্রো পোর্টাল সংযুক্ত (কোনো এক্সটার্নাল আইফ্রেম ছাড়াই)',
-    'ডিভাইসের অরজিনাল ব্যাক বাটন দিয়ে মডাল, মেনু ও টেবিল থেকে ধাপে ধাপে হোমে ফেরার সুবিধা',
-    'অফলাইন ক্যাশ, এরিয়া ফিল্টার, ডুপ্লিকেট চেক, তাগাদা এসএমএস ও সিঙ্গেল-পেজ মানি রসিদ প্রিন্ট',
-    'স্টাফ ও মালিক পদবি ভিত্তিক হিসাব সংরক্ষণ এবং এডমিন ইন-অ্যাপ আপডেট সিস্টেম'
+    'স্টাফ বেতনে পূর্ণ বেতন খরচ অটো এন্ট্রি ও অতিরিক্ত কোম্পানি পাওনা পরের মাসে স্বয়ংক্রিয় স্থানান্তর',
+    'বিল ম্যানেজার প্রো থেকে নেট সংযোগ ও পূর্ববর্তী মাসের বকেয়া বিল রিয়েল-টাইম অটো আয় এন্ট্রি',
+    'নির্দিষ্ট স্টাফে চাপ দিয়ে পূর্ণাঙ্গ বেতন রশিদ পেজ ও PDF ডাউনলোডের সুবিধা',
+    'রিয়েল-টাইম অ্যাপ আপডেট বার্তা ও উন্নত ইউজার ইন্টারফেস'
   ],
   featuresEn: [
-    'Native in-app Bill Manager Pro dashboard integrated directly without external iframe delays',
-    'Full device hardware & browser Back button LIFO navigation across modals, drawers, and views',
-    'Offline caching, area filters, duplicate entry detector, due SMS & single-page receipt print',
-    'Staff role dropdown separation and admin in-app version broadcast tools'
+    'Full gross salary auto-expense & excess company due automatic next-month rollover',
+    'Real-time Net Connection & previous-month Due Bill auto-income sync from Bill Manager Pro',
+    'Dedicated full-page Staff Salary Receipt & history with crisp PDF download',
+    'True real-time app update notifications and polished UI experience'
   ]
 };
 
@@ -67,7 +68,7 @@ export function compareSemver(a: string, b: string): number {
   return 0;
 }
 
-function normalizeVersionInfo(raw: any): AppVersionInfo | null {
+export function normalizeVersionInfo(raw: any): AppVersionInfo | null {
   if (!raw || typeof raw !== 'object') return null;
   const version = typeof raw.version === 'string' && raw.version.trim() ? raw.version.trim() : '';
   if (!version) return null;
@@ -79,6 +80,44 @@ function normalizeVersionInfo(raw: any): AppVersionInfo | null {
     titleEn: typeof raw.titleEn === 'string' && raw.titleEn ? raw.titleEn : CURRENT_RELEASE_INFO.titleEn,
     featuresBn: Array.isArray(raw.featuresBn) ? raw.featuresBn.filter((x: any) => typeof x === 'string') : [],
     featuresEn: Array.isArray(raw.featuresEn) ? raw.featuresEn.filter((x: any) => typeof x === 'string') : []
+  };
+}
+
+export function isVersionNewer(candidate: AppVersionInfo | null | undefined): boolean {
+  if (!candidate) return false;
+  const cmp = compareSemver(candidate.version, CURRENT_APP_VERSION);
+  if (cmp > 0) return true;
+  if (cmp === 0 && candidate.buildNumber > CURRENT_BUILD_NUMBER) return true;
+  return false;
+}
+
+export function getUpdateSignature(result: Pick<UpdateCheckResult, 'latestVersion' | 'latestBuildNumber' | 'swUpdateReady'>): string {
+  const base = `${result.latestVersion}_${result.latestBuildNumber}`;
+  return result.swUpdateReady ? `${base}_sw` : base;
+}
+
+export function hasUpdateBeenNotified(result: Pick<UpdateCheckResult, 'latestVersion' | 'latestBuildNumber' | 'swUpdateReady'>): boolean {
+  const sig = getUpdateSignature(result);
+  return safeStorage.getItem(LAST_NOTIFIED_UPDATE_KEY) === sig;
+}
+
+export function markUpdateNotified(result: Pick<UpdateCheckResult, 'latestVersion' | 'latestBuildNumber' | 'swUpdateReady'>) {
+  safeStorage.setItem(LAST_NOTIFIED_UPDATE_KEY, getUpdateSignature(result));
+}
+
+export function buildCloudUpdateResult(raw: any): UpdateCheckResult | null {
+  const info = normalizeVersionInfo(raw);
+  if (!info || !isVersionNewer(info)) return null;
+  return {
+    status: 'update_available',
+    currentVersion: CURRENT_APP_VERSION,
+    latestVersion: info.version,
+    currentBuildNumber: CURRENT_BUILD_NUMBER,
+    latestBuildNumber: info.buildNumber,
+    hasNewFeatures: true,
+    releaseInfo: info,
+    checkedAt: Date.now(),
+    swUpdateReady: false
   };
 }
 
@@ -134,7 +173,7 @@ async function checkServiceWorkerUpdate(): Promise<boolean> {
     const regs = await navigator.serviceWorker.getRegistrations();
     for (const reg of regs) {
       await reg.update().catch(() => {});
-      if (reg.waiting || reg.installing) {
+      if (reg.waiting) {
         return true;
       }
     }
@@ -183,7 +222,7 @@ export async function checkForAppUpdates(): Promise<UpdateCheckResult> {
         featuresBn: candidate.featuresBn.length > 0 ? candidate.featuresBn : bestInfo.featuresBn,
         featuresEn: candidate.featuresEn.length > 0 ? candidate.featuresEn : bestInfo.featuresEn
       };
-    } else if (cmp === 0 && candidate.featuresBn.length > bestInfo.featuresBn.length) {
+    } else if (cmp === 0 && candidate.buildNumber === bestInfo.buildNumber && candidate.featuresBn.length > bestInfo.featuresBn.length) {
       bestInfo = {
         ...bestInfo,
         featuresBn: candidate.featuresBn,
@@ -192,16 +231,8 @@ export async function checkForAppUpdates(): Promise<UpdateCheckResult> {
     }
   }
 
-  const semverNewer = compareSemver(bestInfo.version, CURRENT_APP_VERSION) > 0;
-  const buildNewer =
-    compareSemver(bestInfo.version, CURRENT_APP_VERSION) === 0 &&
-    bestInfo.buildNumber > CURRENT_BUILD_NUMBER;
-
-  const isUpdateAvailable = semverNewer || buildNewer || swUpdateReady;
-  const lastAck = safeStorage.getItem(LAST_ACK_VERSION_KEY);
-  const hasUnseenFeatures =
-    isUpdateAvailable ||
-    (bestInfo.featuresBn.length > 0 && lastAck !== `${bestInfo.version}_${bestInfo.buildNumber}`);
+  const isNewerRelease = isVersionNewer(bestInfo);
+  const isUpdateAvailable = isNewerRelease || swUpdateReady;
 
   safeStorage.setItem(LAST_CHECKED_AT_KEY, String(checkedAt));
 
@@ -211,7 +242,7 @@ export async function checkForAppUpdates(): Promise<UpdateCheckResult> {
     latestVersion: bestInfo.version,
     currentBuildNumber: CURRENT_BUILD_NUMBER,
     latestBuildNumber: bestInfo.buildNumber,
-    hasNewFeatures: hasUnseenFeatures,
+    hasNewFeatures: isNewerRelease,
     releaseInfo: bestInfo,
     checkedAt,
     swUpdateReady
@@ -220,6 +251,7 @@ export async function checkForAppUpdates(): Promise<UpdateCheckResult> {
 
 export function markVersionFeaturesAcknowledged(info: AppVersionInfo) {
   safeStorage.setItem(LAST_ACK_VERSION_KEY, `${info.version}_${info.buildNumber}`);
+  safeStorage.setItem(LAST_NOTIFIED_UPDATE_KEY, `${info.version}_${info.buildNumber}`);
 }
 
 export function buildUpdateNotificationItem(result: UpdateCheckResult): NotificationItem {

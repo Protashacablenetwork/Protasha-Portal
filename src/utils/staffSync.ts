@@ -1,8 +1,9 @@
-import { collection, doc, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { AppUser, StaffAccount, StaffSupportSession, UserSession } from '../types';
 import { db, staffDb, safeSetDoc, safeDeleteDoc, handleFirestoreError, OperationType } from './firebase';
 import { safeStorage } from './safeStorage';
 import { normalizePhoneNumber } from './permissions';
+import { isActualStaffAccount } from './ownerDueSync';
 
 const toSafeNumber = (val: unknown, fallback = 0): number => {
   const n = Number(val);
@@ -140,12 +141,12 @@ export async function deleteSingleStaffFromCloud(
 }
 
 /**
- * Automatically mirrors a `sub-admin` (staff) account created/updated in User Management
+ * Automatically mirrors a `sub-admin` or `staff` account created/updated in User Management
  * into the unified Firestore `staff` directory so it appears immediately across Staff Accounts,
  * Staff Attendance, Support Tickets, and Ay-Byay Payroll without duplicates.
  */
-export async function syncSubAdminUserToStaffDirectory(appUser: AppUser): Promise<void> {
-  if (!appUser || appUser.role !== 'sub-admin') return;
+export async function syncStaffOrSubAdminUserToDirectory(appUser: AppUser): Promise<void> {
+  if (!appUser || (appUser.role !== 'sub-admin' && appUser.role !== 'staff')) return;
 
   let existingStaffList = readCachedStaffAccounts();
   try {
@@ -187,7 +188,7 @@ export async function syncSubAdminUserToStaffDirectory(appUser: AppUser): Promis
         id: sanitizeStaffId(appUser.id),
         name: appUser.name,
         phone: appUser.phone || '',
-        role: 'সাব-এডমিন / স্টাফ',
+        role: appUser.role === 'staff' ? 'স্টাফ' : 'সাব-এডমিন / স্টাফ',
         avatarUrl: appUser.avatarUrl || '',
         baseSalary: 0,
         totalDue: 0,
@@ -203,16 +204,18 @@ export async function syncSubAdminUserToStaffDirectory(appUser: AppUser): Promis
   }
 }
 
+export const syncSubAdminUserToStaffDirectory = syncStaffOrSubAdminUserToDirectory;
+
 /**
- * Matches a main-page logged-in user session against the unified active Staff Directory
- * by ID, normalized phone, userCode, or exact name so staff never need a second PIN anywhere.
+ * Matches a main-page logged-in `staff` or `sub-admin` session against the unified active Staff Directory.
+ * Strictly ignores regular `user` and `visitor` accounts so regular users can never auto-match staff privileges.
  */
 export function findMatchedStaffForUser(
   user: UserSession | null | undefined,
   staffAccounts: StaffAccount[]
 ): StaffAccount | null {
-  if (!user || user.role === 'visitor') return null;
-  const activeStaff = (staffAccounts || []).filter((s) => s && s.isActive !== false);
+  if (!user || (user.role !== 'staff' && user.role !== 'sub-admin')) return null;
+  const activeStaff = (staffAccounts || []).filter(isActualStaffAccount);
   if (activeStaff.length === 0) return null;
 
   const uId = String(user.id || '').trim();
@@ -238,27 +241,27 @@ export function findMatchedStaffForUser(
 }
 
 /**
- * True whenever the current main-page user is an Admin, Sub-Admin, or matched active Staff member.
+ * True whenever the current main-page user is an Admin, Sub-Admin, or Staff account.
  */
 export function isStaffOrAdminUser(
   user: UserSession | null | undefined,
   staffAccounts: StaffAccount[]
 ): boolean {
-  if (!user || user.role === 'visitor') return false;
-  if (user.role === 'admin' || user.role === 'sub-admin') return true;
+  if (!user || user.role === 'visitor' || user.role === 'user') return false;
+  if (user.role === 'admin' || user.role === 'sub-admin' || user.role === 'staff') return true;
   return Boolean(findMatchedStaffForUser(user, staffAccounts));
 }
 
 /**
- * Keeps the legacy `protyasha_support_staff_session` storage key synchronized automatically
- * with the main-page login so no sub-page ever prompts a logged-in staff member for a PIN again.
+ * Keeps `protyasha_support_staff_session` synchronized with `staff` / `sub-admin` main-page logins
+ * and clears it for `admin`, `user`, and `visitor` accounts.
  */
 export function syncMainLoginStaffSession(
   user: UserSession | null | undefined,
   staffAccounts: StaffAccount[]
 ): void {
   try {
-    if (!user || user.role === 'visitor' || user.role === 'admin') {
+    if (!user || user.role === 'visitor' || user.role === 'admin' || user.role === 'user') {
       sessionStorage.removeItem('protyasha_support_staff_session');
       return;
     }
@@ -272,16 +275,94 @@ export function syncMainLoginStaffSession(
         loggedInAt: new Date().toISOString()
       };
       sessionStorage.setItem('protyasha_support_staff_session', JSON.stringify(sessionObj));
-    } else if (user.role === 'sub-admin') {
+    } else if (user.role === 'sub-admin' || user.role === 'staff') {
       const sessionObj: StaffSupportSession = {
-        staffId: user.id || user.phone || 'sub-admin',
+        staffId: user.id || user.phone || user.role,
         name: user.name || 'স্টাফ',
         phone: user.phone || '',
-        roleTitle: 'সাব-এডমিন / স্টাফ',
+        roleTitle: user.role === 'staff' ? 'স্টাফ' : 'সাব-এডমিন / স্টাফ',
         loggedInAt: new Date().toISOString()
       };
       sessionStorage.setItem('protyasha_support_staff_session', JSON.stringify(sessionObj));
     }
   } catch {}
 }
+
+/**
+ * Synchronizes a staff member's PIN across both `settings/staff_support_auth.staffPins`
+ * and matching `users` documents (`role === 'staff'`) so Staff Attendance PINs and
+ * Main Login credentials stay 100% unified.
+ */
+export async function syncStaffPinEverywhere(params: {
+  staffId?: string;
+  phone?: string;
+  newPin: string;
+}): Promise<void> {
+  const cleanPin = String(params.newPin || '').trim();
+  if (!/^\d{4,8}$/.test(cleanPin)) {
+    throw new Error('পিন অবশ্যই ৪ থেকে ৮ সংখ্যার হতে হবে');
+  }
+
+  const nowIso = new Date().toISOString();
+  const targetId = String(params.staffId || '').trim();
+  const targetPhoneNorm = normalizePhoneNumber(params.phone);
+
+  // 1. Update `settings/staff_support_auth`
+  try {
+    const authRef = doc(db, 'settings', 'staff_support_auth');
+    const authSnap = await getDoc(authRef);
+    const authData = authSnap.exists() ? (authSnap.data() as { globalPin?: string; staffPins?: Record<string, string> }) : {};
+    const existingGlobalPin = String(authData.globalPin || '1234').trim() || '1234';
+    const nextPins: Record<string, string> = { ...(authData.staffPins || {}) };
+
+    if (targetId) {
+      nextPins[targetId] = cleanPin;
+    }
+
+    await safeSetDoc(authRef, {
+      globalPin: existingGlobalPin,
+      staffPins: nextPins,
+      updatedAt: nowIso
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, 'settings/staff_support_auth');
+  }
+
+  // 2. Sync matching `users` docs where `role === 'staff'`
+  try {
+    const usersSnap = await getDocs(collection(db, 'users'));
+    const updates: Promise<void>[] = [];
+    usersSnap.forEach((docSnap) => {
+      const u = docSnap.data() as AppUser;
+      if (!u || u.role !== 'staff') return;
+      const uId = String(u.id || docSnap.id).trim();
+      const uPhoneNorm = normalizePhoneNumber(u.phone);
+      const idMatch = Boolean(targetId && (uId === targetId || docSnap.id === targetId));
+      const phoneMatch = Boolean(targetPhoneNorm.length >= 6 && uPhoneNorm === targetPhoneNorm);
+      if (idMatch || phoneMatch) {
+        const nextDoc: AppUser = {
+          ...u,
+          id: u.id || docSnap.id,
+          pin: cleanPin,
+          updatedAt: nowIso
+        };
+        updates.push(
+          safeSetDoc(doc(db, 'users', docSnap.id), nextDoc).catch((err) => {
+            handleFirestoreError(err, OperationType.WRITE, `users/${docSnap.id}`);
+          })
+        );
+      }
+    });
+    if (updates.length > 0) {
+      await Promise.all(updates);
+    }
+  } catch {}
+
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('staff-pin-updated', { detail: { staffId: targetId, phone: params.phone } }));
+    }
+  } catch {}
+}
+
 

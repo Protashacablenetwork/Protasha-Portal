@@ -22,10 +22,12 @@ import {
   ShieldCheck,
   X,
   FileText,
-  Printer
+  Printer,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { collection, doc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
-import { db } from '../utils/firebase';
+import { db, safeSetDoc } from '../utils/firebase';
 import {
   AttendanceStatus,
   Language,
@@ -40,7 +42,8 @@ import { sounds } from '../utils/audio';
 import { normalizePhoneNumber } from '../utils/permissions';
 import { StaffAttendanceDetailView } from './StaffAttendanceDetailView';
 import { StaffMonthlyPrintPreviewModal } from './StaffMonthlyPrintPreviewModal';
-import { findMatchedStaffForUser } from '../utils/staffSync';
+import { findMatchedStaffForUser, syncStaffPinEverywhere } from '../utils/staffSync';
+import { isActualStaffAccount } from '../utils/ownerDueSync';
 
 interface StaffAttendanceModalProps {
   isOpen: boolean;
@@ -191,18 +194,40 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
   const [staffLoginError, setStaffLoginError] = useState('');
   const [isVerifyingStaff, setIsVerifyingStaff] = useState(false);
 
+  // Admin PIN Control modal states
+  const [isPinControlOpen, setIsPinControlOpen] = useState(false);
+  const [draftGlobalPin, setDraftGlobalPin] = useState('1234');
+  const [draftStaffPins, setDraftStaffPins] = useState<Record<string, string>>({});
+  const [pinSearchQuery, setPinSearchQuery] = useState('');
+  const [showPinControlChars, setShowPinControlChars] = useState(false);
+  const [isSavingPins, setIsSavingPins] = useState(false);
+  const [pinControlFeedback, setPinControlFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Staff Self PIN Change modal states
+  const [isChangeOwnPinOpen, setIsChangeOwnPinOpen] = useState(false);
+  const [ownCurrentPin, setOwnCurrentPin] = useState('');
+  const [ownNewPin, setOwnNewPin] = useState('');
+  const [ownConfirmPin, setOwnConfirmPin] = useState('');
+  const [showOwnPinChars, setShowOwnPinChars] = useState(false);
+  const [isSavingOwnPin, setIsSavingOwnPin] = useState(false);
+  const [ownPinFeedback, setOwnPinFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   const subViewHistoryDepthRef = useRef(0);
   const subViewRef = useRef({
     activeTab,
     selectedDetailStaffId,
     printPreviewStaffId,
-    isStaffLoginOpen
+    isStaffLoginOpen,
+    isPinControlOpen,
+    isChangeOwnPinOpen
   });
   subViewRef.current = {
     activeTab,
     selectedDetailStaffId,
     printPreviewStaffId,
-    isStaffLoginOpen
+    isStaffLoginOpen,
+    isPinControlOpen,
+    isChangeOwnPinOpen
   };
 
   const pushSubViewHistory = () => {
@@ -225,12 +250,23 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
       (activeTab !== 'daily' ||
         Boolean(selectedDetailStaffId) ||
         Boolean(printPreviewStaffId) ||
-        isStaffLoginOpen);
+        isStaffLoginOpen ||
+        isPinControlOpen ||
+        isChangeOwnPinOpen);
     onSubViewChange?.(isSub);
     return () => {
       onSubViewChange?.(false);
     };
-  }, [isOpen, activeTab, selectedDetailStaffId, printPreviewStaffId, isStaffLoginOpen, onSubViewChange]);
+  }, [
+    isOpen,
+    activeTab,
+    selectedDetailStaffId,
+    printPreviewStaffId,
+    isStaffLoginOpen,
+    isPinControlOpen,
+    isChangeOwnPinOpen,
+    onSubViewChange
+  ]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -238,6 +274,8 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
       setSelectedDetailStaffId(null);
       setPrintPreviewStaffId(null);
       setIsStaffLoginOpen(false);
+      setIsPinControlOpen(false);
+      setIsChangeOwnPinOpen(false);
       setConfirmDeleteDailyStaffId(null);
       setDailyFeedback(null);
       subViewHistoryDepthRef.current = 0;
@@ -252,7 +290,11 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
     const handleSubViewPop = () => {
       const s = subViewRef.current;
       subViewHistoryDepthRef.current = Math.max(0, subViewHistoryDepthRef.current - 1);
-      if (s.printPreviewStaffId) {
+      if (s.isChangeOwnPinOpen) {
+        setIsChangeOwnPinOpen(false);
+      } else if (s.isPinControlOpen) {
+        setIsPinControlOpen(false);
+      } else if (s.printPreviewStaffId) {
         setPrintPreviewStaffId(null);
       } else if (s.isStaffLoginOpen) {
         setIsStaffLoginOpen(false);
@@ -326,7 +368,7 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
   }, [isAdmin, user, staffSession]);
 
   const activeStaff = useMemo(
-    () => staffAccounts.filter((s) => s.isActive !== false),
+    () => staffAccounts.filter(isActualStaffAccount),
     [staffAccounts]
   );
 
@@ -358,8 +400,8 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
       if (bySession) return bySession;
     }
 
-    // 3. Fallback: Match logged-in app user account (sub-admin / user) to Staff Directory
-    if (user && user.role !== 'visitor') {
+    // 3. Fallback: Match logged-in staff/sub-admin user account to Staff Directory (never regular 'user')
+    if (user && (user.role === 'staff' || user.role === 'sub-admin')) {
       const uPhone = normalizePhoneNumber(user.phone);
       const uName = (user.name || '').trim().toLowerCase();
       const uRawPhone = (user.phone || '').trim().toLowerCase();
@@ -378,7 +420,7 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
     }
 
     return null;
-  }, [isAdmin, staffSession, user, activeStaff]);
+  }, [isAdmin, matchedMainStaff, staffSession, user, activeStaff]);
 
   // Keep leaveStaffId locked to matchedOwnStaff for non-admins
   useEffect(() => {
@@ -640,35 +682,38 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
         }
       }
 
-      // Also check sub-admin accounts in Firestore 'users' whose phone matches an active staff member
+      // Also check 'staff' / 'sub-admin' accounts in Firestore 'users' whose phone matches an active staff member
       try {
-        const q = query(collection(db, 'users'), where('phone', '==', rawId));
-        const snap = await getDocs(q);
-        const matchedSubAdmin = snap.docs
+        const usersSnap = await getDocs(collection(db, 'users'));
+        const matchedStaffUser = usersSnap.docs
           .map((d) => ({ id: d.id, ...(d.data() as any) }))
           .find(
             (u) =>
-              u.role === 'sub-admin' &&
+              (u.role === 'staff' || u.role === 'sub-admin') &&
               u.status !== 'suspended' &&
-              String(u.pin || '') === cleanPin
+              String(u.pin || '') === cleanPin &&
+              ((u.phone && String(u.phone).trim() === rawId) ||
+                (normalizedInputPhone.length >= 6 &&
+                  normalizePhoneNumber(u.phone) === normalizedInputPhone))
           );
 
-        if (matchedSubAdmin) {
+        if (matchedStaffUser) {
           const linkedStaff =
+            activeStaff.find((s) => String(s.id) === String(matchedStaffUser.id)) ||
             activeStaff.find(
-              (s) => normalizePhoneNumber(s.phone) === normalizePhoneNumber(matchedSubAdmin.phone)
+              (s) => normalizePhoneNumber(s.phone) === normalizePhoneNumber(matchedStaffUser.phone)
             ) ||
             activeStaff.find(
               (s) =>
                 (s.name || '').trim().toLowerCase() ===
-                String(matchedSubAdmin.name || '').trim().toLowerCase()
+                String(matchedStaffUser.name || '').trim().toLowerCase()
             );
 
           if (linkedStaff) {
             const session: StaffSupportSession = {
               staffId: linkedStaff.id,
               name: linkedStaff.name,
-              phone: linkedStaff.phone || matchedSubAdmin.phone || rawId,
+              phone: linkedStaff.phone || matchedStaffUser.phone || rawId,
               roleTitle: linkedStaff.role || (isBn ? 'স্টাফ' : 'Staff'),
               loggedInAt: new Date().toISOString()
             };
@@ -696,6 +741,183 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
       );
     } finally {
       setIsVerifyingStaff(false);
+    }
+  };
+
+  const openPinControlModal = () => {
+    if (!isAdmin) return;
+    sounds.playTap();
+    setDraftGlobalPin(staffAuthConfig.globalPin || '1234');
+    setDraftStaffPins({ ...(staffAuthConfig.staffPins || {}) });
+    setPinSearchQuery('');
+    setPinControlFeedback(null);
+    pushSubViewHistory();
+    setIsPinControlOpen(true);
+  };
+
+  const handleSaveAdminPinControl = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isAdmin) return;
+
+    const cleanGlobal = draftGlobalPin.trim();
+    if (!/^\d{4,8}$/.test(cleanGlobal)) {
+      setPinControlFeedback({
+        type: 'error',
+        text: isBn ? 'ডিফল্ট গ্লোবাল পিন অবশ্যই ৪ থেকে ৮ সংখ্যার হতে হবে।' : 'Default global PIN must be 4–8 digits.'
+      });
+      return;
+    }
+
+    const cleanedStaffPins: Record<string, string> = {};
+    for (const [sid, rawVal] of Object.entries(draftStaffPins)) {
+      const val = String(rawVal || '').trim();
+      if (!val) continue;
+      if (!/^\d{4,8}$/.test(val)) {
+        const st = activeStaff.find((s) => s.id === sid);
+        setPinControlFeedback({
+          type: 'error',
+          text: isBn
+            ? `${st?.name || 'স্টাফ'}-এর পিন অবশ্যই ৪ থেকে ৮ সংখ্যার হতে হবে।`
+            : `PIN for ${st?.name || 'staff'} must be 4–8 digits.`
+        });
+        return;
+      }
+      cleanedStaffPins[sid] = val;
+    }
+
+    setIsSavingPins(true);
+    setPinControlFeedback(null);
+    try {
+      await safeSetDoc(doc(db, 'settings', 'staff_support_auth'), {
+        globalPin: cleanGlobal,
+        staffPins: cleanedStaffPins,
+        updatedAt: new Date().toISOString()
+      });
+
+      // Sync every modified per-staff PIN with any matching `role: 'staff'` login account
+      const syncJobs = activeStaff
+        .filter((s) => Boolean(cleanedStaffPins[s.id]))
+        .map((s) =>
+          syncStaffPinEverywhere({
+            staffId: s.id,
+            phone: s.phone,
+            newPin: cleanedStaffPins[s.id]
+          }).catch(() => {})
+        );
+      if (syncJobs.length > 0) {
+        await Promise.all(syncJobs);
+      }
+
+      sounds.playSuccess();
+      setPinControlFeedback({
+        type: 'success',
+        text: isBn
+          ? 'সকল স্টাফের আলাদা পিন ও ডিফল্ট পিন সফলভাবে সংরক্ষিত ও মেইন লগইনের সাথে সিঙ্ক হয়েছে।'
+          : 'Staff PINs saved and synced with Main Login.'
+      });
+    } catch {
+      setPinControlFeedback({
+        type: 'error',
+        text: isBn ? 'পিন সংরক্ষণ ব্যর্থ হয়েছে। পুনরায় চেষ্টা করুন।' : 'Failed to save PIN settings.'
+      });
+    } finally {
+      setIsSavingPins(false);
+    }
+  };
+
+  const openChangeOwnPinModal = () => {
+    if (!matchedOwnStaff || isAdmin) return;
+    sounds.playTap();
+    setOwnCurrentPin('');
+    setOwnNewPin('');
+    setOwnConfirmPin('');
+    setOwnPinFeedback(null);
+    pushSubViewHistory();
+    setIsChangeOwnPinOpen(true);
+  };
+
+  const handleChangeOwnPinSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!matchedOwnStaff) return;
+
+    const current = ownCurrentPin.trim();
+    const nextPin = ownNewPin.trim();
+    const confirm = ownConfirmPin.trim();
+
+    if (!current || !nextPin || !confirm) {
+      setOwnPinFeedback({
+        type: 'error',
+        text: isBn ? 'বর্তমান ও নতুন পিনের সব ঘর পূরণ করুন।' : 'Please fill all PIN fields.'
+      });
+      return;
+    }
+    if (!/^\d{4,8}$/.test(nextPin)) {
+      setOwnPinFeedback({
+        type: 'error',
+        text: isBn ? 'নতুন পিন অবশ্যই ৪ থেকে ৮ সংখ্যার হতে হবে।' : 'New PIN must be 4–8 digits.'
+      });
+      return;
+    }
+    if (nextPin !== confirm) {
+      setOwnPinFeedback({
+        type: 'error',
+        text: isBn ? 'নতুন পিন ও নিশ্চিতকরণ পিন মিলছে না।' : 'New PIN and confirmation do not match.'
+      });
+      return;
+    }
+
+    setIsSavingOwnPin(true);
+    setOwnPinFeedback(null);
+    try {
+      const expectedConfigPin = String(
+        staffAuthConfig.staffPins[matchedOwnStaff.id] || staffAuthConfig.globalPin || '1234'
+      ).trim();
+
+      let currentMatched = current === expectedConfigPin;
+      if (!currentMatched) {
+        try {
+          const usersSnap = await getDocs(collection(db, 'users'));
+          const ownPhoneNorm = normalizePhoneNumber(matchedOwnStaff.phone);
+          currentMatched = usersSnap.docs.some((d) => {
+            const u = d.data() as any;
+            if (!u || u.role !== 'staff') return false;
+            const idOk = String(u.id || d.id) === String(matchedOwnStaff.id);
+            const phoneOk = ownPhoneNorm.length >= 6 && normalizePhoneNumber(u.phone) === ownPhoneNorm;
+            return (idOk || phoneOk) && String(u.pin || '').trim() === current;
+          });
+        } catch {}
+      }
+
+      if (!currentMatched) {
+        setOwnPinFeedback({
+          type: 'error',
+          text: isBn ? 'বর্তমান পিনটি সঠিক নয়।' : 'Current PIN is incorrect.'
+        });
+        setIsSavingOwnPin(false);
+        return;
+      }
+
+      await syncStaffPinEverywhere({
+        staffId: matchedOwnStaff.id,
+        phone: matchedOwnStaff.phone,
+        newPin: nextPin
+      });
+
+      sounds.playSuccess();
+      setDailyFeedback({
+        type: 'success',
+        text: isBn
+          ? 'আপনার স্টাফ পিন সফলভাবে পরিবর্তন হয়েছে। এখন নতুন পিন দিয়ে মেইন ও হাজিরা লগইন করতে পারবেন।'
+          : 'Your PIN has been updated for both Staff Attendance and Main Login.'
+      });
+      closeSubViewViaBack(() => setIsChangeOwnPinOpen(false));
+    } catch {
+      setOwnPinFeedback({
+        type: 'error',
+        text: isBn ? 'পিন পরিবর্তন করা যায়নি। পুনরায় চেষ্টা করুন।' : 'Failed to change PIN.'
+      });
+    } finally {
+      setIsSavingOwnPin(false);
     }
   };
 
@@ -1080,9 +1302,29 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
           </div>
         </div>
 
-        {/* Staff Login / Active Staff Pill (for non-admin users) */}
-        {!isAdmin && !isVisitor && (
+        {/* Header Controls: Admin PIN Control OR Staff Self PIN Change / Staff Login */}
+        {isAdmin ? (
+          <button
+            type="button"
+            onClick={openPinControlModal}
+            className="h-9 px-2.5 sm:px-3 rounded-xl bg-slate-900 dark:bg-teal-600 hover:bg-slate-800 dark:hover:bg-teal-700 text-white text-[11px] font-extrabold inline-flex items-center gap-1.5 shadow-xs active:scale-95 transition-all shrink-0 cursor-pointer"
+          >
+            <KeyRound className="w-3.5 h-3.5" />
+            <span>{isBn ? 'অ্যাডমিন পিন কন্ট্রোল' : 'Admin PIN Control'}</span>
+          </button>
+        ) : !isVisitor ? (
           <div className="flex items-center gap-1.5 shrink-0">
+            {matchedOwnStaff && (
+              <button
+                type="button"
+                onClick={openChangeOwnPinModal}
+                className="h-9 px-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-[11px] font-extrabold inline-flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
+                title={isBn ? 'নিজের স্টাফ পিন পরিবর্তন করুন' : 'Change own staff PIN'}
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">{isBn ? 'পিন পরিবর্তন' : 'Change PIN'}</span>
+              </button>
+            )}
             {matchedMainStaff ? (
               <div className="h-9 px-2.5 sm:px-3 rounded-xl bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 text-teal-700 dark:text-teal-300 text-[11px] font-extrabold inline-flex items-center gap-1.5">
                 <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
@@ -1115,7 +1357,7 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
               </div>
             )}
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Main Content */}
@@ -1291,29 +1533,42 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
                   </div>
                 </div>
 
-                {!matchedOwnStaff && (
-                  <button
-                    type="button"
-                    onClick={openStaffLoginModal}
-                    className="h-8 px-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-extrabold inline-flex items-center gap-1 shrink-0 cursor-pointer"
-                  >
-                    <KeyRound className="w-3.5 h-3.5" />
-                    <span>{isBn ? 'স্টাফ লগইন' : 'Staff Login'}</span>
-                  </button>
-                )}
+                <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                  {matchedOwnStaff && (
+                    <button
+                      type="button"
+                      onClick={openChangeOwnPinModal}
+                      className="h-8 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-extrabold inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                    >
+                      <KeyRound className="w-3.5 h-3.5" />
+                      <span>{isBn ? 'পিন পরিবর্তন' : 'Change PIN'}</span>
+                    </button>
+                  )}
 
-                {matchedOwnStaff && selectedDate !== todayIso && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      sounds.playTap();
-                      setSelectedDate(todayIso);
-                    }}
-                    className="h-8 px-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-[11px] font-extrabold shrink-0 cursor-pointer"
-                  >
-                    {isBn ? 'আজকের তারিখে যান' : 'Go to Today'}
-                  </button>
-                )}
+                  {!matchedOwnStaff && (
+                    <button
+                      type="button"
+                      onClick={openStaffLoginModal}
+                      className="h-8 px-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-extrabold inline-flex items-center gap-1 shrink-0 cursor-pointer"
+                    >
+                      <KeyRound className="w-3.5 h-3.5" />
+                      <span>{isBn ? 'স্টাফ লগইন' : 'Staff Login'}</span>
+                    </button>
+                  )}
+
+                  {matchedOwnStaff && selectedDate !== todayIso && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        sounds.playTap();
+                        setSelectedDate(todayIso);
+                      }}
+                      className="h-8 px-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-[11px] font-extrabold shrink-0 cursor-pointer"
+                    >
+                      {isBn ? 'আজকের তারিখে যান' : 'Go to Today'}
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
@@ -2252,6 +2507,277 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
                   : isBn
                     ? 'স্টাফ লগইন করুন'
                     : 'Sign In as Staff'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* ADMIN PIN CONTROL MODAL (GLOBAL & PER-STAFF ATTENDANCE PINS) */}
+      {/* ============================================================ */}
+      {isAdmin && isPinControlOpen && (
+        <div className="fixed inset-0 z-[72] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-lg rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-teal-50 dark:bg-teal-950/60 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0">
+                  <KeyRound className="w-4.5 h-4.5" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-extrabold text-slate-900 dark:text-white truncate">
+                    {isBn ? 'অ্যাডমিন স্টাফ পিন কন্ট্রোল' : 'Admin Staff PIN Control'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    {isBn ? 'প্রতিটি স্টাফের আলাদা হাজিরা ও মেইন লগইন পিন সেট করুন' : 'Set per-staff attendance & main login PINs'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => closeSubViewViaBack(() => setIsPinControlOpen(false))}
+                className="w-8 h-8 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-500 cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveAdminPinControl} className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+              {pinControlFeedback && (
+                <div
+                  className={`p-3 rounded-xl border text-xs font-bold ${
+                    pinControlFeedback.type === 'error'
+                      ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300'
+                      : 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
+                  }`}
+                >
+                  {pinControlFeedback.text}
+                </div>
+              )}
+
+              {/* Global Default PIN */}
+              <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs font-extrabold text-slate-800 dark:text-slate-200">
+                    {isBn ? 'ডিফল্ট গ্লোবাল স্টাফ পিন (৪-৮ সংখ্যা)' : 'Default Global Staff PIN (4–8 digits)'}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowPinControlChars((v) => !v)}
+                    className="text-[11px] font-bold text-teal-600 dark:text-teal-400 inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    {showPinControlChars ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    <span>{showPinControlChars ? (isBn ? 'লুকান' : 'Hide') : (isBn ? 'দেখুন' : 'Show')}</span>
+                  </button>
+                </div>
+                <input
+                  type={showPinControlChars ? 'text' : 'password'}
+                  inputMode="numeric"
+                  maxLength={8}
+                  value={draftGlobalPin}
+                  onChange={(e) => setDraftGlobalPin(e.target.value.replace(/[^0-9]/g, ''))}
+                  placeholder="1234"
+                  className="w-full h-11 px-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm font-bold tracking-widest text-slate-900 dark:text-white"
+                />
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                  {isBn
+                    ? 'যে স্টাফের আলাদা পিন ফাঁকা রাখা হবে, তার জন্য এই ডিফল্ট পিন কাজ করবে।'
+                    : 'Used as fallback for any staff without a custom per-staff PIN.'}
+                </p>
+              </div>
+
+              {/* Per-Staff Individual PIN List */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-xs font-extrabold text-slate-800 dark:text-slate-200">
+                    {isBn ? `আলাদা আলাদা স্টাফ পিন (${toBengaliNumber(activeStaff.length)} জন)` : `Individual Staff PINs (${activeStaff.length})`}
+                  </h4>
+                </div>
+
+                <input
+                  type="text"
+                  value={pinSearchQuery}
+                  onChange={(e) => setPinSearchQuery(e.target.value)}
+                  placeholder={isBn ? 'স্টাফের নাম বা মোবাইল দিয়ে খুঁজুন...' : 'Search staff name or phone...'}
+                  className="w-full h-9 px-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                  {activeStaff
+                    .filter((s) => {
+                      const q = pinSearchQuery.trim().toLowerCase();
+                      if (!q) return true;
+                      return (
+                        (s.name || '').toLowerCase().includes(q) ||
+                        (s.phone || '').toLowerCase().includes(q) ||
+                        (s.userCode || '').toLowerCase().includes(q)
+                      );
+                    })
+                    .map((s) => (
+                      <div
+                        key={s.id}
+                        className="p-2.5 rounded-xl bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-2.5"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-extrabold text-slate-900 dark:text-white truncate">{s.name}</p>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono truncate">
+                            {s.phone || s.userCode || s.role}
+                          </p>
+                        </div>
+                        <input
+                          type={showPinControlChars ? 'text' : 'password'}
+                          inputMode="numeric"
+                          maxLength={8}
+                          value={draftStaffPins[s.id] ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/[^0-9]/g, '');
+                            setDraftStaffPins((prev) => ({
+                              ...prev,
+                              [s.id]: val
+                            }));
+                          }}
+                          placeholder={isBn ? `ডিফল্ট (${draftGlobalPin || '1234'})` : `Default (${draftGlobalPin || '1234'})`}
+                          className="w-32 h-9 px-2.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold tracking-widest text-center text-slate-900 dark:text-white"
+                        />
+                      </div>
+                    ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => closeSubViewViaBack(() => setIsPinControlOpen(false))}
+                  className="flex-1 h-11 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold cursor-pointer"
+                >
+                  {isBn ? 'বন্ধ করুন' : 'Cancel'}
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingPins}
+                  className="flex-1 h-11 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-60 text-white text-xs font-extrabold shadow-sm cursor-pointer"
+                >
+                  {isSavingPins
+                    ? (isBn ? 'সংরক্ষণ হচ্ছে...' : 'Saving...')
+                    : (isBn ? 'পিন সেটিংস সেভ করুন' : 'Save PIN Settings')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================ */}
+      {/* STAFF SELF PIN CHANGE MODAL                                  */}
+      {/* ============================================================ */}
+      {!isAdmin && matchedOwnStaff && isChangeOwnPinOpen && (
+        <div className="fixed inset-0 z-[72] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-sm rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                  <KeyRound className="w-4.5 h-4.5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                    {isBn ? 'নিজের স্টাফ পিন পরিবর্তন' : 'Change Own Staff PIN'}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-[190px]">
+                    {matchedOwnStaff.name}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => closeSubViewViaBack(() => setIsChangeOwnPinOpen(false))}
+                className="w-8 h-8 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-500 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleChangeOwnPinSubmit} className="p-5 space-y-3">
+              {ownPinFeedback && (
+                <div
+                  className={`p-2.5 rounded-xl border text-xs font-bold ${
+                    ownPinFeedback.type === 'error'
+                      ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300'
+                      : 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
+                  }`}
+                >
+                  {ownPinFeedback.text}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                  {isBn ? 'পিন ৪-৮ সংখ্যার হতে হবে (মেইন ও হাজিরা লগইন একই থাকবে)' : '4–8 digits (synced with Main Login)'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowOwnPinChars((v) => !v)}
+                  className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 cursor-pointer"
+                >
+                  {showOwnPinChars ? (isBn ? 'লুকান' : 'Hide') : (isBn ? 'দেখুন' : 'Show')}
+                </button>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  {isBn ? 'বর্তমান পিন *' : 'Current PIN *'}
+                </label>
+                <input
+                  type={showOwnPinChars ? 'text' : 'password'}
+                  inputMode="numeric"
+                  maxLength={8}
+                  required
+                  value={ownCurrentPin}
+                  onChange={(e) => setOwnCurrentPin(e.target.value.replace(/[^0-9]/g, ''))}
+                  placeholder="••••"
+                  className="w-full h-11 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm font-bold tracking-widest text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  {isBn ? 'নতুন পিন (৪-৮ সংখ্যা) *' : 'New PIN (4–8 digits) *'}
+                </label>
+                <input
+                  type={showOwnPinChars ? 'text' : 'password'}
+                  inputMode="numeric"
+                  maxLength={8}
+                  required
+                  value={ownNewPin}
+                  onChange={(e) => setOwnNewPin(e.target.value.replace(/[^0-9]/g, ''))}
+                  placeholder="••••"
+                  className="w-full h-11 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm font-bold tracking-widest text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  {isBn ? 'নতুন পিন পুনরায় লিখুন *' : 'Confirm New PIN *'}
+                </label>
+                <input
+                  type={showOwnPinChars ? 'text' : 'password'}
+                  inputMode="numeric"
+                  maxLength={8}
+                  required
+                  value={ownConfirmPin}
+                  onChange={(e) => setOwnConfirmPin(e.target.value.replace(/[^0-9]/g, ''))}
+                  placeholder="••••"
+                  className="w-full h-11 px-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm font-bold tracking-widest text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSavingOwnPin}
+                className="w-full h-11 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs font-extrabold shadow-sm cursor-pointer"
+              >
+                {isSavingOwnPin
+                  ? (isBn ? 'পরিবর্তন হচ্ছে...' : 'Updating...')
+                  : (isBn ? 'নতুন পিন সংরক্ষণ করুন' : 'Save New PIN')}
               </button>
             </form>
           </div>
