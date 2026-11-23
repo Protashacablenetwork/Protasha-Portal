@@ -777,7 +777,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                     className="w-full h-11 px-3 text-xs font-bold bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700"
                   >
                     <option value="user">{isBn ? 'সাধারণ ইউজার (শুধু দেখা)' : 'Regular User (Read-Only)'}</option>
-                    <option value="staff">{isBn ? 'স্টাফ (শুধু হাজিরা)' : 'Staff (Attendance Only)'}</option>
+                    <option value="staff">{isBn ? 'স্টাফ (সম্পূর্ণ দেখা ও শুধু হাজিরা)' : 'Staff (View All & Attendance Only)'}</option>
                     <option value="sub-admin">{isBn ? 'সাব-অ্যাডমিন (নির্ধারিত সেবা)' : 'Sub-Admin (Custom Access)'}</option>
                     <option value="admin">{isBn ? 'অ্যাডমিন' : 'Admin'}</option>
                   </select>
@@ -787,12 +787,12 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
               {editRole === 'staff' && (
                 <div className="p-3 rounded-xl bg-teal-50 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-900/50 text-[11px] text-teal-900 dark:text-teal-200 space-y-1">
                   <p className="font-bold">
-                    {isBn ? 'স্টাফ অ্যাকাউন্ট সীমাবদ্ধতা:' : 'Staff Account Access:'}
+                    {isBn ? 'স্টাফ অ্যাকাউন্ট সুবিধা ও নিয়ম:' : 'Staff Account Access & Rules:'}
                   </p>
                   <p>
                     {isBn
-                      ? '• এই নাম্বার ও পিন দিয়ে মূল অ্যাপে লগইন করে শুধুমাত্র "স্টাফ হাজিরা ও ছুটি" অপশনে নিজের হাজিরা দিতে পারবেন ও নিজের পিন পরিবর্তন করতে পারবেন। অন্য কোনো হিসাব বা ডেটা পরিবর্তন করতে পারবেন না।'
-                      : '• Logs in with phone & PIN exclusively for Staff Attendance (self check-in & own PIN change). Cannot access or modify other sections.'}
+                      ? '• সাধারণ ইউজারদের মতো পুরো অ্যাপ দেখতে পারবেন এবং শুধুমাত্র "স্টাফ হাজিরা" অপশনে নিজের হাজিরা দিতে ও পিন পরিবর্তন করতে পারবেন (হাজিরা দেওয়ার ৫ মিনিট পর তা লক হয়ে যাবে)। অন্য কোনো হিসাব বা ডেটা পরিবর্তন করতে পারবেন না।'
+                      : '• Can view the entire app like regular users and can only mark their own attendance (locks 5 minutes after submission) and change their own PIN. Read-only everywhere else.'}
                   </p>
                 </div>
               )}

@@ -329,7 +329,7 @@ service cloud.firestore {
       return data.keys().hasAll(['id', 'staffId', 'date', 'month', 'status']) &&
         data.keys().hasOnly([
           'id', 'staffId', 'staffName', 'staffRole', 'date', 'month',
-          'status', 'checkInTime', 'leaveType', 'note', 'recordedBy', 'updatedAt'
+          'status', 'checkInTime', 'leaveType', 'note', 'recordedBy', 'createdAt', 'updatedAt'
         ]) &&
         data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
         data.staffId is string && data.staffId.size() >= 1 && data.staffId.size() <= 128 &&
@@ -342,6 +342,7 @@ service cloud.firestore {
         (!('leaveType' in data) || data.leaveType == null || data.leaveType in ['casual', 'sick', 'emergency', 'unpaid', 'none']) &&
         (!('note' in data) || (data.note is string && data.note.size() <= 1000)) &&
         (!('recordedBy' in data) || data.recordedBy == null || (data.recordedBy is string && data.recordedBy.size() <= 128)) &&
+        (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64)) &&
         (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
     }
 

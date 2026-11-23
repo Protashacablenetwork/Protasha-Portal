@@ -51,8 +51,8 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
 }) => {
   const isBn = lang === 'bn';
   const canAddTrx = canAddTransactions(user);
-  const isTrxRestricted = user?.role === 'staff' || (user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'transactions'));
-  const isStaffManagerRestricted = user?.role === 'staff' || (user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'staffManager'));
+  const isTrxRestricted = user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'transactions');
+  const isStaffManagerRestricted = user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'staffManager');
 
   const isTrxLocked = isTrxRestricted || serviceStatuses.transactions?.isActive === false || String(serviceStatuses.transactions?.isActive) === 'false';
   const isStaffLocked = isStaffManagerRestricted || serviceStatuses.staffManager?.isActive === false || String(serviceStatuses.staffManager?.isActive) === 'false';

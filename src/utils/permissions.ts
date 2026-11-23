@@ -1,4 +1,5 @@
 import {
+  StaffAttendanceRecord,
   StaffSupportSession,
   SubAdminPermissionKey,
   SupportTicket,
@@ -9,6 +10,7 @@ import { toBengaliNumber } from './formatters';
 
 export const SUB_ADMIN_EDIT_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
 export const SUPPORT_TICKET_EDIT_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+export const STAFF_ATTENDANCE_EDIT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 
 export function isMainAdmin(user?: UserSession | null): boolean {
   return user?.role === 'admin';
@@ -226,5 +228,52 @@ export function formatRemainingCountdown(remainingMs: number, isBn: boolean): st
   const secs = totalSec % 60;
   const formatted = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   return isBn ? toBengaliNumber(formatted) : formatted;
+}
+
+export interface StaffAttendanceLockState {
+  hasRecord: boolean;
+  locked: boolean;
+  remainingMs: number;
+  submittedAtMs: number;
+}
+
+export function getStaffAttendanceLockState(
+  record?: StaffAttendanceRecord | null,
+  isAdmin: boolean = false,
+  now: number = Date.now()
+): StaffAttendanceLockState {
+  if (!record) {
+    return {
+      hasRecord: false,
+      locked: false,
+      remainingMs: STAFF_ATTENDANCE_EDIT_WINDOW_MS,
+      submittedAtMs: 0
+    };
+  }
+
+  if (isAdmin) {
+    return {
+      hasRecord: true,
+      locked: false,
+      remainingMs: Number.POSITIVE_INFINITY,
+      submittedAtMs: 0
+    };
+  }
+
+  const rawTs = record.createdAt || record.updatedAt;
+  const submittedAtMs = rawTs ? new Date(rawTs).getTime() : 0;
+  if (!submittedAtMs || isNaN(submittedAtMs)) {
+    return { hasRecord: true, locked: true, remainingMs: 0, submittedAtMs: 0 };
+  }
+
+  const elapsed = Math.max(0, now - submittedAtMs);
+  const remainingMs = Math.max(0, STAFF_ATTENDANCE_EDIT_WINDOW_MS - elapsed);
+
+  return {
+    hasRecord: true,
+    locked: elapsed > STAFF_ATTENDANCE_EDIT_WINDOW_MS,
+    remainingMs,
+    submittedAtMs
+  };
 }
 

@@ -1681,7 +1681,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
           )}
 
           {/* Dedicated Staff Login Button (for non-admin / non-staff users) */}
-          {!canViewAllTickets && !isVisitor && (
+          {!canViewAllTickets && !isVisitor && !isStaffRoleUser && (
             <button
               type="button"
               onClick={openStaffLoginModal}
@@ -1749,14 +1749,16 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                   : 'You are in Read-Only mode. Regular users cannot add or modify support tickets.'}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={openStaffLoginModal}
-              className="h-8 px-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-extrabold inline-flex items-center gap-1 cursor-pointer shrink-0"
-            >
-              <KeyRound className="w-3.5 h-3.5" />
-              <span>{isBn ? 'স্টাফ লগইন' : 'Staff Login'}</span>
-            </button>
+            {!isStaffRoleUser && (
+              <button
+                type="button"
+                onClick={openStaffLoginModal}
+                className="h-8 px-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-extrabold inline-flex items-center gap-1 cursor-pointer shrink-0"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>{isBn ? 'স্টাফ লগইন' : 'Staff Login'}</span>
+              </button>
+            )}
           </div>
         ) : null}
         {/* 4-Stage KPI Strip: ১. দাখিলকৃত | ২. পর্যালোচনা | ৩. কাজ চলমান | ৪. সমাধানকৃত */}

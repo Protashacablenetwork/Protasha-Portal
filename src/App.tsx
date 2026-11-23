@@ -2165,11 +2165,6 @@ export default function App() {
     }
 
     if (user.role === 'staff') {
-      if (activePortal) setActivePortal(null);
-      if (activeTab === 'transactions' || activeTab === 'ledger') setActiveTab('home');
-      if (isStaffManagerOpen) setIsStaffManagerOpen(false);
-      if (isQuickHisabOpen) setIsQuickHisabOpen(false);
-      if (isSupportTicketsOpen) setIsSupportTicketsOpen(false);
       if (isRecycleBinOpen) setIsRecycleBinOpen(false);
       if (isUserManagementOpen) setIsUserManagementOpen(false);
       if (isBannerManagerOpen) setIsBannerManagerOpen(false);
@@ -2933,20 +2928,6 @@ export default function App() {
   };
 
   const checkServiceAccess = (serviceId: string, displayName: string): boolean => {
-    // Staff accounts logged in via Staff credentials can ONLY access Staff Attendance
-    if (user?.role === 'staff' && serviceId !== 'staffAttendance') {
-      sounds.playTap();
-      showAppToast(
-        lang === 'bn' ? 'স্টাফ অ্যাকাউন্ট সীমাবদ্ধ' : 'Staff Account Restricted',
-        lang === 'bn'
-          ? 'স্টাফ লগইন দিয়ে শুধুমাত্র "স্টাফ হাজিরা ও ছুটি" অপশন ব্যবহার করা যাবে।'
-          : 'Staff accounts can only access the Staff Attendance module.',
-        'amber',
-        5000
-      );
-      return false;
-    }
-
     // Sub-Admin granular permissions configured by Main Admin
     if (user?.role === 'sub-admin') {
       const subAdminMap: Record<string, SubAdminPermissionKey | undefined> = {
@@ -2975,6 +2956,9 @@ export default function App() {
     }
 
     const status = serviceStatuses[serviceId];
+    if (serviceId === 'staffAttendance' && (user?.role === 'staff' || (() => { try { return sessionStorage.getItem('protyasha_support_staff_session'); } catch { return null; } })())) {
+      return true;
+    }
     if (status && (status.isActive === false || String(status.isActive) === 'false')) {
       setActiveServiceNotice({
         name: displayName,
@@ -4090,12 +4074,12 @@ export default function App() {
                     <div className="rounded-2xl border border-teal-200 dark:border-teal-800/70 bg-gradient-to-r from-teal-50 via-emerald-50 to-white dark:from-teal-950/60 dark:via-emerald-950/30 dark:to-slate-900 p-3.5 shadow-sm flex items-center justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-xs font-black text-teal-800 dark:text-teal-200">
-                          {lang === 'bn' ? 'স্টাফ হাজিরা মোড সক্রিয়' : 'Staff Attendance Mode Active'}
+                          {lang === 'bn' ? 'স্টাফ অ্যাকাউন্ট (সাধারণ দর্শন ও হাজিরা)' : 'Staff Mode (View App & Attendance)'}
                         </p>
                         <p className="text-[11px] text-teal-700/90 dark:text-teal-300/90 leading-snug mt-0.5">
                           {lang === 'bn'
-                            ? 'আপনি শুধুমাত্র স্টাফ হাজিরা ও ছুটি অপশনে প্রবেশ করে নিজের হাজিরা ও পিন পরিচালনা করতে পারবেন।'
-                            : 'Your staff login grants access strictly to Staff Attendance & your own PIN settings.'}
+                            ? 'আপনি সাধারণ সদস্যদের মতো পুরো অ্যাপ দেখতে পারবেন এবং স্টাফ হাজিরা অপশনে নিজের হাজিরা দিতে পারবেন (৫ মিনিট পর হাজিরা লক হবে)।'
+                            : 'You can browse the full app (view-only) and mark your own attendance (locks after 5 minutes).'}
                         </p>
                       </div>
                       <button

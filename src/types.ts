@@ -388,6 +388,7 @@ export interface StaffAttendanceRecord {
   leaveType?: LeaveType;
   note?: string;
   recordedBy?: string;
+  createdAt?: string;
   updatedAt: string;
 }
 

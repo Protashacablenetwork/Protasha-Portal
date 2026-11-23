@@ -32,7 +32,6 @@ export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
   const isBn = lang === 'bn';
 
   const isRoleBlocked = (key: SubAdminPermissionKey) => {
-    if (user?.role === 'staff') return key !== 'staffAttendance';
     if (user?.role === 'sub-admin') return !hasSubAdminPermission(user, key);
     return false;
   };
@@ -233,8 +232,7 @@ export const OperationsHubCards: React.FC<OperationsHubCardsProps> = ({
 
   const isBn = lang === 'bn';
   const isTicketsRestricted =
-    user?.role === 'staff' ||
-    (user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'supportTickets'));
+    user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'supportTickets');
   const isAttendanceRestricted =
     user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'staffAttendance');
 

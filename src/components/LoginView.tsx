@@ -1311,6 +1311,18 @@ export const LoginView: React.FC<LoginViewProps> = ({
         </button>
       </div>
 
+      {/* Marquee Emergency Service & Maintenance Warning Notice at the bottom of login page */}
+      <div className="bg-amber-500 text-white text-xs font-extrabold py-2 px-3 overflow-hidden shrink-0 border-t border-amber-600 shadow-inner flex items-center gap-2">
+        <span className="bg-amber-700 text-white text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 font-black">
+          {isBn ? 'জরুরি নোটিশ' : 'Notice'}
+        </span>
+        {React.createElement('marquee' as any, { scrollAmount: 5, className: 'flex-1' },
+          isBn
+            ? '⚠️ রক্ষণাবেক্ষণ বা বিশেষ কারণে কিছু সেবা সাময়িকভাবে বন্ধ বা সীমিত থাকতে পারে। যে কোনো প্রয়োজনে বা সহযোগিতায় ০১৭৭৭৮৭৭২০৭ নাম্বারে যোগাযোগ করুন।'
+            : '⚠️ Emergency Notice: Some services may be temporarily limited or under maintenance. For assistance, contact 01777877207.'
+        )}
+      </div>
+
       {/* Informational Pop-up Modal for Store, Offer, and Help */}
       {activeModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">

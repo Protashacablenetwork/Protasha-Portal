@@ -1146,7 +1146,7 @@ export const StaffAttendanceDetailView: React.FC<StaffAttendanceDetailViewProps>
                       </p>
                     )}
 
-                    {isConfirming && rec && (
+                    {canDeleteThis && isConfirming && rec && (
                       <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 flex items-center justify-between gap-2">
                         <span className="text-xs font-bold text-rose-700 dark:text-rose-300">
                           {isBn

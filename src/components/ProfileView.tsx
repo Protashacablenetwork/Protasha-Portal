@@ -571,7 +571,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   ) : isStaff ? (
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-300 border border-teal-200/60">
                       <ShieldCheck className="w-3 h-3" />
-                      <span>{isBn ? 'স্টাফ (শুধু হাজিরা)' : 'Staff (Attendance Only)'}</span>
+                      <span>{isBn ? 'স্টাফ (দেখা ও হাজিরা)' : 'Staff (View & Attendance)'}</span>
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400 border border-blue-200/50">
@@ -722,12 +722,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   </div>
                   <div>
                     <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                      {isBn ? 'স্টাফ হাজিরা অ্যাকাউন্ট' : 'Staff Attendance Account'}
+                      {isBn ? 'স্টাফ অ্যাকাউন্ট (দেখা ও হাজিরা)' : 'Staff Account (View & Attendance)'}
                     </h4>
                     <p className="text-[11px] text-slate-600 dark:text-slate-400">
                       {isBn
-                        ? 'আপনি শুধুমাত্র স্টাফ হাজিরা অপশনে নিজের হাজিরা ও ছুটি দিতে এবং পিন পরিবর্তন করতে পারবেন।'
-                        : 'You can mark your own attendance & leave and update your own PIN.'}
+                        ? 'আপনি সাধারণ ইউজারদের মতো পুরো অ্যাপ দেখতে পারবেন এবং শুধু নিজের হাজিরা দিতে ও পিন পরিবর্তন করতে পারবেন (হাজিরা দেওয়ার ৫ মিনিট পর তা লক হয়ে যাবে)।'
+                        : 'You can view the entire app like regular users and submit only your own attendance (locks 5 minutes after marking) and change your PIN.'}
                     </p>
                   </div>
                 </div>

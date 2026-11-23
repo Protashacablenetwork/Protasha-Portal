@@ -294,6 +294,7 @@
         "leaveType": { "type": "string", "enum": ["casual", "sick", "emergency", "unpaid", "none"] },
         "note": { "type": "string", "maxLength": 1000 },
         "recordedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 },
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["id", "staffId", "date", "month", "status"]
