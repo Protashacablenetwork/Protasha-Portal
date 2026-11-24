@@ -303,8 +303,8 @@ export async function syncStaffPinEverywhere(params: {
   newPin: string;
 }): Promise<void> {
   const cleanPin = String(params.newPin || '').trim();
-  if (!/^\d{4,8}$/.test(cleanPin)) {
-    throw new Error('পিন অবশ্যই ৪ থেকে ৮ সংখ্যার হতে হবে');
+  if (cleanPin.length < 4) {
+    throw new Error('পিন কমপক্ষে ৪ অক্ষর/সংখ্যার হতে হবে');
   }
 
   const nowIso = new Date().toISOString();

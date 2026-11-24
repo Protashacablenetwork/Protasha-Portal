@@ -10,7 +10,7 @@ import {
 import { Language, SubAdminPermissionKey, UserSession } from '../types';
 import { sounds } from '../utils/audio';
 import { toBengaliNumber } from '../utils/formatters';
-import { hasSubAdminPermission } from '../utils/permissions';
+import { hasSubAdminPermission, isStaffSessionActive } from '../utils/permissions';
 
 interface PrimaryFeatureCardsProps {
   lang: Language;
@@ -31,18 +31,20 @@ export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
 }) => {
   const isBn = lang === 'bn';
 
+  const isStaff = isStaffSessionActive(user);
+
   const isRoleBlocked = (key: SubAdminPermissionKey) => {
     if (user?.role === 'sub-admin') return !hasSubAdminPermission(user, key);
     return false;
   };
 
-  const isBillRestricted = isRoleBlocked('billManager');
-  const isAyByayRestricted = isRoleBlocked('ayByay');
-  const isQuickHisabRestricted = isRoleBlocked('quickHisab');
+  const isBillRestricted = !isStaff && isRoleBlocked('billManager');
+  const isAyByayRestricted = !isStaff && isRoleBlocked('ayByay');
+  const isQuickHisabRestricted = !isStaff && isRoleBlocked('quickHisab');
 
-  const isBillLocked = isBillRestricted || serviceStatuses.billManager?.isActive === false || String(serviceStatuses.billManager?.isActive) === 'false';
-  const isAyByayLocked = isAyByayRestricted || serviceStatuses.ayByay?.isActive === false || String(serviceStatuses.ayByay?.isActive) === 'false';
-  const isQuickHisabLocked = isQuickHisabRestricted || serviceStatuses.quickHisab?.isActive === false || String(serviceStatuses.quickHisab?.isActive) === 'false';
+  const isBillLocked = !isStaff && (isBillRestricted || serviceStatuses.billManager?.isActive === false || String(serviceStatuses.billManager?.isActive) === 'false');
+  const isAyByayLocked = !isStaff && (isAyByayRestricted || serviceStatuses.ayByay?.isActive === false || String(serviceStatuses.ayByay?.isActive) === 'false');
+  const isQuickHisabLocked = !isStaff && (isQuickHisabRestricted || serviceStatuses.quickHisab?.isActive === false || String(serviceStatuses.quickHisab?.isActive) === 'false');
 
   return (
     <div className="px-4 pt-1 pb-3 select-none space-y-2.5 sm:space-y-3.5">
@@ -231,19 +233,25 @@ export const OperationsHubCards: React.FC<OperationsHubCardsProps> = ({
   if (!onOpenSupportTickets && !onOpenStaffAttendance) return null;
 
   const isBn = lang === 'bn';
+  const isStaff = isStaffSessionActive(user);
+
   const isTicketsRestricted =
-    user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'supportTickets');
+    !isStaff && user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'supportTickets');
   const isAttendanceRestricted =
-    user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'staffAttendance');
+    !isStaff && user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'staffAttendance');
 
   const isTicketsLocked =
-    isTicketsRestricted ||
-    serviceStatuses.supportTickets?.isActive === false ||
-    String(serviceStatuses.supportTickets?.isActive) === 'false';
+    !isStaff && (
+      isTicketsRestricted ||
+      serviceStatuses.supportTickets?.isActive === false ||
+      String(serviceStatuses.supportTickets?.isActive) === 'false'
+    );
   const isAttendanceLocked =
-    isAttendanceRestricted ||
-    serviceStatuses.staffAttendance?.isActive === false ||
-    String(serviceStatuses.staffAttendance?.isActive) === 'false';
+    !isStaff && (
+      isAttendanceRestricted ||
+      serviceStatuses.staffAttendance?.isActive === false ||
+      String(serviceStatuses.staffAttendance?.isActive) === 'false'
+    );
 
   return (
     <div className="px-4 pt-1 pb-3 select-none">

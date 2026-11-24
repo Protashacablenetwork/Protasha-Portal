@@ -355,6 +355,7 @@
     "/support_tickets/{ticketId}/messages/{messageId}": { "schema": "SupportTicketMessage", "description": "Real-time conversation messages for each support ticket" },
     "/staff_attendance/{recordId}": { "schema": "StaffAttendance", "description": "Daily staff attendance and leave records" },
     "/popup_notices/{noticeId}": { "schema": "PopupNotice", "description": "Admin-published popup notices requiring user acknowledgement" },
-    "/popup_notices/{noticeId}/acknowledgements/{ackId}": { "schema": "PopupNoticeAcknowledgement", "description": "User consent and acknowledgement records per popup notice" }
+    "/popup_notices/{noticeId}/acknowledgements/{ackId}": { "schema": "PopupNoticeAcknowledgement", "description": "User consent and acknowledgement records per popup notice" },
+    "/test/{testId}": { "schema": "SettingsDocument", "description": "Connection test probe" }
   }
 }

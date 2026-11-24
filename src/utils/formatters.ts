@@ -27,6 +27,15 @@ export function formatCurrency(amount: number, lang: Language): string {
   return `৳ ${formatted}`;
 }
 
+export function formatSignedCurrency(amount: number, lang: Language): string {
+  const num = Number(amount) || 0;
+  const formatted = Math.abs(num).toLocaleString(lang === 'bn' ? 'bn-BD' : 'en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  });
+  return num < 0 ? `-৳ ${formatted}` : `৳ ${formatted}`;
+}
+
 export function formatTransactionDate(dateStr: string, timeStr: string, lang: Language): string {
   if (!dateStr) return '';
   const parts = dateStr.split('-');

@@ -777,7 +777,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                     className="w-full h-11 px-3 text-xs font-bold bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl border border-slate-200 dark:border-slate-700"
                   >
                     <option value="user">{isBn ? 'সাধারণ ইউজার (শুধু দেখা)' : 'Regular User (Read-Only)'}</option>
-                    <option value="staff">{isBn ? 'স্টাফ (সম্পূর্ণ দেখা ও শুধু হাজিরা)' : 'Staff (View All & Attendance Only)'}</option>
+                    <option value="staff">{isBn ? 'স্টাফ (পুরো অ্যাপ দেখা ও হাজিরা)' : 'Staff (Full App View & Attendance)'}</option>
                     <option value="sub-admin">{isBn ? 'সাব-অ্যাডমিন (নির্ধারিত সেবা)' : 'Sub-Admin (Custom Access)'}</option>
                     <option value="admin">{isBn ? 'অ্যাডমিন' : 'Admin'}</option>
                   </select>
@@ -787,12 +787,17 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
               {editRole === 'staff' && (
                 <div className="p-3 rounded-xl bg-teal-50 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-900/50 text-[11px] text-teal-900 dark:text-teal-200 space-y-1">
                   <p className="font-bold">
-                    {isBn ? 'স্টাফ অ্যাকাউন্ট সুবিধা ও নিয়ম:' : 'Staff Account Access & Rules:'}
+                    {isBn ? 'স্টাফ অ্যাকাউন্ট সুবিধা (পুরো অ্যাপ দেখা ও হাজিরা):' : 'Staff Account Access (Full App View & Attendance):'}
                   </p>
                   <p>
                     {isBn
-                      ? '• সাধারণ ইউজারদের মতো পুরো অ্যাপ দেখতে পারবেন এবং শুধুমাত্র "স্টাফ হাজিরা" অপশনে নিজের হাজিরা দিতে ও পিন পরিবর্তন করতে পারবেন (হাজিরা দেওয়ার ৫ মিনিট পর তা লক হয়ে যাবে)। অন্য কোনো হিসাব বা ডেটা পরিবর্তন করতে পারবেন না।'
-                      : '• Can view the entire app like regular users and can only mark their own attendance (locks 5 minutes after submission) and change their own PIN. Read-only everywhere else.'}
+                      ? '• সাধারণ ইউজারদের মতো পুরো অ্যাপে (বিল ম্যানেজমেন্ট প্রো, আয়-ব্যয়, কুইক হিসাব, সকল লেনদেন, অডিট ও রিপোর্ট, স্টাফ কালেকশন, সাপোর্ট টিকেট ও পেমেন্ট চ্যানেল) সম্পূর্ণ ভিজিট ও দেখতে পারবেন — কোনো অপশন লক বা বন্ধ থাকবে না।'
+                      : '• Full unrestricted read-only access across the entire app (Bill Management Pro, Ay-Byay, Quick Hisab, Transactions, Reports, Staff Collection, Support Tickets, and Payment Channels) just like regular users.'}
+                  </p>
+                  <p>
+                    {isBn
+                      ? '• পাশাপাশি "স্টাফ হাজিরা ও ছুটি" অপশনে নিজের হাজিরা দিতে (৫ মিনিট পর অটো-লক) ও প্রোফাইল থেকে নিজের পিন পরিবর্তন করতে পারবেন।'
+                      : '• Can also submit own attendance in Staff Attendance & Leaves (auto-locks after 5 minutes) and change own PIN from Profile.'}
                   </p>
                 </div>
               )}

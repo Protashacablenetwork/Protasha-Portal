@@ -571,7 +571,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   ) : isStaff ? (
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-300 border border-teal-200/60">
                       <ShieldCheck className="w-3 h-3" />
-                      <span>{isBn ? 'স্টাফ (দেখা ও হাজিরা)' : 'Staff (View & Attendance)'}</span>
+                      <span>{isBn ? 'স্টাফ (পুরো অ্যাপ ও হাজিরা)' : 'Staff (Full App & Attendance)'}</span>
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400 border border-blue-200/50">
@@ -712,7 +712,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
           </div>
 
-          {/* Staff Role Attendance-Only Notice Card */}
+          {/* Staff Role Full-View + Attendance Notice Card */}
           {isStaff && (
             <div className="p-4 bg-gradient-to-r from-teal-50/70 to-emerald-50/40 dark:from-teal-950/20 dark:to-emerald-950/10 space-y-1.5">
               <div className="flex items-center justify-between gap-2">
@@ -722,17 +722,17 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   </div>
                   <div>
                     <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                      {isBn ? 'স্টাফ অ্যাকাউন্ট (দেখা ও হাজিরা)' : 'Staff Account (View & Attendance)'}
+                      {isBn ? 'স্টাফ অ্যাকাউন্ট সুবিধা (পুরো অ্যাপ ও হাজিরা)' : 'Staff Account (Full App View & Attendance)'}
                     </h4>
                     <p className="text-[11px] text-slate-600 dark:text-slate-400">
                       {isBn
-                        ? 'আপনি সাধারণ ইউজারদের মতো পুরো অ্যাপ দেখতে পারবেন এবং শুধু নিজের হাজিরা দিতে ও পিন পরিবর্তন করতে পারবেন (হাজিরা দেওয়ার ৫ মিনিট পর তা লক হয়ে যাবে)।'
-                        : 'You can view the entire app like regular users and submit only your own attendance (locks 5 minutes after marking) and change your PIN.'}
+                        ? 'সাধারণ ইউজারদের মতো পুরো অ্যাপের সব অপশন ভিজিট ও দেখতে পারবেন এবং "স্টাফ হাজিরা ও ছুটি" অপশনে নিজের হাজিরা দিতে (৫ মিনিট পর অটো-লক) ও প্রোফাইল থেকে নিজের পিন পরিবর্তন করতে পারবেন।'
+                        : 'Browse and view the entire app freely like regular users, submit your own attendance (auto-locks after 5 minutes), and change your own PIN.'}
                     </p>
                   </div>
                 </div>
                 <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-teal-200/80 text-teal-900 dark:bg-teal-900/60 dark:text-teal-200 shrink-0">
-                  {isBn ? 'হাজিরা' : 'Attendance'}
+                  {isBn ? 'পুরো অ্যাপ ও হাজিরা' : 'Full View & Attendance'}
                 </span>
               </div>
             </div>

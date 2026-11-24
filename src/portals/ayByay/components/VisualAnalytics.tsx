@@ -268,7 +268,7 @@ export const VisualAnalytics: React.FC<VisualAnalyticsProps> = ({
         >
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-500 dark:text-slate-400">
-              নিট লাভ / প্রফিট
+              {activeMonthProfit >= 0 ? 'নিট লাভ / প্রফিট' : 'নিট লস / ঘাটতি'}
             </span>
             <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${
               activeMonthProfit >= 0 

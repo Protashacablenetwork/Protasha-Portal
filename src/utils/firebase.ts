@@ -20,13 +20,13 @@ const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const databaseId = (firebaseConfig as any).firestoreDatabaseId || 'staff-collection-db';
 
 // Initialize Firestore with IndexedDB persistent local cache (instant cached reads on boot)
-// + long-polling auto-detection to prevent WebChannel drops across proxies/browsers.
+// + experimentalForceLongPolling to prevent WebChannel drops and 10s backend timeouts across proxies/browsers.
 export const db = (() => {
   try {
     return initializeFirestore(
       app,
       {
-        experimentalAutoDetectLongPolling: true,
+        experimentalForceLongPolling: true,
         localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
       },
       databaseId
@@ -35,7 +35,7 @@ export const db = (() => {
     try {
       return initializeFirestore(
         app,
-        { experimentalAutoDetectLongPolling: true },
+        { experimentalForceLongPolling: true },
         databaseId
       );
     } catch {
@@ -206,11 +206,11 @@ export async function safeDeleteDoc(docRef: DocumentReference<any>): Promise<voi
 // Validate connection to the newly provisioned Firestore database on boot
 export async function testFirestoreConnection(): Promise<boolean> {
   try {
-    await getDocFromServer(doc(db, 'settings', 'connection_test'));
+    await getDocFromServer(doc(db, 'test', 'connection'));
     return true;
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
+      console.warn('[Firestore Offline Notice]: Client operating with local persistence.');
     } else {
       console.warn('[Firestore Connection Notice]:', error instanceof Error ? error.message : error);
     }
@@ -223,5 +223,5 @@ if (!(globalThis as any).__PCN_FB_CONN_CHECKED__) {
   (globalThis as any).__PCN_FB_CONN_CHECKED__ = true;
   setTimeout(() => {
     void testFirestoreConnection();
-  }, 5000);
+  }, 3000);
 }

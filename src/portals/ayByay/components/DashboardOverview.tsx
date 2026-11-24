@@ -224,10 +224,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               </div>
             </div>
 
-            {/* Net Profit / Balance */}
+            {/* Net Profit / Loss Balance */}
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-xs">
-              <span className="text-xs text-cyan-300 font-semibold flex items-center gap-1 mb-1">
-                <ShieldCheck className="w-3.5 h-3.5" /> নিট মুনাফা / উদ্বৃত্ত
+              <span className={`text-xs font-semibold flex items-center gap-1 mb-1 ${
+                (incomeCategoryData.total - expenseCategoryData.total) >= 0 ? 'text-cyan-300' : 'text-rose-300'
+              }`}>
+                <ShieldCheck className="w-3.5 h-3.5" />
+                {(incomeCategoryData.total - expenseCategoryData.total) >= 0 ? 'নিট মুনাফা / উদ্বৃত্ত' : 'নিট লস / ঘাটতি'}
               </span>
               <div className={`text-xl lg:text-2xl font-black ${
                 (incomeCategoryData.total - expenseCategoryData.total) >= 0 ? 'text-cyan-400' : 'text-rose-400'

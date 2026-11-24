@@ -376,6 +376,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
             return;
           }
 
+          const isStaffAcc = userData.role === 'staff';
           const resolvedRole: UserRole = (userData.role || 'user') as UserRole;
           const resolvedId = userId || ('usr_' + Date.now());
           const lockResult = await claimDeviceSession({
@@ -390,6 +391,19 @@ export const LoginView: React.FC<LoginViewProps> = ({
             sounds.playTap();
             setErrorMsg(isBn ? (lockResult.messageBn || 'অন্য ডিভাইসে লগইন করা আছে') : (lockResult.messageEn || 'Already logged in on another device'));
             return;
+          }
+
+          if (resolvedRole === 'staff' || isStaffAcc) {
+            try {
+              const staffSessionObj: StaffSupportSession = {
+                staffId: resolvedId,
+                name: userData.name,
+                phone: userData.phone,
+                roleTitle: 'স্টাফ',
+                loggedInAt: new Date().toISOString()
+              };
+              sessionStorage.setItem('protyasha_support_staff_session', JSON.stringify(staffSessionObj));
+            } catch {}
           }
 
           const userSession: UserSession = {
@@ -1316,7 +1330,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
         <span className="bg-amber-700 text-white text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 font-black">
           {isBn ? 'জরুরি নোটিশ' : 'Notice'}
         </span>
-        {React.createElement('marquee' as any, { scrollAmount: 5, className: 'flex-1' },
+        {React.createElement('marquee' as any, { scrollamount: 5, className: 'flex-1' },
           isBn
             ? '⚠️ রক্ষণাবেক্ষণ বা বিশেষ কারণে কিছু সেবা সাময়িকভাবে বন্ধ বা সীমিত থাকতে পারে। যে কোনো প্রয়োজনে বা সহযোগিতায় ০১৭৭৭৮৭৭২০৭ নাম্বারে যোগাযোগ করুন।'
             : '⚠️ Emergency Notice: Some services may be temporarily limited or under maintenance. For assistance, contact 01777877207.'

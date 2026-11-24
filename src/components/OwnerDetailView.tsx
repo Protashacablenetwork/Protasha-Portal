@@ -14,7 +14,7 @@ import {
   Wallet
 } from 'lucide-react';
 import { Language, StaffAccount, UserSession } from '../types';
-import { formatCurrency, toBengaliNumber } from '../utils/formatters';
+import { formatCurrency, formatSignedCurrency, toBengaliNumber } from '../utils/formatters';
 import { getMonthBengaliName } from '../portals/ayByay/data/categories';
 import { OwnerDividendBreakdown, recordOwnerDividendDeduction } from '../utils/ownerDueSync';
 import { sounds } from '../utils/audio';
@@ -311,6 +311,10 @@ export const OwnerDetailView: React.FC<OwnerDetailViewProps> = ({
                       ? isBn
                         ? `বকেয়া কোম্পানি পাওনা ${renderAmount(applicableCompanyDue)} (এই মাসের লভ্যাংশ শূন্য হওয়ায় কর্তন হয়নি)`
                         : `Pending company due ${renderAmount(applicableCompanyDue)}`
+                      : netProfit < 0
+                      ? isBn
+                        ? `${monthLabel} মাসে কোম্পানির নিট লস (${formatSignedCurrency(netProfit, lang)}) থাকায় লভ্যাংশ শূন্য`
+                        : `Company recorded a net loss (${formatSignedCurrency(netProfit, lang)}) for ${monthLabel}`
                       : isBn
                       ? `${monthLabel} মাসের কোম্পানির মোট নিট লাভ থেকে প্রাপ্ত অংশ`
                       : `Calculated from company net profit for ${monthLabel}`}
@@ -355,12 +359,16 @@ export const OwnerDetailView: React.FC<OwnerDetailViewProps> = ({
             <div className="divide-y divide-slate-100 dark:divide-slate-800 text-xs sm:text-sm">
               <div className="px-4 sm:px-5 py-3 flex items-center justify-between gap-3">
                 <span className="text-slate-600 dark:text-slate-400 font-medium">
-                  {isBn
-                    ? `কোম্পানির মোট নিট লাভ (${monthLabel})`
-                    : `Company Total Net Profit (${monthLabel})`}
+                  {netProfit < 0
+                    ? (isBn
+                        ? `কোম্পানির মোট নিট লস / ঘাটতি (${monthLabel})`
+                        : `Company Net Loss (${monthLabel})`)
+                    : (isBn
+                        ? `কোম্পানির মোট নিট লাভ (${monthLabel})`
+                        : `Company Total Net Profit (${monthLabel})`)}
                 </span>
-                <span className="font-bold text-slate-900 dark:text-white tabular-nums">
-                  {renderAmount(netProfit)}
+                <span className={`font-bold tabular-nums ${netProfit < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}`}>
+                  {formatSignedCurrency(netProfit, lang)}
                 </span>
               </div>
 

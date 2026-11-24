@@ -13,7 +13,7 @@ import {
 import { Language, Transaction, PaymentChannel, UserSession, StaffAccount } from '../types';
 import { formatCurrency } from '../utils/formatters';
 import { sounds } from '../utils/audio';
-import { canAddTransactions, hasSubAdminPermission } from '../utils/permissions';
+import { canAddTransactions, hasSubAdminPermission, isStaffSessionActive } from '../utils/permissions';
 import { SmartChannelIcon, getChannelGradient } from './SmartChannelIcon';
 
 interface QuickChannelsProps {
@@ -50,13 +50,14 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
   currentYear
 }) => {
   const isBn = lang === 'bn';
+  const isStaff = isStaffSessionActive(user);
   const canAddTrx = canAddTransactions(user);
-  const isTrxRestricted = user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'transactions');
-  const isStaffManagerRestricted = user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'staffManager');
+  const isTrxRestricted = !isStaff && user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'transactions');
+  const isStaffManagerRestricted = !isStaff && user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'staffManager');
 
-  const isTrxLocked = isTrxRestricted || serviceStatuses.transactions?.isActive === false || String(serviceStatuses.transactions?.isActive) === 'false';
-  const isStaffLocked = isStaffManagerRestricted || serviceStatuses.staffManager?.isActive === false || String(serviceStatuses.staffManager?.isActive) === 'false';
-  const isLedgerLocked = serviceStatuses.ledger?.isActive === false || String(serviceStatuses.ledger?.isActive) === 'false';
+  const isTrxLocked = !isStaff && (isTrxRestricted || serviceStatuses.transactions?.isActive === false || String(serviceStatuses.transactions?.isActive) === 'false');
+  const isStaffLocked = !isStaff && (isStaffManagerRestricted || serviceStatuses.staffManager?.isActive === false || String(serviceStatuses.staffManager?.isActive) === 'false');
+  const isLedgerLocked = !isStaff && (serviceStatuses.ledger?.isActive === false || String(serviceStatuses.ledger?.isActive) === 'false');
 
   const normalizeMethodName = (rawMethod: string | undefined): string => {
     if (!rawMethod) return '';

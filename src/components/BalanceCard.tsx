@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { Language } from '../types';
-import { formatCurrency, translations } from '../utils/formatters';
+import { formatSignedCurrency, translations } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 
 interface BalanceCardProps {
@@ -66,7 +66,7 @@ export const BalanceCard: React.FC<BalanceCardProps> = ({ balance, lang }) => {
                   {lang === 'bn' ? 'মোট বর্তমান ব্যালেন্স' : 'Current Net Balance'}
                 </span>
                 <h3 className="text-xl font-bold tracking-tight text-[#E52E2E] dark:text-rose-400 tabular-nums">
-                  {formatCurrency(balance, lang)}
+                  {formatSignedCurrency(balance, lang)}
                 </h3>
               </div>
             ) : (

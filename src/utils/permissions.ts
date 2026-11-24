@@ -24,13 +24,26 @@ export function isStaffRole(user?: UserSession | null): boolean {
   return user?.role === 'staff';
 }
 
+export function isStaffSessionActive(user?: UserSession | null): boolean {
+  if (!user) return false;
+  if (user.role === 'staff') return true;
+  try {
+    if (typeof window !== 'undefined') {
+      if (sessionStorage.getItem('protyasha_support_staff_session') !== null) return true;
+      const rawUser = localStorage.getItem('protyasha_user') || sessionStorage.getItem('protyasha_user');
+      if (rawUser && rawUser.includes('"role":"staff"')) return true;
+    }
+  } catch {}
+  return false;
+}
+
 export function hasSubAdminPermission(
   user: UserSession | null | undefined,
   key: SubAdminPermissionKey
 ): boolean {
   if (!user) return false;
   if (user.role === 'admin') return true;
-  if (user.role === 'staff') return key === 'staffAttendance';
+  if (user.role === 'staff') return true;
   if (user.role === 'sub-admin') {
     if (!user.permissions || Object.keys(user.permissions).length === 0) {
       return true; // Backward-compatible default for legacy sub-admin accounts without explicit permissions

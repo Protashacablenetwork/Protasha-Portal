@@ -474,6 +474,10 @@ service cloud.firestore {
       allow delete: if isValidId(settingId);
     }
 
+    match /test/{testId} {
+      allow get: if isValidId(testId);
+    }
+
     match /support_tickets/{ticketId} {
       allow get: if isValidId(ticketId);
       allow list: if isActiveRequest();

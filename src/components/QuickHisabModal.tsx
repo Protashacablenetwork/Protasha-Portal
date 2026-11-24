@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { Language, StaffAccount, UserSession, QuickHisabOwner } from '../types';
 import { initialQuickHisabOwners } from '../data/initialData';
-import { formatCurrency, toBengaliNumber } from '../utils/formatters';
+import { formatCurrency, formatSignedCurrency, toBengaliNumber } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import { compressImageFile } from '../utils/imageStorage';
 import confetti from 'canvas-confetti';
@@ -703,6 +703,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
 
   // Dynamic share + company due deduction calculations based on current owners & staffAccounts
   const netProfit = summary.netProfit || 0;
+  const isLoss = netProfit < 0;
   const dividendLedger = computeOwnersDividendLedger(owners, staffAccounts, netProfit);
   const {
     totalShareUnits,
@@ -733,6 +734,9 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
 
   const renderAmount = (amount: number) => {
     return formatCurrency(amount, lang);
+  };
+  const renderSignedAmount = (amount: number) => {
+    return formatSignedCurrency(amount, lang);
   };
 
   return (
@@ -851,8 +855,8 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
               </p>
               <p className="text-[10px] text-emerald-700/90 dark:text-emerald-400/90 truncate mt-0.5">
                 {isBn
-                  ? `${getMonthBengaliName(selectedMonth)} মাসের আয়-ব্যয় হিসাবের ভিত্তিতে নিট লাভ ও শেয়ার বণ্টন হচ্ছে`
-                  : `Net profit & shares are live calculated from ${selectedMonth} transactions`}
+                  ? `${getMonthBengaliName(selectedMonth)} মাসের আয়-ব্যয় হিসাবের ভিত্তিতে ${isLoss ? 'নিট লস / ঘাটতি' : 'নিট লাভ'} ও শেয়ার হিসাব হচ্ছে`
+                  : `Net ${isLoss ? 'loss' : 'profit'} & shares are live calculated from ${selectedMonth} transactions`}
                 {summary.incomeCount !== undefined && summary.expenseCount !== undefined ? ` (${summary.incomeCount + summary.expenseCount}টি লেনদেন)` : ''}
               </p>
             </div>
@@ -899,28 +903,46 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
           </div>
         </div>
 
-        {/* Net Profit Banner Card */}
-        <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-br from-[#E52E2E] via-rose-600 to-rose-700 text-white shadow-lg shadow-rose-600/20 relative overflow-hidden">
+        {/* Net Profit / Loss Banner Card */}
+        <div className={`p-5 sm:p-6 rounded-3xl text-white shadow-lg relative overflow-hidden ${
+          isLoss
+            ? 'bg-gradient-to-br from-rose-700 via-red-700 to-rose-900 shadow-rose-900/25'
+            : netProfit > 0
+            ? 'bg-gradient-to-br from-emerald-600 via-teal-600 to-emerald-700 shadow-emerald-600/20'
+            : 'bg-gradient-to-br from-slate-700 via-slate-800 to-slate-900 shadow-slate-700/20'
+        }`}>
           <div className="absolute right-[-8%] bottom-[-20%] opacity-10 pointer-events-none">
             <Calculator className="w-36 h-36 stroke-[1]" />
           </div>
-          <div className="relative z-10 flex items-center justify-between">
+          <div className="relative z-10 flex items-center justify-between gap-3">
             <div>
               <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-bold tracking-wide uppercase mb-1.5 backdrop-blur-sm">
-                <Sparkles className="w-3 h-3" />
-                {isBn ? 'অবশিষ্ট টাকা (মালিকদের নিট লাভ)' : 'Net Profit For Owners'}
+                {isLoss ? <TrendingDown className="w-3 h-3" /> : <Sparkles className="w-3 h-3" />}
+                {isLoss
+                  ? (isBn ? 'নিট লস / ঘাটতি (ব্যয় আয়ের চেয়ে বেশি)' : 'Net Loss / Deficit')
+                  : netProfit > 0
+                  ? (isBn ? 'অবশিষ্ট টাকা (মালিকদের নিট লাভ)' : 'Net Profit For Owners')
+                  : (isBn ? 'অবশিষ্ট টাকা (কোনো লাভ বা লস নেই)' : 'Break-Even (Zero Profit)')}
               </div>
               <h2 className="text-2xl sm:text-3xl font-black tabular-nums tracking-tight">
-                {renderAmount(netProfit)}
+                {renderSignedAmount(netProfit)}
               </h2>
-              <p className="text-[11px] text-rose-100 mt-1 font-medium">
-                {isBn 
-                  ? `সর্বমোট ${totalShareUnits} অংশের অনুপাতে স্বয়ংক্রিয়ভাবে মালিকদের মাঝে বণ্টনযোগ্য` 
-                  : `Divided among owners across ${totalShareUnits} share units`}
+              <p className="text-[11px] text-white/90 mt-1 font-medium">
+                {isLoss
+                  ? (isBn
+                      ? `আয় অপেক্ষা ব্যয় ${renderAmount(Math.abs(netProfit))} বেশি হওয়ায় এই মাসে মালিকদের মাঝে বণ্টনযোগ্য কোনো লাভ নেই (লভ্যাংশ ৳ ০)`
+                      : `Expenses exceed income by ${renderAmount(Math.abs(netProfit))} — no profit available for distribution`)
+                  : netProfit > 0
+                  ? (isBn
+                      ? `সর্বমোট ${totalShareUnits} অংশের অনুপাতে স্বয়ংক্রিয়ভাবে মালিকদের মাঝে বণ্টনযোগ্য`
+                      : `Divided among owners across ${totalShareUnits} share units`)
+                  : (isBn
+                      ? 'এই মাসে আয় ও ব্যয় সমান থাকায় কোনো লভ্যাংশ অবশিষ্ট নেই'
+                      : 'No net profit available for distribution')}
               </p>
             </div>
-            <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shadow-inner">
-              <ShieldCheck className="w-7 h-7" />
+            <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shadow-inner shrink-0">
+              {isLoss ? <TrendingDown className="w-7 h-7" /> : <ShieldCheck className="w-7 h-7" />}
             </div>
           </div>
         </div>
@@ -1310,10 +1332,15 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
         {isAdmin && (
           <button 
             onClick={handleConfirmDistribution}
-            className="w-full py-4 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-950 font-bold text-sm shadow-xl active:scale-[0.98] transition-all flex items-center justify-center gap-2 hover:opacity-95"
+            disabled={netProfit <= 0}
+            className="w-full py-4 rounded-2xl bg-slate-900 dark:bg-white text-white dark:text-slate-950 font-bold text-sm shadow-xl active:scale-[0.98] transition-all flex items-center justify-center gap-2 hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <DollarSign className="w-4 h-4" />
-            <span>{isBn ? 'লভ্যাংশ বণ্টন চূড়ান্ত করুন' : 'Confirm Distribution'}</span>
+            <span>
+              {netProfit <= 0
+                ? (isBn ? 'বণ্টনযোগ্য কোনো লাভ নেই (লস/ঘাটতি)' : 'No Profit to Distribute')
+                : (isBn ? 'লভ্যাংশ বণ্টন চূড়ান্ত করুন' : 'Confirm Distribution')}
+            </span>
           </button>
         )}
 
@@ -1578,15 +1605,22 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
                 />
               </div>
 
-              {/* Live Preview of Calculated Net Profit */}
-              <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-100 dark:border-slate-700/60 flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
-                  {isBn ? 'অবশিষ্ট নিট লাভ' : 'Calculated Net Profit'}:
-                </span>
-                <span className="text-sm font-black text-[#E52E2E] tabular-nums">
-                  {formatCurrency((Number(editIncome) || 0) - (Number(editExpense) || 0), lang)}
-                </span>
-              </div>
+              {/* Live Preview of Calculated Net Profit / Loss */}
+              {(() => {
+                const previewNet = (Number(editIncome) || 0) - (Number(editExpense) || 0);
+                return (
+                  <div className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-100 dark:border-slate-700/60 flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                      {previewNet < 0
+                        ? (isBn ? 'অবশিষ্ট নিট লস / ঘাটতি' : 'Calculated Net Loss')
+                        : (isBn ? 'অবশিষ্ট নিট লাভ' : 'Calculated Net Profit')}:
+                    </span>
+                    <span className={`text-sm font-black tabular-nums ${previewNet < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                      {formatSignedCurrency(previewNet, lang)}
+                    </span>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Action Buttons */}

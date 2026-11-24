@@ -164,6 +164,7 @@ import {
   isTransactionOwner,
   isLoggedInSession,
   isSupportTicketOwner,
+  isStaffSessionActive,
   normalizePhoneNumber
 } from './utils/permissions';
 import { saveStoredUser } from './utils/userStorage';
@@ -2074,6 +2075,13 @@ export default function App() {
   useEffect(() => {
     // Helper to check if a service is explicitly deactivated
     const isDeactivated = (svcId: string) => {
+      if (
+        user?.role === 'staff' ||
+        user?.role === 'admin' ||
+        isStaffSessionActive(user)
+      ) {
+        return false;
+      }
       const s = serviceStatuses[svcId];
       if (!s) return false;
       const locked = s.isActive === false || String(s.isActive) === 'false';
@@ -2153,7 +2161,7 @@ export default function App() {
         logoUrl: serviceStatuses.staffAttendance?.logoUrl
       });
     }
-  }, [serviceStatuses, activePortal, activeTab, isStaffManagerOpen, isQuickHisabOpen, isSupportTicketsOpen, isStaffAttendanceOpen]);
+  }, [user, serviceStatuses, activePortal, activeTab, isStaffManagerOpen, isQuickHisabOpen, isSupportTicketsOpen, isStaffAttendanceOpen]);
 
   // Real-time RBAC Enforcement: Immediately close restricted views if role or Sub-Admin permissions change
   useEffect(() => {
@@ -2173,7 +2181,6 @@ export default function App() {
       if (isServiceManagerOpen) setIsServiceManagerOpen(false);
       if (isPopupNoticeManagerOpen) setIsPopupNoticeManagerOpen(false);
       if (isDriveBackupOpen) setIsDriveBackupOpen(false);
-      if (isChangePinOpen) setIsChangePinOpen(false);
     } else if (user.role === 'sub-admin') {
       if (activeTab === 'transactions' && !hasSubAdminPermission(user, 'transactions')) setActiveTab('home');
       if (activeTab === 'ledger' && !hasSubAdminPermission(user, 'ledger')) setActiveTab('home');
@@ -2928,6 +2935,14 @@ export default function App() {
   };
 
   const checkServiceAccess = (serviceId: string, displayName: string): boolean => {
+    if (
+      user?.role === 'staff' ||
+      user?.role === 'admin' ||
+      isStaffSessionActive(user)
+    ) {
+      return true;
+    }
+
     // Sub-Admin granular permissions configured by Main Admin
     if (user?.role === 'sub-admin') {
       const subAdminMap: Record<string, SubAdminPermissionKey | undefined> = {
@@ -2956,9 +2971,6 @@ export default function App() {
     }
 
     const status = serviceStatuses[serviceId];
-    if (serviceId === 'staffAttendance' && (user?.role === 'staff' || (() => { try { return sessionStorage.getItem('protyasha_support_staff_session'); } catch { return null; } })())) {
-      return true;
-    }
     if (status && (status.isActive === false || String(status.isActive) === 'false')) {
       setActiveServiceNotice({
         name: displayName,
@@ -3340,7 +3352,7 @@ export default function App() {
         : loggedInUser.role === 'sub-admin'
         ? 'সাব-এডমিন লগইন'
         : loggedInUser.role === 'staff'
-        ? 'স্টাফ লগইন (হাজিরা)'
+        ? 'স্টাফ লগইন (পুরো অ্যাপ ও হাজিরা)'
         : loggedInUser.role === 'user'
         ? 'ইউজার লগইন'
         : 'ভিজিটর মোড',
