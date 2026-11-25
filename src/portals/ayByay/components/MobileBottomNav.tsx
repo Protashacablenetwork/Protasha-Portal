@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { 
   LayoutDashboard, 
   Users, 
@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { AppNavTab, AppConfig } from '../types';
 import { formatCurrency, getMonthBengaliName } from '../data/categories';
+import { sounds } from '../../../utils/audio';
 
 interface MobileBottomNavProps {
   activeNav: AppNavTab;
@@ -104,10 +105,187 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
 
   const currencySymbol = config?.currencySymbol || '৳';
 
-
   const now = new Date();
   const currentCalendarMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   const isCurrentMonth = selectedMonth === currentCalendarMonth;
+
+  const handlePermissionDenied = (msg: string) => {
+    sounds.playTap();
+  };
+
+  const navBarRef = useRef<HTMLElement | null>(null);
+  const indicatorRef = useRef<HTMLDivElement | null>(null);
+  const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({
+    dashboard: null,
+    transactions: null,
+    inventory: null,
+    analytics: null,
+    more: null
+  });
+  const longPressMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const pressTimerRef = useRef<number | null>(null);
+  const suppressNextClickRef = useRef(false);
+  const lastScrollYRef = useRef(typeof window !== 'undefined' ? window.scrollY : 0);
+
+  const [isNavHidden, setIsNavHidden] = useState(false);
+  const [showLongPressMenu, setShowLongPressMenu] = useState(false);
+  const [popAnimState, setPopAnimState] = useState<{ tab: string; tick: number }>({
+    tab: activeNav,
+    tick: 0
+  });
+
+  const updateIndicatorPosition = useCallback(() => {
+    const navBar = navBarRef.current;
+    const indicator = indicatorRef.current;
+    const activeKey = activeNav === 'staff' || activeNav === 'transactions' || activeNav === 'report' ? 'more' : activeNav;
+    const activeEl = itemRefs.current[activeKey];
+    if (!navBar || !indicator || !activeEl) return;
+
+    const containerRect = navBar.getBoundingClientRect();
+    const elementRect = activeEl.getBoundingClientRect();
+    const elementCenter = elementRect.left - containerRect.left + elementRect.width / 2;
+    const indicatorWidth = indicator.offsetWidth || 20;
+    const leftPosition = elementCenter - indicatorWidth / 2;
+    indicator.style.transform = `translateX(${leftPosition}px)`;
+  }, [activeNav]);
+
+  useLayoutEffect(() => {
+    updateIndicatorPosition();
+  }, [updateIndicatorPosition]);
+
+  useEffect(() => {
+    const handleResize = () => updateIndicatorPosition();
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('load', handleResize);
+    const rafId = window.requestAnimationFrame(handleResize);
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && navBarRef.current) {
+      resizeObserver = new ResizeObserver(() => {
+        updateIndicatorPosition();
+      });
+      resizeObserver.observe(navBarRef.current);
+    }
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('load', handleResize);
+      window.cancelAnimationFrame(rafId);
+      if (resizeObserver) resizeObserver.disconnect();
+    };
+  }, [updateIndicatorPosition]);
+
+  useEffect(() => {
+    setIsNavHidden(false);
+  }, [activeNav]);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const currentScrollY = window.scrollY;
+      if (lastScrollYRef.current < currentScrollY && currentScrollY > 50) {
+        setIsNavHidden(true);
+        setShowLongPressMenu(false);
+      } else {
+        setIsNavHidden(false);
+      }
+      lastScrollYRef.current = currentScrollY;
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const closePopupMenu = useCallback(() => {
+    setShowLongPressMenu(false);
+    window.setTimeout(() => {
+      suppressNextClickRef.current = false;
+    }, 100);
+  }, []);
+
+  useEffect(() => {
+    if (!showLongPressMenu) return;
+    const handleDocumentClick = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node | null;
+      const trxBtn = itemRefs.current.transactions;
+      const menuEl = longPressMenuRef.current;
+      if (!target) return;
+      if (menuEl?.contains(target) || trxBtn?.contains(target)) return;
+      closePopupMenu();
+    };
+
+    document.addEventListener('mousedown', handleDocumentClick);
+    document.addEventListener('touchstart', handleDocumentClick, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', handleDocumentClick);
+      document.removeEventListener('touchstart', handleDocumentClick);
+    };
+  }, [showLongPressMenu, closePopupMenu]);
+
+  useEffect(() => {
+    return () => {
+      if (pressTimerRef.current !== null) {
+        window.clearTimeout(pressTimerRef.current);
+      }
+    };
+  }, []);
+
+  const triggerTabClick = (tab: AppNavTab) => {
+    if (tab === 'transactions' && suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
+
+    sounds.playTap();
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        navigator.vibrate(30);
+      }
+    } catch {}
+
+    setPopAnimState((prev) => ({ tab, tick: prev.tick + 1 }));
+    closePopupMenu();
+    onNavChange(tab);
+  };
+
+  const startLongPress = () => {
+    if (pressTimerRef.current !== null) {
+      window.clearTimeout(pressTimerRef.current);
+    }
+    suppressNextClickRef.current = false;
+    pressTimerRef.current = window.setTimeout(() => {
+      suppressNextClickRef.current = true;
+      setShowLongPressMenu(true);
+      sounds.playTap();
+      try {
+        if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+          navigator.vibrate([50, 50, 50]);
+        }
+      } catch {}
+    }, 400);
+  };
+
+  const cancelLongPress = () => {
+    if (pressTimerRef.current !== null) {
+      window.clearTimeout(pressTimerRef.current);
+      pressTimerRef.current = null;
+    }
+  };
+
+  const handleLongPressOption = (type: 'income' | 'expense', e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    sounds.playTap();
+    closePopupMenu();
+
+    if (!canCreate) {
+      handlePermissionDenied('লেনদেন যোগ করার অনুমতি নেই');
+      return;
+    }
+
+    // Trigger new entry modal with pre-selected type
+    onNavChange('new_entry');
+  };
 
   return (
     <>

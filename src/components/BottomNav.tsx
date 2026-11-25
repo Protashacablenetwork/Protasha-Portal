@@ -1,32 +1,6 @@
-import React from 'react';
-import { 
-  Home, 
-  Receipt, 
-  Calculator, 
-  Menu 
-} from 'lucide-react';
-// Changed icon in logic from dollar (not visible here, but updated JSX below)
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Language } from '../types';
 import { sounds } from '../utils/audio';
-
-// ... (existing exports)
-// ... (JSX changes below)
-// In JSX:
-// Change <Receipt className="w-5 h-5 stroke-[2.2]" /> to a Taka representation if possible, or just keep Receipt.
-// User asked for "লেনদেন" logo to change from dollar to taka. 
-// Wait, Receipt is already a document icon. Maybe it meant something else?
-// Let's assume the user meant the icon used for 'লেনদেন' (Tab 2) should be changed.
-// Looking at the imports, it's `Receipt` (a document).
-// I will change it to `IndianRupee` or `CircleDollarSign` if available, but the user specifically said "টাকার চিহ্ন".
-// I'll check if I can use a custom SVG for Taka symbol (৳).
-// Since I can't easily add a new icon library, I will use a Unicode Taka symbol if needed, or stick to the icon if it's already a document.
-// Actually, I'll just change the text or icon. Let me look at the icon again.
-// Ah, the user might mean the icon itself in the UI.
-// Let's check `src/components/BottomNav.tsx` lines 48-64.
-// Currently using `Receipt`.
-// If I change it to use a Taka sign icon... wait, Lucide has no Taka icon.
-// I will keep the icon but ensure it doesn't look like a dollar. Receipt (document) is fine.
-// I will focus on the LoginView changes first.
 
 export type TabId = 'home' | 'transactions' | 'ledger' | 'profile';
 
@@ -34,92 +8,314 @@ interface BottomNavProps {
   activeTab: TabId;
   lang: Language;
   onTabChange: (tab: TabId) => void;
+  onQuickEntry?: (type: 'income' | 'expense') => void;
 }
 
 export const BottomNav: React.FC<BottomNavProps> = ({
   activeTab,
   lang,
-  onTabChange
+  onTabChange,
+  onQuickEntry
 }) => {
   const isBn = lang === 'bn';
 
+  const navBarRef = useRef<HTMLElement | null>(null);
+  const indicatorRef = useRef<HTMLDivElement | null>(null);
+  const itemRefs = useRef<Record<TabId, HTMLButtonElement | null>>({
+    home: null,
+    transactions: null,
+    ledger: null,
+    profile: null
+  });
+  const longPressMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const pressTimerRef = useRef<number | null>(null);
+  const suppressNextClickRef = useRef(false);
+  const lastScrollYRef = useRef(typeof window !== 'undefined' ? window.scrollY : 0);
+
+  const [isNavHidden, setIsNavHidden] = useState(false);
+  const [showLongPressMenu, setShowLongPressMenu] = useState(false);
+  const [popAnimState, setPopAnimState] = useState<{ tab: TabId; tick: number }>({
+    tab: activeTab,
+    tick: 0
+  });
+
+  const updateIndicatorPosition = useCallback(() => {
+    const navBar = navBarRef.current;
+    const indicator = indicatorRef.current;
+    const activeEl = itemRefs.current[activeTab];
+    if (!navBar || !indicator || !activeEl) return;
+
+    const containerRect = navBar.getBoundingClientRect();
+    const elementRect = activeEl.getBoundingClientRect();
+    const elementCenter = elementRect.left - containerRect.left + elementRect.width / 2;
+    const indicatorWidth = indicator.offsetWidth || 20;
+    const leftPosition = elementCenter - indicatorWidth / 2;
+    indicator.style.transform = `translateX(${leftPosition}px)`;
+  }, [activeTab]);
+
+  useLayoutEffect(() => {
+    updateIndicatorPosition();
+  }, [updateIndicatorPosition, lang]);
+
+  useEffect(() => {
+    const handleResize = () => updateIndicatorPosition();
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    window.addEventListener('load', handleResize);
+    const rafId = window.requestAnimationFrame(handleResize);
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && navBarRef.current) {
+      resizeObserver = new ResizeObserver(() => {
+        updateIndicatorPosition();
+      });
+      resizeObserver.observe(navBarRef.current);
+      Object.values(itemRefs.current).forEach((el) => {
+        if (el) resizeObserver?.observe(el);
+      });
+    }
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+      window.removeEventListener('load', handleResize);
+      window.cancelAnimationFrame(rafId);
+      if (resizeObserver) resizeObserver.disconnect();
+    };
+  }, [updateIndicatorPosition]);
+
+  // Show nav immediately when switching tabs
+  useEffect(() => {
+    setIsNavHidden(false);
+  }, [activeTab]);
+
+  // Scroll hide/show effect
+  useEffect(() => {
+    const handleScroll = () => {
+      const currentScrollY = window.scrollY;
+      if (lastScrollYRef.current < currentScrollY && currentScrollY > 50) {
+        setIsNavHidden(true);
+        setShowLongPressMenu(false);
+      } else {
+        setIsNavHidden(false);
+      }
+      lastScrollYRef.current = currentScrollY;
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const closePopupMenu = useCallback(() => {
+    setShowLongPressMenu(false);
+    window.setTimeout(() => {
+      suppressNextClickRef.current = false;
+    }, 100);
+  }, []);
+
+  // Close long-press popup when tapping/clicking outside
+  useEffect(() => {
+    if (!showLongPressMenu) return;
+    const handleDocumentClick = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node | null;
+      const trxBtn = itemRefs.current.transactions;
+      const menuEl = longPressMenuRef.current;
+      if (!target) return;
+      if (menuEl?.contains(target) || trxBtn?.contains(target)) return;
+      closePopupMenu();
+    };
+
+    document.addEventListener('mousedown', handleDocumentClick);
+    document.addEventListener('touchstart', handleDocumentClick, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', handleDocumentClick);
+      document.removeEventListener('touchstart', handleDocumentClick);
+    };
+  }, [showLongPressMenu, closePopupMenu]);
+
+  useEffect(() => {
+    return () => {
+      if (pressTimerRef.current !== null) {
+        window.clearTimeout(pressTimerRef.current);
+      }
+    };
+  }, []);
+
+  const triggerTabClick = (tab: TabId) => {
+    if (tab === 'transactions' && suppressNextClickRef.current) {
+      suppressNextClickRef.current = false;
+      return;
+    }
+
+    sounds.playTap();
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        navigator.vibrate(30);
+      }
+    } catch {}
+
+    setPopAnimState((prev) => ({ tab, tick: prev.tick + 1 }));
+    closePopupMenu();
+    onTabChange(tab);
+  };
+
+  const startLongPress = () => {
+    if (pressTimerRef.current !== null) {
+      window.clearTimeout(pressTimerRef.current);
+    }
+    suppressNextClickRef.current = false;
+    pressTimerRef.current = window.setTimeout(() => {
+      suppressNextClickRef.current = true;
+      setShowLongPressMenu(true);
+      sounds.playTap();
+      try {
+        if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+          navigator.vibrate([50, 50, 50]);
+        }
+      } catch {}
+    }, 400);
+  };
+
+  const cancelLongPress = () => {
+    if (pressTimerRef.current !== null) {
+      window.clearTimeout(pressTimerRef.current);
+      pressTimerRef.current = null;
+    }
+  };
+
+  const handleLongPressOption = (type: 'income' | 'expense', e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    sounds.playTap();
+    closePopupMenu();
+    if (onQuickEntry) {
+      onQuickEntry(type);
+    }
+  };
+
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-50 w-full select-none pointer-events-none">
-      <div className="pointer-events-auto bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/90 dark:border-slate-800 px-2 sm:px-6 lg:px-8 pb-safe pt-1 shadow-[0_-4px_20px_rgba(0,0,0,0.06)]">
-        <div className="grid grid-cols-4 items-center h-14 max-w-4xl mx-auto">
-          {/* Tab 1: Home */}
-          <button
-            onClick={() => {
-              sounds.playTap();
-              onTabChange('home');
-            }}
-            className={`flex flex-col items-center justify-center py-1 transition-all ${
-              activeTab === 'home'
-                ? 'text-[#E52E2E] dark:text-rose-500 scale-105 font-bold'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-            }`}
-          >
-            <Home className="w-5 h-5 stroke-[2.2]" />
-            <span className="text-[11px] font-semibold mt-1 tracking-tight truncate">
-              {isBn ? 'হোম' : 'Home'}
-            </span>
-          </button>
+    <nav
+      ref={navBarRef}
+      id="bottomNav"
+      aria-label={isBn ? 'মূল নেভিগেশন' : 'Main Navigation'}
+      className={`pcn-bottom-nav print:hidden ${isNavHidden ? 'hide-nav' : ''}`}
+    >
+      {/* Sliding Red Indicator */}
+      <div ref={indicatorRef} id="navIndicator" className="pcn-nav-indicator" aria-hidden="true" />
 
-          {/* Tab 2: Transactions */}
-          <button
-            onClick={() => {
-              sounds.playTap();
-              onTabChange('transactions');
-            }}
-            className={`flex flex-col items-center justify-center py-1 transition-all ${
-              activeTab === 'transactions'
-                ? 'text-[#E52E2E] dark:text-rose-500 scale-105 font-bold'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-            }`}
-          >
-            <Receipt className="w-5 h-5 stroke-[2.2]" />
-            <span className="text-[11px] font-semibold mt-1 tracking-tight truncate">
-              {isBn ? 'লেনদেন' : 'History'}
-            </span>
-          </button>
+      {/* 1. Home */}
+      <button
+        ref={(el) => { itemRefs.current.home = el; }}
+        type="button"
+        aria-current={activeTab === 'home' ? 'page' : undefined}
+        onClick={() => triggerTabClick('home')}
+        className={`pcn-nav-item ${activeTab === 'home' ? 'active' : ''}`}
+      >
+        <svg
+          key={popAnimState.tab === 'home' ? `home-${popAnimState.tick}` : 'home'}
+          viewBox="0 -960 960 960"
+          aria-hidden="true"
+          className={`pcn-nav-svg ${popAnimState.tab === 'home' && popAnimState.tick > 0 ? 'pcn-animate-icon' : ''}`}
+        >
+          <path d="M160-120v-480l320-240 320 240v480H560v-280H400v280H160Z" />
+        </svg>
+        <span className="pcn-nav-text">{isBn ? 'হোম' : 'Home'}</span>
+      </button>
 
-          {/* Tab 3: Ledger / Report */}
-          <button
-            onClick={() => {
-              sounds.playTap();
-              onTabChange('ledger');
-            }}
-            className={`flex flex-col items-center justify-center py-1 transition-all ${
-              activeTab === 'ledger'
-                ? 'text-[#E52E2E] dark:text-rose-500 scale-105 font-bold'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-            }`}
+      {/* 2. Transactions (৳) with Long Press Income / Expense Quick Entry */}
+      <div className="pcn-nav-item-wrap">
+        <button
+          ref={(el) => { itemRefs.current.transactions = el; }}
+          id="transactionBtn"
+          type="button"
+          aria-current={activeTab === 'transactions' ? 'page' : undefined}
+          onMouseDown={startLongPress}
+          onTouchStart={startLongPress}
+          onMouseUp={cancelLongPress}
+          onMouseLeave={cancelLongPress}
+          onTouchEnd={cancelLongPress}
+          onTouchCancel={cancelLongPress}
+          onContextMenu={(e) => e.preventDefault()}
+          onClick={() => triggerTabClick('transactions')}
+          className={`pcn-nav-item ${activeTab === 'transactions' ? 'active' : ''}`}
+        >
+          <span
+            key={popAnimState.tab === 'transactions' ? `trx-${popAnimState.tick}` : 'trx'}
+            className={`pcn-taka-icon ${popAnimState.tab === 'transactions' && popAnimState.tick > 0 ? 'pcn-animate-icon' : ''}`}
           >
-            <Calculator className="w-5 h-5 stroke-[2.2]" />
-            <span className="text-[11px] font-semibold mt-1 tracking-tight truncate">
-              {isBn ? 'হিসাব খাতা' : 'Ledger'}
-            </span>
-          </button>
+            ৳
+          </span>
+          <span className="pcn-nav-text">{isBn ? 'লেনদেন' : 'History'}</span>
+        </button>
 
-          {/* Tab 4: Profile / Menu */}
+        {/* Long Press Popup Menu */}
+        <div
+          ref={longPressMenuRef}
+          id="longPressMenu"
+          role="menu"
+          aria-label={isBn ? 'দ্রুত আয়-ব্যয় এন্ট্রি' : 'Quick Income/Expense Entry'}
+          className={`pcn-long-press-menu ${showLongPressMenu ? 'show' : ''}`}
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+        >
           <button
-            onClick={() => {
-              sounds.playTap();
-              onTabChange('profile');
-            }}
-            className={`flex flex-col items-center justify-center py-1 transition-all ${
-              activeTab === 'profile'
-                ? 'text-[#E52E2E] dark:text-rose-500 scale-105 font-bold'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
-            }`}
+            type="button"
+            role="menuitem"
+            onClick={(e) => handleLongPressOption('income', e)}
+            className="pcn-lp-btn income"
           >
-            <Menu className="w-5 h-5 stroke-[2.2]" />
-            <span className="text-[11px] font-semibold mt-1 tracking-tight truncate">
-              {isBn ? 'মেনু' : 'Menu'}
-            </span>
+            {isBn ? '+ আয়' : '+ Income'}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={(e) => handleLongPressOption('expense', e)}
+            className="pcn-lp-btn expense"
+          >
+            {isBn ? '- ব্যয়' : '- Expense'}
           </button>
         </div>
       </div>
-    </div>
+
+      {/* 3. Ledger (হিসাব খাতা) */}
+      <button
+        ref={(el) => { itemRefs.current.ledger = el; }}
+        type="button"
+        aria-current={activeTab === 'ledger' ? 'page' : undefined}
+        onClick={() => triggerTabClick('ledger')}
+        className={`pcn-nav-item ${activeTab === 'ledger' ? 'active' : ''}`}
+      >
+        <svg
+          key={popAnimState.tab === 'ledger' ? `ledger-${popAnimState.tick}` : 'ledger'}
+          viewBox="0 -960 960 960"
+          aria-hidden="true"
+          className={`pcn-nav-svg ${popAnimState.tab === 'ledger' && popAnimState.tick > 0 ? 'pcn-animate-icon' : ''}`}
+        >
+          <path d="M480-160q-48-38-104-59t-116-21q-42 0-82.5 11T100-198q-21 11-40.5-1T40-234v-482q0-11 5.5-21T62-752q46-24 96-36t102-12q58 0 113.5 15T480-740v484q51-32 107-48t113-16q36 0 70.5 6t69.5 18v-480q15 5 29.5 10.5T898-752q11 5 16.5 15t5.5 21v482q0 23-19.5 35t-40.5 1q-37-20-77.5-31T700-240q-60 0-116 21t-104 59Zm80-200v-380l200-200v400L560-360Z" />
+        </svg>
+        <span className="pcn-nav-text">{isBn ? 'হিসাব খাতা' : 'Ledger'}</span>
+      </button>
+
+      {/* 4. Menu (মেনু) */}
+      <button
+        ref={(el) => { itemRefs.current.profile = el; }}
+        type="button"
+        aria-current={activeTab === 'profile' ? 'page' : undefined}
+        onClick={() => triggerTabClick('profile')}
+        className={`pcn-nav-item ${activeTab === 'profile' ? 'active' : ''}`}
+      >
+        <svg
+          key={popAnimState.tab === 'profile' ? `profile-${popAnimState.tick}` : 'profile'}
+          viewBox="0 -960 960 960"
+          aria-hidden="true"
+          className={`pcn-nav-svg ${popAnimState.tab === 'profile' && popAnimState.tick > 0 ? 'pcn-animate-icon' : ''}`}
+        >
+          <path d="M120-240v-80h720v80H120Zm0-200v-80h720v80H120Zm0-200v-80h720v80H120Z" />
+        </svg>
+        <span className="pcn-nav-text">{isBn ? 'মেনু' : 'Menu'}</span>
+      </button>
+    </nav>
   );
 };
+

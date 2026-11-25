@@ -4326,7 +4326,7 @@ export default function App() {
           <>
             {/* View Switcher by Tab */}
             {activeTab === 'home' && (
-              <div className="flex-1 pb-24">
+              <div className="flex-1 pb-[120px]">
                 {/* Header with scenic landscape and Notification Bell */}
                 <Header
                   lang={lang}
@@ -4605,7 +4605,7 @@ export default function App() {
             )}
 
             {activeTab === 'transactions' && (
-              <div className="flex-1 pb-24">
+              <div className="flex-1 pb-[120px]">
                 {/* Header for Transactions Screen */}
                 <div className="sticky top-0 z-30 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 px-4 h-14 flex items-center justify-between shadow-2xs">
                   <h1 className="text-base font-bold text-slate-900 dark:text-white mx-auto">
@@ -4657,7 +4657,7 @@ export default function App() {
             )}
 
             {activeTab === 'ledger' && (
-              <div className="flex-1 w-full pb-20">
+              <div className="flex-1 w-full pb-[120px]">
                 <React.Suspense
                   fallback={
                     <div className="py-20 flex flex-col items-center justify-center gap-2 text-slate-500">
@@ -4698,7 +4698,7 @@ export default function App() {
             )}
 
             {activeTab === 'profile' && (
-              <div className="flex-1 w-full pb-20">
+              <div className="flex-1 w-full pb-[120px]">
                 <React.Suspense
                   fallback={
                     <div className="py-20 flex flex-col items-center justify-center gap-2 text-slate-500">
@@ -4803,7 +4803,7 @@ export default function App() {
               </div>
             )}
 
-            {/* Clean Bottom Navigation: 5 tabs */}
+            {/* 3D Neumorphic Bottom Navigation with Long Press */}
             <BottomNav
               activeTab={activeTab}
               lang={lang}
@@ -4816,6 +4816,28 @@ export default function App() {
                 }
                 setActiveTab(tab);
                 pushHistoryStep();
+              }}
+              onQuickEntry={(type) => {
+                if (canAddTransactions(user)) {
+                  if (!checkServiceAccess('ayByay', 'আয়-ব্যয় হিসাব')) return;
+                  setEntryType(type);
+                  setEditingTransaction(null);
+                  setInitialEntryMethod('নগদ');
+                  setIsEntryModalOpen(true);
+                  pushHistoryStep();
+                } else if (isLoggedInSession(user)) {
+                  sounds.playTap();
+                  showAppToast(
+                    lang === 'bn' ? 'রিড-অনলি মোড / অনুমতি নেই' : 'Read-Only / Permission Denied',
+                    lang === 'bn'
+                      ? 'আপনার অ্যাকাউন্ট দিয়ে নতুন লেনদেন যোগ করা যাবে না।'
+                      : 'Your account cannot add or modify transactions.',
+                    'amber',
+                    5000
+                  );
+                } else {
+                  openLoginView();
+                }
               }}
             />
           </>
