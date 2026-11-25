@@ -34,7 +34,8 @@ import {
   Layers,
   Clock,
   RefreshCw,
-  Download
+  Download,
+  BarChart3
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Language, SUB_ADMIN_PERMISSION_ITEMS, UserSession } from '../types';
@@ -80,6 +81,7 @@ interface ProfileViewProps {
   onBindMethods?: (data: { phone?: string; gmail?: string; pin?: string }) => Promise<{ success: boolean; message?: string }>;
   onOpenLogin?: () => void;
   onOpenFooterSettings?: () => void;
+  onOpenAppReport?: () => void;
   onUpdateChecked?: (result: UpdateCheckResult) => void;
   onSubViewChange?: (isSubView: boolean) => void;
   isTabMode?: boolean;
@@ -108,6 +110,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onBindMethods,
   onOpenLogin,
   onOpenFooterSettings,
+  onOpenAppReport,
   onUpdateChecked,
   onSubViewChange,
   isTabMode = false
@@ -711,6 +714,35 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Automated App Report Row (Monthly & Annual Full App Report) */}
+          {onOpenAppReport && (
+            <button
+              type="button"
+              onClick={() => {
+                sounds.playTap();
+                onOpenAppReport();
+              }}
+              className="w-full p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors text-left cursor-pointer"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-50 dark:bg-rose-950/40 text-[#E52E2E] dark:text-rose-400 flex items-center justify-center shrink-0">
+                  <BarChart3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100">
+                    {isBn ? 'রিপোর্ট' : 'Report'}
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {isBn
+                      ? 'পুরো অ্যাপের মাসিক ও বাৎসরিক পূর্ণাঙ্গ হিসাব ও ডাউনলোড'
+                      : 'Full app monthly & annual automated report & export'}
+                  </p>
+                </div>
+              </div>
+              <ChevronRight className="w-5 h-5 text-slate-400 shrink-0" />
+            </button>
+          )}
 
           {/* Staff Role Full-View + Attendance Notice Card */}
           {isStaff && (

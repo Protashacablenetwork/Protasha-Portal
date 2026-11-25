@@ -106,6 +106,9 @@ const ChangePinModal = React.lazy(() =>
 const ReportModal = React.lazy(() =>
   import('./components/ReportModal').then((m) => ({ default: m.ReportModal }))
 );
+const ComprehensiveReportModal = React.lazy(() =>
+  import('./components/ComprehensiveReportModal').then((m) => ({ default: m.ComprehensiveReportModal }))
+);
 const BannerManagerModal = React.lazy(() =>
   import('./components/BannerManagerModal').then((m) => ({ default: m.BannerManagerModal }))
 );
@@ -1701,6 +1704,7 @@ export default function App() {
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isRecycleBinOpen, setIsRecycleBinOpen] = useState(false);
   const [isAuditLogOpen, setIsAuditLogOpen] = useState(false);
+  const [isAppReportOpen, setIsAppReportOpen] = useState(false);
   const [isFooterSettingsOpen, setIsFooterSettingsOpen] = useState(false);
   const [isChangePinOpen, setIsChangePinOpen] = useState(false);
   const [isBannerManagerOpen, setIsBannerManagerOpen] = useState(false);
@@ -2282,6 +2286,7 @@ export default function App() {
     isStaffManagerOpen,
     isRecycleBinOpen,
     isAuditLogOpen,
+    isAppReportOpen,
     isChangePinOpen,
     isFooterSettingsOpen,
     isWeatherOpen,
@@ -2315,6 +2320,7 @@ export default function App() {
     isStaffManagerOpen,
     isRecycleBinOpen,
     isAuditLogOpen,
+    isAppReportOpen,
     isChangePinOpen,
     isFooterSettingsOpen,
     isWeatherOpen,
@@ -2414,6 +2420,8 @@ export default function App() {
         setIsRecycleBinOpen(false);
       } else if (s.isAuditLogOpen) {
         setIsAuditLogOpen(false);
+      } else if (s.isAppReportOpen) {
+        setIsAppReportOpen(false);
       } else if (s.isChangePinOpen) {
         setIsChangePinOpen(false);
       } else if (s.isFooterSettingsOpen) {
@@ -4357,6 +4365,10 @@ export default function App() {
                       openLoginView();
                     }
                   }}
+                  onOpenAppReport={() => {
+                    setIsAppReportOpen(true);
+                    pushHistoryStep();
+                  }}
                   onOpenLogin={openLoginView}
                   onOpenChangePin={() => {
                     if (user?.role === 'admin') {
@@ -4802,6 +4814,10 @@ export default function App() {
                 openLoginView();
               }
             }}
+            onOpenAppReport={() => {
+              setIsAppReportOpen(true);
+              pushHistoryStep();
+            }}
             onOpenNotifications={() => {
               setIsNotificationsOpen(true);
               pushHistoryStep();
@@ -4855,6 +4871,20 @@ export default function App() {
             logs={auditLogs}
             lang={lang}
             onClose={() => closeOverlayViaBack(() => setIsAuditLogOpen(false))}
+          />
+        )}
+
+        {/* Automated Full App Report Page */}
+        {isAppReportOpen && (
+          <ComprehensiveReportModal
+            isOpen={isAppReportOpen}
+            lang={lang}
+            user={user}
+            mainTransactions={transactions}
+            channels={channels}
+            supportTickets={supportTickets}
+            attendanceRecords={attendanceRecords}
+            onClose={() => closeOverlayViaBack(() => setIsAppReportOpen(false))}
           />
         )}
 
