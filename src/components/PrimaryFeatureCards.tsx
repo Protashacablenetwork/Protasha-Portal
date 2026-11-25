@@ -32,19 +32,19 @@ export const PrimaryFeatureCards: React.FC<PrimaryFeatureCardsProps> = ({
   const isBn = lang === 'bn';
 
   const isStaff = isStaffSessionActive(user);
+  const canViewAll = isStaff || user?.role === 'admin' || user?.role === 'sub-admin';
 
-  const isRoleBlocked = (key: SubAdminPermissionKey) => {
-    if (user?.role === 'sub-admin') return !hasSubAdminPermission(user, key);
+  const isRoleBlocked = (_key: SubAdminPermissionKey) => {
     return false;
   };
 
-  const isBillRestricted = !isStaff && isRoleBlocked('billManager');
-  const isAyByayRestricted = !isStaff && isRoleBlocked('ayByay');
-  const isQuickHisabRestricted = !isStaff && isRoleBlocked('quickHisab');
+  const isBillRestricted = !canViewAll && isRoleBlocked('billManager');
+  const isAyByayRestricted = !canViewAll && isRoleBlocked('ayByay');
+  const isQuickHisabRestricted = !canViewAll && isRoleBlocked('quickHisab');
 
-  const isBillLocked = !isStaff && (isBillRestricted || serviceStatuses.billManager?.isActive === false || String(serviceStatuses.billManager?.isActive) === 'false');
-  const isAyByayLocked = !isStaff && (isAyByayRestricted || serviceStatuses.ayByay?.isActive === false || String(serviceStatuses.ayByay?.isActive) === 'false');
-  const isQuickHisabLocked = !isStaff && (isQuickHisabRestricted || serviceStatuses.quickHisab?.isActive === false || String(serviceStatuses.quickHisab?.isActive) === 'false');
+  const isBillLocked = !canViewAll && (isBillRestricted || serviceStatuses.billManager?.isActive === false || String(serviceStatuses.billManager?.isActive) === 'false');
+  const isAyByayLocked = !canViewAll && (isAyByayRestricted || serviceStatuses.ayByay?.isActive === false || String(serviceStatuses.ayByay?.isActive) === 'false');
+  const isQuickHisabLocked = !canViewAll && (isQuickHisabRestricted || serviceStatuses.quickHisab?.isActive === false || String(serviceStatuses.quickHisab?.isActive) === 'false');
 
   return (
     <div className="px-4 pt-1 pb-3 select-none space-y-2.5 sm:space-y-3.5">
@@ -234,21 +234,18 @@ export const OperationsHubCards: React.FC<OperationsHubCardsProps> = ({
 
   const isBn = lang === 'bn';
   const isStaff = isStaffSessionActive(user);
+  const canViewAll = isStaff || user?.role === 'admin' || user?.role === 'sub-admin';
 
-  const isTicketsRestricted =
-    !isStaff && user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'supportTickets');
-  const isAttendanceRestricted =
-    !isStaff && user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'staffAttendance');
+  const isTicketsRestricted = false;
+  const isAttendanceRestricted = false;
 
   const isTicketsLocked =
-    !isStaff && (
-      isTicketsRestricted ||
+    !canViewAll && (
       serviceStatuses.supportTickets?.isActive === false ||
       String(serviceStatuses.supportTickets?.isActive) === 'false'
     );
   const isAttendanceLocked =
-    !isStaff && (
-      isAttendanceRestricted ||
+    !canViewAll && (
       serviceStatuses.staffAttendance?.isActive === false ||
       String(serviceStatuses.staffAttendance?.isActive) === 'false'
     );

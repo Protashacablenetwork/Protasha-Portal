@@ -31,6 +31,8 @@ interface HeaderProps {
   isDarkMode: boolean;
   onToggleDarkMode: () => void;
   isAdminLoggedIn: boolean;
+  canCreateEntry?: boolean;
+  isSubAdmin?: boolean;
   onOpenAdminLogin: () => void;
   onAdminLogout: () => void;
   onOpenNewMonthModal: () => void;
@@ -47,12 +49,15 @@ export const Header: React.FC<HeaderProps> = ({
   isDarkMode,
   onToggleDarkMode,
   isAdminLoggedIn,
+  canCreateEntry,
+  isSubAdmin = false,
   onOpenAdminLogin,
   onAdminLogout,
   onOpenNewMonthModal,
   onExit,
   onOpenDriveBackup
 }) => {
+  const canCreate = canCreateEntry ?? isAdminLoggedIn;
 
   return (
     <header className="app-header mb-1 sm:mb-2 pt-0.5 pb-1 px-3 sm:px-5 transition-all duration-200 no-print bg-transparent text-slate-900 dark:text-white max-w-full overflow-x-auto scrollbar-none">
@@ -151,15 +156,19 @@ export const Header: React.FC<HeaderProps> = ({
           )}
 
           {/* Admin Login / Logout Button at end of Header */}
-          {isAdminLoggedIn ? (
+          {isAdminLoggedIn || isSubAdmin ? (
             <button
               id="btn-admin-logout"
               onClick={onAdminLogout}
-              title="এডমিন লগআউট করুন"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] sm:text-xs font-bold shadow-xs transition active:scale-95 shrink-0 cursor-pointer"
+              title={isSubAdmin ? 'সাব-অ্যাডমিন লগআউট করুন' : 'এডমিন লগআউট করুন'}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-white text-[11px] sm:text-xs font-bold shadow-xs transition active:scale-95 shrink-0 cursor-pointer ${
+                isSubAdmin ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-emerald-600 hover:bg-emerald-700'
+              }`}
             >
               <ShieldCheck className="w-4 h-4" />
-              <span className="whitespace-nowrap"><span className="hidden sm:inline">এডমিন </span>লগআউট</span>
+              <span className="whitespace-nowrap">
+                <span className="hidden sm:inline">{isSubAdmin ? 'সাব-অ্যাডমিন ' : 'এডমিন '}</span>লগআউট
+              </span>
             </button>
           ) : (
             <button
@@ -225,7 +234,7 @@ export const Header: React.FC<HeaderProps> = ({
           <span>স্টাফ ও বেতন</span>
         </button>
 
-        {isAdminLoggedIn && (
+        {canCreate && (
           <button
             onClick={() => onNavChange('new_entry')}
             className={`inline-flex items-center gap-2 px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-2xl text-xs font-bold transition-all shrink-0 cursor-pointer ${

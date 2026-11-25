@@ -31,8 +31,11 @@ import {
   RefreshCw,
   Calendar,
   Download,
-  ShieldCheck
+  ShieldCheck,
+  Clock
 } from 'lucide-react';
+import { showToast } from '../../../utils/uiFeedback';
+import { OwnedRecordLike, TransactionModificationCheck, formatRemainingCountdown } from '../../../utils/permissions';
 
 interface InventoryManagerProps {
   items: InventoryItem[];
@@ -55,6 +58,10 @@ interface InventoryManagerProps {
   currencySymbol?: string;
   onRefresh?: () => void;
   isAdminLoggedIn?: boolean;
+  isSubAdmin?: boolean;
+  canModifyItem?: (item: InventoryItem) => boolean;
+  canModifyLog?: (log: InventoryLog) => boolean;
+  getModifyInfo?: (rec: OwnedRecordLike) => TransactionModificationCheck;
   onRequireLogin?: () => void;
   config?: AppConfig;
 
@@ -101,6 +108,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   currencySymbol = '৳',
   onRefresh,
   isAdminLoggedIn = true,
+  isSubAdmin = false,
+  canModifyItem,
+  canModifyLog,
+  getModifyInfo,
   onRequireLogin,
   config = { companyName: 'স্মার্ট ব্যবস্থাপনা', currencySymbol: '৳', autoSync: true, lastSyncTime: null, syncStatus: 'idle' },
 
@@ -109,6 +120,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
   availableMonths = [],
   onOpenReportPage
 }) => {
+  const checkModifyItem = (item: InventoryItem): boolean =>
+    canModifyItem ? canModifyItem(item) : isAdminLoggedIn;
+  const checkModifyLog = (log: InventoryLog): boolean =>
+    canModifyLog ? canModifyLog(log) : isAdminLoggedIn;
   const [activeTab, setActiveTab] = useState<'inventory' | 'history'>('inventory');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -196,6 +211,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
     if (!ensureAdmin()) return;
 
     if (item) {
+      if (!checkModifyItem(item)) {
+        showToast('আপনি শুধুমাত্র নিজের এন্ট্রি করা মালামাল ৩০ মিনিটের মধ্যে এডিট করতে পারবেন', 'error');
+        return;
+      }
       setEditingItem(item);
       setItemName(item.name);
       setItemCategory(item.category);
@@ -376,6 +395,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 
   const requestDeleteItem = (item: InventoryItem) => {
     if (!ensureAdmin()) return;
+    if (!checkModifyItem(item)) {
+      showToast('আপনি শুধুমাত্র নিজের এন্ট্রি করা মালামাল ৩০ মিনিটের মধ্যে মুছে ফেলতে পারবেন', 'error');
+      return;
+    }
     setItemToDelete(item);
   };
 
@@ -397,6 +420,10 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 
   const requestDeleteLog = (log: InventoryLog) => {
     if (!ensureAdmin()) return;
+    if (!checkModifyLog(log)) {
+      showToast('আপনি শুধুমাত্র নিজের এন্ট্রি করা লগ ৩০ মিনিটের মধ্যে মুছে ফেলতে পারবেন', 'error');
+      return;
+    }
     setLogToDelete(log);
   };
 
@@ -430,8 +457,12 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                   মালামাল ও ইকুইপমেন্ট স্টক (Inventory)
                 </h2>
                 {isAdminLoggedIn && (
-                  <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400">
-                    এডমিন কন্ট্রোল সক্রিয়
+                  <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold ${
+                    isSubAdmin
+                      ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300'
+                      : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400'
+                  }`}>
+                    {isSubAdmin ? 'সাব-অ্যাডমিন (নিজের এন্ট্রি ৩০ মি.)' : 'এডমিন কন্ট্রোল সক্রিয়'}
                   </span>
                 )}
               </div>
@@ -736,6 +767,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                     }).map((item) => {
                       const isLow = item.currentStock <= item.minStockAlert;
                       const catInfo = CATEGORY_MAP[item.category] || CATEGORY_MAP.other;
+                      const canModItem = checkModifyItem(item);
+                      const itemModInfo = getModifyInfo ? getModifyInfo(item) : null;
                       return (
                         <tr 
                           key={item.id} 
@@ -747,9 +780,17 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                             <div className="flex items-center gap-2.5">
                               <span className="text-lg">{catInfo.icon}</span>
                               <div>
-                                <p className="font-bold text-slate-900 dark:text-white leading-tight">
-                                  {item.name}
-                                </p>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <p className="font-bold text-slate-900 dark:text-white leading-tight">
+                                    {item.name}
+                                  </p>
+                                  {isSubAdmin && itemModInfo?.allowed && Number.isFinite(itemModInfo.remainingMs) && (
+                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[9px] font-bold">
+                                      <Clock className="w-2.5 h-2.5" />
+                                      {formatRemainingCountdown(itemModInfo.remainingMs, true)}
+                                    </span>
+                                  )}
+                                </div>
                                 {item.supplier && (
                                   <p className="text-[11px] text-slate-400">
                                     সাপ্লায়ার: {item.supplier}
@@ -822,23 +863,27 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                                     <ArrowUpRight className="w-3.5 h-3.5" />
                                   </button>
 
-                                  {/* Edit Item (Change info / adjust stock balance) */}
-                                  <button
-                                    onClick={() => openItemModal(item)}
-                                    title="মালামালের তথ্য ও স্টক পরিবর্তন করুন"
-                                    className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300 transition cursor-pointer"
-                                  >
-                                    <Edit3 className="w-3.5 h-3.5" />
-                                  </button>
+                                  {canModItem && (
+                                    <>
+                                      {/* Edit Item (Change info / adjust stock balance) */}
+                                      <button
+                                        onClick={() => openItemModal(item)}
+                                        title="মালামালের তথ্য ও স্টক পরিবর্তন করুন"
+                                        className="p-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300 transition cursor-pointer"
+                                      >
+                                        <Edit3 className="w-3.5 h-3.5" />
+                                      </button>
 
-                                  {/* Delete Item */}
-                                  <button
-                                    onClick={() => requestDeleteItem(item)}
-                                    title="আইটেম বাদ দিন / মুছুন"
-                                    className="p-1.5 rounded-xl bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 dark:bg-slate-800 dark:hover:bg-rose-950/50 transition cursor-pointer"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
+                                      {/* Delete Item */}
+                                      <button
+                                        onClick={() => requestDeleteItem(item)}
+                                        title="আইটেম বাদ দিন / মুছুন"
+                                        className="p-1.5 rounded-xl bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 dark:bg-slate-800 dark:hover:bg-rose-950/50 transition cursor-pointer"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </>
+                                  )}
                                 </>
                               ) : (
                                 <span className="text-[10px] text-slate-400 italic">শুধুমাত্র এডমিন</span>
@@ -862,13 +907,15 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">স্টক মুভমেন্ট ও বিতরণ লগ</h3>
               <p className="text-xs text-slate-400">প্রতিটি ক্রয়, বিতরণ, গ্রাহক ফেরত এবং ড্যামেজের রেকর্ড</p>
             </div>
-            <button
-              onClick={() => openMovementModal('in')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>মুভমেন্ট রেকর্ড</span>
-            </button>
+            {isAdminLoggedIn && (
+              <button
+                onClick={() => openMovementModal('in')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 transition cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>মুভমেন্ট রেকর্ড</span>
+              </button>
+            )}
           </div>
 
           {logs.length === 0 ? (
@@ -926,6 +973,8 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                       );
                     }
 
+                    const canModLog = checkModifyLog(log);
+                    const logModInfo = getModifyInfo ? getModifyInfo(log) : null;
                     return (
                       <tr key={log.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition">
                         <td className="px-4 py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap font-medium">
@@ -935,7 +984,15 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                           {typeBadge}
                         </td>
                         <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">
-                          {log.itemName}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span>{log.itemName}</span>
+                            {isSubAdmin && logModInfo?.allowed && Number.isFinite(logModInfo.remainingMs) && (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[9px] font-bold">
+                                <Clock className="w-2.5 h-2.5" />
+                                {formatRemainingCountdown(logModInfo.remainingMs, true)}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3 text-center font-black text-slate-800 dark:text-slate-200">
                           {log.quantity}
@@ -959,13 +1016,17 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
                           {log.note || '—'}
                         </td>
                         <td className="px-4 py-3 text-center whitespace-nowrap">
-                          <button
-                            onClick={() => requestDeleteLog(log)}
-                            title="লগ ডিলিট ও স্টক ব্যালেন্স সমন্বয়"
-                            className="p-1.5 rounded-xl bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 dark:bg-slate-800 dark:hover:bg-rose-950/50 transition cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          {canModLog ? (
+                            <button
+                              onClick={() => requestDeleteLog(log)}
+                              title="লগ ডিলিট ও স্টক ব্যালেন্স সমন্বয়"
+                              className="p-1.5 rounded-xl bg-slate-100 hover:bg-rose-100 text-slate-400 hover:text-rose-600 dark:bg-slate-800 dark:hover:bg-rose-950/50 transition cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-slate-400">—</span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -1150,7 +1211,7 @@ export const InventoryManager: React.FC<InventoryManagerProps> = ({
 
               {/* Sticky Footer */}
               <div className="px-5 py-3.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-800/60 backdrop-blur-xs shrink-0 flex items-center justify-between gap-2.5">
-                {editingItem ? (
+                {editingItem && checkModifyItem(editingItem) ? (
                   <button
                     type="button"
                     onClick={() => requestDeleteItem(editingItem)}

@@ -35,6 +35,8 @@ interface CardDetailPageProps {
   onOpenNewTransaction?: (type?: 'income' | 'expense', category?: string) => void;
   config?: AppConfig;
   isAdminLoggedIn?: boolean;
+  canCreateEntry?: boolean;
+  canModifyTransaction?: (txn: Transaction) => boolean;
 }
 
 export const CardDetailPage: React.FC<CardDetailPageProps> = ({
@@ -51,8 +53,11 @@ export const CardDetailPage: React.FC<CardDetailPageProps> = ({
   onViewSalarySlip,
   onOpenNewTransaction,
   config,
-  isAdminLoggedIn = false
+  isAdminLoggedIn = false,
+  canCreateEntry,
+  canModifyTransaction
 }) => {
+  const canCreate = canCreateEntry ?? isAdminLoggedIn;
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [timeFilter, setTimeFilter] = useState<'month' | 'all'>('month');
@@ -427,7 +432,7 @@ export const CardDetailPage: React.FC<CardDetailPageProps> = ({
 
             {/* Search & Category Filter & New Entry */}
             <div className="flex items-center gap-2 flex-wrap">
-              {isAdminLoggedIn && onOpenNewTransaction && (
+              {canCreate && onOpenNewTransaction && (
                 <button
                   type="button"
                   onClick={() => onOpenNewTransaction(type === 'income' ? 'income' : 'expense')}
@@ -513,7 +518,7 @@ export const CardDetailPage: React.FC<CardDetailPageProps> = ({
                             ব্যালেন্স: {formatCurrency(runningBalance, currencySymbol)}
                           </span>
                         </div>
-                        {isAdminLoggedIn && onDeleteTransaction && (
+                        {(canModifyTransaction ? canModifyTransaction(txn) : isAdminLoggedIn) && onDeleteTransaction && (
                           <button
                             type="button"
                             onClick={(e) => handleDeleteItem(txn.id, e)}

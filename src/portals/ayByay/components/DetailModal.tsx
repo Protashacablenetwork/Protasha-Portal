@@ -7,8 +7,9 @@ import {
   PAYMENT_METHODS, 
   formatCurrency 
 } from '../data/categories';
-import { X, Trash2, Edit3, Check, CloudCheck, Calendar, Tag, CreditCard, ArrowLeft } from 'lucide-react';
+import { X, Trash2, Edit3, Check, CloudCheck, Calendar, Tag, CreditCard, ArrowLeft, Clock } from 'lucide-react';
 import { showToast } from '../../../utils/uiFeedback';
+import { TransactionModificationCheck, formatRemainingCountdown } from '../../../utils/permissions';
 
 interface DetailModalProps {
   transaction: Transaction | null;
@@ -19,6 +20,9 @@ interface DetailModalProps {
   currencySymbol?: string;
   initialEditMode?: boolean;
   isAdminLoggedIn?: boolean;
+  isSubAdmin?: boolean;
+  canModifyTransaction?: (txn: Transaction) => boolean;
+  getModifyInfo?: (txn: Transaction) => TransactionModificationCheck;
 }
 
 export const DetailModal: React.FC<DetailModalProps> = ({
@@ -29,7 +33,10 @@ export const DetailModal: React.FC<DetailModalProps> = ({
   onDelete,
   currencySymbol = '৳',
   initialEditMode = false,
-  isAdminLoggedIn = false
+  isAdminLoggedIn = false,
+  isSubAdmin = false,
+  canModifyTransaction,
+  getModifyInfo
 }) => {
   const [isEditing, setIsEditing] = useState(initialEditMode);
   const [description, setDescription] = useState('');
@@ -42,6 +49,11 @@ export const DetailModal: React.FC<DetailModalProps> = ({
   const [note, setNote] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const canModify = transaction
+    ? (canModifyTransaction ? canModifyTransaction(transaction) : isAdminLoggedIn)
+    : false;
+  const modInfo = transaction && getModifyInfo ? getModifyInfo(transaction) : null;
 
   useEffect(() => {
     if (transaction) {
@@ -60,9 +72,10 @@ export const DetailModal: React.FC<DetailModalProps> = ({
       setDate(transaction.date);
       setPaymentMethod(transaction.paymentMethod || PAYMENT_METHODS[0]);
       setNote(transaction.note || '');
-      setIsEditing(initialEditMode);
+      const editableNow = canModifyTransaction ? canModifyTransaction(transaction) : isAdminLoggedIn;
+      setIsEditing(initialEditMode && editableNow);
     }
-  }, [transaction, initialEditMode]);
+  }, [transaction, initialEditMode, canModifyTransaction, isAdminLoggedIn]);
 
   if (!isOpen || !transaction) return null;
 
@@ -70,6 +83,11 @@ export const DetailModal: React.FC<DetailModalProps> = ({
   const categories = isIncome ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
 
   const handleSaveEdit = async () => {
+    if (!canModify) {
+      showToast('এই এন্ট্রিটি এডিট করার অনুমতি বা সময়সীমা নেই', 'error');
+      setIsEditing(false);
+      return;
+    }
     if (!description.trim()) {
       showToast('বিবরণ লিখুন', 'warning');
       return;
@@ -339,28 +357,40 @@ export const DetailModal: React.FC<DetailModalProps> = ({
             </div>
 
             {/* Action Buttons */}
-            {isAdminLoggedIn ? (
-              <div className="flex items-center gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(true)}
-                  className="flex-1 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition shadow-sm cursor-pointer"
-                >
-                  <Edit3 className="w-4 h-4" />
-                  <span>এডিট</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleDelete}
-                  className="flex-1 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white rounded-full font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition shadow-sm cursor-pointer"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  <span>ডিলিট</span>
-                </button>
+            {canModify ? (
+              <div className="space-y-2 pt-2">
+                {modInfo && Number.isFinite(modInfo.remainingMs) && modInfo.remainingMs > 0 && (
+                  <div className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] font-bold text-amber-800 dark:text-amber-300">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>নিজের এন্ট্রি এডিট ও ডিলিট সময় বাকি: {formatRemainingCountdown(modInfo.remainingMs, true)} মিনিট</span>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditing(true)}
+                    className="flex-1 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition shadow-sm cursor-pointer"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                    <span>এডিট</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    className="flex-1 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white rounded-full font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition shadow-sm cursor-pointer"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>ডিলিট</span>
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 rounded-2xl text-center text-xs font-semibold text-amber-800 dark:text-amber-300">
-                🔒 লেনদেন এডিট বা ডিলিট করার জন্য এডমিন লগইন প্রয়োজন।
+                {isSubAdmin
+                  ? modInfo?.isOwner && modInfo?.expired
+                    ? '⏱️ ৩০ মিনিটের সময়সীমা শেষ হয়ে যাওয়ায় এই এন্ট্রিটি আর এডিট বা ডিলিট করা যাবে না।'
+                    : '🔒 সাব-অ্যাডমিন অন্য কারো এন্ট্রি এডিট বা ডিলিট করতে পারবেন না।'
+                  : '🔒 লেনদেন এডিট বা ডিলিট করার জন্য এডমিন লগইন প্রয়োজন।'}
               </div>
             )}
           </div>

@@ -40,8 +40,12 @@ import {
 import { toBengaliNumber } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import {
+  canModifyOwnedRecord,
   formatRemainingCountdown,
+  getActorStamp,
   getStaffAttendanceLockState,
+  hasSubAdminPermission,
+  isRecordOwner,
   normalizePhoneNumber
 } from '../utils/permissions';
 import { StaffAttendanceDetailView } from './StaffAttendanceDetailView';
@@ -357,10 +361,14 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
   const [confirmDeleteLeaveId, setConfirmDeleteLeaveId] = useState<string | null>(null);
 
   const isAdmin = user?.role === 'admin';
+  const isSubAdmin = user?.role === 'sub-admin';
+  const isStaffRole = user?.role === 'staff';
   const isVisitor = user?.role === 'visitor';
-  const canBulkMark = isAdmin;
+  const hasSubAdminAttendancePerm = isSubAdmin && hasSubAdminPermission(user, 'staffAttendance');
+  const canBulkMark = isAdmin || hasSubAdminAttendancePerm;
+  const actorStamp = getActorStamp(user);
 
-  // Live 1-second tick for 5-minute attendance auto-lock countdown (non-admins)
+  // Live 1-second tick for 5-minute / 30-minute attendance edit countdown (non-admins)
   useEffect(() => {
     if (!isOpen || isAdmin) return;
     setNowMs(Date.now());
@@ -368,9 +376,9 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
     return () => window.clearInterval(timer);
   }, [isOpen, isAdmin]);
 
-  // Clear staff session automatically if Admin is logged in or user signs out
+  // Clear temporary support/attendance staff session automatically for Admin, Sub-Admin, Staff, or Visitor logout
   useEffect(() => {
-    if (isAdmin || !user) {
+    if (isAdmin || isSubAdmin || isStaffRole || !user) {
       if (staffSession) {
         setStaffSession(null);
         try {
@@ -378,22 +386,32 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
         } catch {}
       }
     }
-  }, [isAdmin, user, staffSession]);
+  }, [isAdmin, isSubAdmin, isStaffRole, user, staffSession]);
+
+  const [nonStaffVersion, setNonStaffVersion] = useState(0);
+  useEffect(() => {
+    const handleNonStaffUpdated = () => setNonStaffVersion((v) => v + 1);
+    window.addEventListener('non-staff-users-updated', handleNonStaffUpdated);
+    return () => window.removeEventListener('non-staff-users-updated', handleNonStaffUpdated);
+  }, []);
 
   const activeStaff = useMemo(
-    () => staffAccounts.filter(isActualStaffAccount),
-    [staffAccounts]
+    () => {
+      void nonStaffVersion;
+      return staffAccounts.filter(isActualStaffAccount);
+    },
+    [staffAccounts, nonStaffVersion]
   );
 
-  // Resolve main-page logged-in staff match
+  // Resolve main-page logged-in staff match (strictly for 'staff' / legacy non-subadmin accounts, never sub-admin)
   const matchedMainStaff = useMemo<StaffAccount | null>(
-    () => (isAdmin ? null : findMatchedStaffForUser(user, activeStaff)),
-    [isAdmin, user, activeStaff]
+    () => (isAdmin || isSubAdmin ? null : findMatchedStaffForUser(user, activeStaff)),
+    [isAdmin, isSubAdmin, user, activeStaff]
   );
 
-  // Resolve the currently logged-in staff member (for non-admin self-only attendance)
+  // Resolve the currently logged-in staff member (for 5-min self-only attendance)
   const matchedOwnStaff = useMemo<StaffAccount | null>(() => {
-    if (isAdmin) return null;
+    if (isAdmin || isSubAdmin) return null;
 
     // 1. Main-page logged-in staff (zero extra PIN required)
     if (matchedMainStaff) return matchedMainStaff;
@@ -413,8 +431,8 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
       if (bySession) return bySession;
     }
 
-    // 3. Fallback: Match logged-in staff/sub-admin user account to Staff Directory (never regular 'user')
-    if (user && (user.role === 'staff' || user.role === 'sub-admin')) {
+    // 3. Fallback: Match logged-in staff user account to Staff Directory (never regular 'user' or 'sub-admin')
+    if (user && user.role === 'staff') {
       const uPhone = normalizePhoneNumber(user.phone);
       const uName = (user.name || '').trim().toLowerCase();
       const uRawPhone = (user.phone || '').trim().toLowerCase();
@@ -433,16 +451,18 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
     }
 
     return null;
-  }, [isAdmin, matchedMainStaff, staffSession, user, activeStaff]);
+  }, [isAdmin, isSubAdmin, matchedMainStaff, staffSession, user, activeStaff]);
 
-  // Keep leaveStaffId locked to matchedOwnStaff for non-admins
+  // Keep leaveStaffId locked to matchedOwnStaff only for non-admin, non-sub-admin accounts
   useEffect(() => {
-    if (!isAdmin && matchedOwnStaff) {
-      setLeaveStaffId(matchedOwnStaff.id);
-    } else if (!isAdmin && !matchedOwnStaff) {
-      setLeaveStaffId('');
+    if (!isAdmin && !hasSubAdminAttendancePerm) {
+      if (matchedOwnStaff) {
+        setLeaveStaffId(matchedOwnStaff.id);
+      } else {
+        setLeaveStaffId('');
+      }
     }
-  }, [isAdmin, matchedOwnStaff]);
+  }, [isAdmin, hasSubAdminAttendancePerm, matchedOwnStaff]);
 
   // Auto-dismiss transient daily feedback banner
   useEffect(() => {
@@ -453,12 +473,12 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
 
   // Pin own staff card to the top for non-admin staff convenience
   const orderedDailyStaff = useMemo(() => {
-    if (isAdmin || !matchedOwnStaff) return activeStaff;
+    if (isAdmin || isSubAdmin || !matchedOwnStaff) return activeStaff;
     return [
       matchedOwnStaff,
       ...activeStaff.filter((s) => s.id !== matchedOwnStaff.id)
     ];
-  }, [activeStaff, isAdmin, matchedOwnStaff]);
+  }, [activeStaff, isAdmin, isSubAdmin, matchedOwnStaff]);
 
   const selectedDetailStaff = useMemo(
     () =>
@@ -482,22 +502,29 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
 
   const canModifyStaffOnDate = (staffId: string, dateStr: string): boolean => {
     if (isAdmin) return true;
+    const existing = getRecordForStaffOnDate(staffId, dateStr);
+    if (isSubAdmin) {
+      if (!hasSubAdminAttendancePerm) return false;
+      if (!existing) return true;
+      return canModifyOwnedRecord(existing, user, 'staffAttendance', nowMs).allowed;
+    }
     if (!matchedOwnStaff) return false;
     if (matchedOwnStaff.id !== staffId || dateStr !== todayIso) return false;
-    const existing = getRecordForStaffOnDate(staffId, dateStr);
     if (!existing) return true;
     return !getStaffAttendanceLockState(existing, false, nowMs).locked;
   };
 
   const isOwnStaffId = (staffId: string): boolean => {
-    return !isAdmin && Boolean(matchedOwnStaff && matchedOwnStaff.id === staffId);
+    return !isAdmin && !isSubAdmin && Boolean(matchedOwnStaff && matchedOwnStaff.id === staffId);
   };
 
   const activeRecorderName = (
-    staffSession?.name ||
-    matchedOwnStaff?.name ||
-    user?.name ||
-    (isBn ? 'অ্যাডমিন' : 'Admin')
+    isSubAdmin
+      ? actorStamp || user?.name || 'sub-admin'
+      : staffSession?.name ||
+        matchedOwnStaff?.name ||
+        user?.name ||
+        (isBn ? 'অ্যাডমিন' : 'Admin')
   ).slice(0, 128);
 
   const selectedMonthKey = `${selectedYear}-${String(selectedMonthIdx + 1).padStart(2, '0')}`;
@@ -702,14 +729,14 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
         }
       }
 
-      // Also check 'staff' / 'sub-admin' accounts in Firestore 'users' whose phone matches an active staff member
+      // Also check 'staff' accounts in Firestore 'users' whose phone matches an active staff member
       try {
         const usersSnap = await getDocs(collection(db, 'users'));
         const matchedStaffUser = usersSnap.docs
           .map((d) => ({ id: d.id, ...(d.data() as any) }))
           .find(
             (u) =>
-              (u.role === 'staff' || u.role === 'sub-admin') &&
+              u.role === 'staff' &&
               u.status !== 'suspended' &&
               String(u.pin || '') === cleanPin &&
               ((u.phone && String(u.phone).trim() === rawId) ||
@@ -957,35 +984,63 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
     noteOverride?: string
   ) => {
     const existing = dailyMap.get(staff.id);
-    const liveLockState = getStaffAttendanceLockState(existing, isAdmin, Date.now());
+    const liveNow = Date.now();
+    const liveLockState = getStaffAttendanceLockState(existing, isAdmin, liveNow);
 
-    // Strictly block non-admins from marking other staff, non-today dates, or expired (>5 min) records
-    if (!canModifyStaffOnDate(staff.id, selectedDate) || (!isAdmin && existing && liveLockState.locked)) {
+    const subAdminBlocked =
+      isSubAdmin &&
+      (!hasSubAdminAttendancePerm ||
+        (Boolean(existing) && !canModifyOwnedRecord(existing, user, 'staffAttendance', liveNow).allowed));
+
+    const staffBlocked =
+      !isAdmin &&
+      !isSubAdmin &&
+      (!canModifyStaffOnDate(staff.id, selectedDate) || (Boolean(existing) && liveLockState.locked));
+
+    // Strictly enforce Sub-Admin (permitted entry + 30-min own record edit) and Staff (5-min today's self-attendance)
+    if (subAdminBlocked || staffBlocked) {
       sounds.playTap();
       setConfirmDeleteDailyStaffId(null);
       setEditingNoteStaffId(null);
-      setDailyFeedback({
-        type: 'error',
-        text: !matchedOwnStaff && !isAdmin
+
+      let errMsg = '';
+      if (isSubAdmin) {
+        if (!hasSubAdminAttendancePerm) {
+          errMsg = isBn
+            ? 'স্টাফ হাজিরা এন্ট্রি করার অনুমতি নেই — অ্যাডমিনের কাছ থেকে পার্মিশন নিন।'
+            : 'Admin permission required to mark staff attendance.';
+        } else if (existing && isRecordOwner(existing, user)) {
+          errMsg = isBn
+            ? '৩০ মিনিট সময় শেষ হওয়ায় নিজের এই হাজিরা আর পরিবর্তন করা যাবে না।'
+            : '30-minute window expired — entry is now view-only.';
+        } else {
+          errMsg = isBn
+            ? 'সাব-অ্যাডমিন অন্য কারো দেওয়া হাজিরা পরিবর্তন করতে পারবেন না।'
+            : 'Sub-Admin cannot modify entries created by others.';
+        }
+      } else {
+        errMsg = !matchedOwnStaff
           ? isBn
             ? 'নিজের হাজিরা দিতে প্রথমে স্টাফ লগইন করুন।'
             : 'Please sign in as staff first to mark your attendance.'
-          : selectedDate !== todayIso && !isAdmin
+          : selectedDate !== todayIso
             ? isBn
               ? 'স্টাফ শুধুমাত্র আজকের হাজিরা দিতে বা পরিবর্তন করতে পারবেন।'
               : 'Staff can only mark or change today’s attendance.'
-            : !isAdmin && matchedOwnStaff?.id === staff.id && existing && liveLockState.locked
+            : matchedOwnStaff?.id === staff.id && existing && liveLockState.locked
               ? isBn
                 ? '৫ মিনিট সময় শেষ হওয়ায় আজকের হাজিরা লক হয়ে গেছে — এখন শুধুমাত্র দেখা যাবে।'
                 : 'Attendance locked after 5 minutes — view only.'
               : isBn
                 ? 'আপনি শুধুমাত্র নিজের হাজিরা দিতে পারবেন, অন্য স্টাফেরটা কাজ করবে না।'
-                : 'You can only mark your own attendance.'
-      });
+                : 'You can only mark your own attendance.';
+      }
+
+      setDailyFeedback({ type: 'error', text: errMsg });
       return;
     }
 
-    // If clicking the exact same active status without changing leaveType/note, offer 1-tap Undo/Delete (within 5 min)!
+    // If clicking the exact same active status without changing leaveType/note, offer 1-tap Undo/Delete (within allowed window)!
     if (
       existing &&
       existing.status === status &&
@@ -1019,8 +1074,8 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
             (existing?.leaveType && existing.leaveType !== 'none' ? existing.leaveType : 'casual')
           : 'none',
       note: noteOverride !== undefined ? noteOverride.trim().slice(0, 1000) : existing?.note || '',
-      recordedBy: activeRecorderName,
-      // Preserve initial submission timestamp so editing within 5 minutes never resets the lock countdown
+      recordedBy: existing?.recordedBy || activeRecorderName,
+      // Preserve initial submission timestamp so editing never resets the lock countdown
       createdAt: existing?.createdAt || existing?.updatedAt || nowIso,
       updatedAt: nowIso
     };
@@ -1028,16 +1083,25 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
   };
 
   const handleConfirmDeleteDailyAttendance = async (staff: StaffAccount, record: StaffAttendanceRecord) => {
-    const liveLockState = getStaffAttendanceLockState(record, isAdmin, Date.now());
-    if (!canModifyStaffOnDate(staff.id, record.date) || (!isAdmin && liveLockState.locked)) {
+    const liveNow = Date.now();
+    const liveLockState = getStaffAttendanceLockState(record, isAdmin, liveNow);
+    const blocked = isSubAdmin
+      ? !hasSubAdminAttendancePerm || !canModifyOwnedRecord(record, user, 'staffAttendance', liveNow).allowed
+      : !isAdmin && (!canModifyStaffOnDate(staff.id, record.date) || liveLockState.locked);
+
+    if (blocked) {
       sounds.playTap();
       setConfirmDeleteDailyStaffId(null);
       setEditingNoteStaffId(null);
       setDailyFeedback({
         type: 'error',
-        text: isBn
-          ? '৫ মিনিট সময় শেষ হওয়ায় আজকের হাজিরা আর মুছা যাবে না।'
-          : '5-minute window expired. Attendance is now locked.'
+        text: isSubAdmin
+          ? isBn
+            ? '৩০ মিনিট সময় শেষ বা অন্য কারো হাজিরা মুছা যাবে না।'
+            : '30-minute window expired or cannot delete others record.'
+          : isBn
+            ? '৫ মিনিট সময় শেষ হওয়ায় আজকের হাজিরা আর মুছা যাবে না।'
+            : '5-minute window expired. Attendance is now locked.'
       });
       return;
     }
@@ -1095,7 +1159,7 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
 
   const handleApplyLeave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isAdmin) return;
+    if (!isAdmin && !hasSubAdminAttendancePerm) return;
     const targetStaffId = leaveStaffId;
     if (!targetStaffId) {
       setLeaveFeedback(isBn ? 'অনুগ্রহ করে স্টাফ নির্বাচন করুন' : 'Please select a staff member');
@@ -1119,25 +1183,45 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
       cursor = shiftDateByDays(cursor, 1);
     }
 
+    // Sub-Admin cannot overwrite existing records created by others or older than 30 minutes
+    if (isSubAdmin) {
+      const liveNow = Date.now();
+      const blockedDates = dates.filter((d) => {
+        const existing = getRecordForStaffOnDate(staff.id, d);
+        return existing && !canModifyOwnedRecord(existing, user, 'staffAttendance', liveNow).allowed;
+      });
+      if (blockedDates.length > 0) {
+        setLeaveFeedback(
+          isBn
+            ? `${blockedDates.join(', ')} তারিখে ইতিমধ্যে অন্যের বা ৩০ মিনিটের বেশি পুরোনো এন্ট্রি রয়েছে — পরিবর্তন করা যাবে না।`
+            : `Cannot overwrite locked or others' entries on ${blockedDates.join(', ')}.`
+        );
+        return;
+      }
+    }
+
     setIsSavingLeave(true);
     setLeaveFeedback('');
     try {
       const nowIso = new Date().toISOString();
-      const records: StaffAttendanceRecord[] = dates.map((d) => ({
-        id: sanitizeRecordId(staff.id, d),
-        staffId: staff.id,
-        staffName: staff.name.slice(0, 150),
-        staffRole: (staff.role || '').slice(0, 150),
-        date: d,
-        month: d.slice(0, 7),
-        status: 'leave',
-        checkInTime: '',
-        leaveType,
-        note: leaveNote.trim().slice(0, 1000),
-        recordedBy: activeRecorderName,
-        createdAt: nowIso,
-        updatedAt: nowIso
-      }));
+      const records: StaffAttendanceRecord[] = dates.map((d) => {
+        const existing = getRecordForStaffOnDate(staff.id, d);
+        return {
+          id: sanitizeRecordId(staff.id, d),
+          staffId: staff.id,
+          staffName: staff.name.slice(0, 150),
+          staffRole: (staff.role || '').slice(0, 150),
+          date: d,
+          month: d.slice(0, 7),
+          status: 'leave',
+          checkInTime: '',
+          leaveType,
+          note: leaveNote.trim().slice(0, 1000),
+          recordedBy: existing?.recordedBy || activeRecorderName,
+          createdAt: existing?.createdAt || existing?.updatedAt || nowIso,
+          updatedAt: nowIso
+        };
+      });
 
       await onSaveBulkAttendance(records);
       sounds.playSuccess();
@@ -1338,7 +1422,7 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
           </div>
         </div>
 
-        {/* Header Controls: Admin PIN Control OR Staff Self PIN Change / Staff Login */}
+        {/* Header Controls: Admin PIN Control OR Sub-Admin Badge OR Staff Self PIN Change / Staff Login */}
         {isAdmin ? (
           <button
             type="button"
@@ -1348,6 +1432,15 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
             <KeyRound className="w-3.5 h-3.5" />
             <span>{isBn ? 'অ্যাডমিন পিন কন্ট্রোল' : 'Admin PIN Control'}</span>
           </button>
+        ) : isSubAdmin ? (
+          <div className="h-9 px-2.5 sm:px-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 text-[11px] font-extrabold inline-flex items-center gap-1.5 shrink-0">
+            <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+            <span>
+              {hasSubAdminAttendancePerm
+                ? (isBn ? 'সাব-অ্যাডমিন এন্ট্রি' : 'Sub-Admin Entry')
+                : (isBn ? 'শুধু দেখা' : 'View Only')}
+            </span>
+          </div>
         ) : !isVisitor ? (
           <div className="flex items-center gap-1.5 shrink-0">
             {matchedOwnStaff && (
@@ -1516,8 +1609,54 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
               </div>
             </div>
 
-            {/* Self-Only Staff Attendance Notice Banner */}
-            {!isAdmin && (
+            {/* Sub-Admin or Staff Self-Attendance Notice Banner */}
+            {isSubAdmin ? (
+              <div
+                className={`p-3 rounded-2xl border flex items-start gap-2.5 ${
+                  hasSubAdminAttendancePerm
+                    ? 'bg-indigo-50/80 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-800/60'
+                    : 'bg-slate-100/90 dark:bg-slate-900 border-slate-200 dark:border-slate-800'
+                }`}
+              >
+                {hasSubAdminAttendancePerm ? (
+                  <ShieldCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
+                ) : (
+                  <Lock className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0 mt-0.5" />
+                )}
+                <div className="min-w-0">
+                  <p
+                    className={`text-xs font-extrabold ${
+                      hasSubAdminAttendancePerm
+                        ? 'text-indigo-900 dark:text-indigo-200'
+                        : 'text-slate-800 dark:text-slate-200'
+                    }`}
+                  >
+                    {hasSubAdminAttendancePerm
+                      ? isBn
+                        ? 'সাব-অ্যাডমিন হাজিরা এন্ট্রি সক্রিয়'
+                        : 'Sub-Admin Attendance Entry Enabled'
+                      : isBn
+                        ? 'সাব-অ্যাডমিন: শুধু দেখার মোড'
+                        : 'Sub-Admin: View-Only Mode'}
+                  </p>
+                  <p
+                    className={`text-[11px] font-medium mt-0.5 ${
+                      hasSubAdminAttendancePerm
+                        ? 'text-indigo-700/90 dark:text-indigo-300/90'
+                        : 'text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    {hasSubAdminAttendancePerm
+                      ? isBn
+                        ? 'আপনি নতুন হাজিরা ও ছুটি যোগ করতে পারবেন। নিজের দেওয়া এন্ট্রি ৩০ মিনিটের মধ্যে পরিবর্তন বা মুছতে পারবেন; অন্য কারো এন্ট্রি পরিবর্তন করা যাবে না।'
+                        : 'You can add new attendance & leave records and edit/delete your own entries within 30 minutes.'
+                      : isBn
+                        ? 'পুরো হাজিরা ও ছুটির হিসাব দেখতে পারবেন। এন্ট্রির জন্য অ্যাডমিনের পার্মিশন প্রয়োজন।'
+                        : 'You can view all attendance & leave records. Admin permission is required to record entries.'}
+                  </p>
+                </div>
+              </div>
+            ) : !isAdmin ? (
               <div
                 className={`p-3 rounded-2xl border flex items-center justify-between gap-2.5 flex-wrap ${
                   matchedOwnStaff
@@ -1606,7 +1745,7 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
                   )}
                 </div>
               </div>
-            )}
+            ) : null}
 
             {/* Inline Feedback Toast */}
             {dailyFeedback && (
@@ -1671,10 +1810,17 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
                   const isEditingNote = editingNoteStaffId === staff.id;
                   const canEditThisStaff = canModifyStaffOnDate(staff.id, selectedDate);
                   const isOwnCard = isOwnStaffId(staff.id);
-                  const isLockedOtherStaff = !isAdmin && !isOwnCard;
+                  const subAdminModCheck = isSubAdmin
+                    ? canModifyOwnedRecord(rec, user, 'staffAttendance', nowMs)
+                    : null;
+                  const isSubAdminOwnCountdown =
+                    Boolean(isSubAdmin && hasSubAdminAttendancePerm && rec && subAdminModCheck?.allowed);
+                  const isSubAdminLockedExisting =
+                    Boolean(isSubAdmin && rec && (!hasSubAdminAttendancePerm || !subAdminModCheck?.allowed));
+                  const isLockedOtherStaff = !isAdmin && !isSubAdmin && !isOwnCard;
                   const lockState = getStaffAttendanceLockState(rec, isAdmin, nowMs);
-                  const isOwnCardLockedAfter5m = !isAdmin && isOwnCard && selectedDate === todayIso && Boolean(rec) && lockState.locked;
-                  const isOwnCardCountdownActive = !isAdmin && isOwnCard && selectedDate === todayIso && Boolean(rec) && !lockState.locked;
+                  const isOwnCardLockedAfter5m = !isAdmin && !isSubAdmin && isOwnCard && selectedDate === todayIso && Boolean(rec) && lockState.locked;
+                  const isOwnCardCountdownActive = !isAdmin && !isSubAdmin && isOwnCard && selectedDate === todayIso && Boolean(rec) && !lockState.locked;
                   const isConfirmingDelete = confirmDeleteDailyStaffId === staff.id;
 
                   return (
@@ -1722,16 +1868,26 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
                                     : `Locks in ${formatRemainingCountdown(lockState.remainingMs, false)}`}
                                 </span>
                               )}
+                              {isSubAdminOwnCountdown && subAdminModCheck && (
+                                <span className="px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/50 text-amber-800 dark:text-amber-200 text-[10px] font-extrabold inline-flex items-center gap-0.5 tabular-nums shrink-0">
+                                  <Clock className="w-2.5 h-2.5" />
+                                  {isBn
+                                    ? `এডিট বাকি: ${formatRemainingCountdown(subAdminModCheck.remainingMs, true)}`
+                                    : `Edit left: ${formatRemainingCountdown(subAdminModCheck.remainingMs, false)}`}
+                                </span>
+                              )}
                               {isOwnCardLockedAfter5m && (
                                 <span className="px-1.5 py-0.5 rounded-md bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-[10px] font-extrabold inline-flex items-center gap-0.5 shrink-0">
                                   <Lock className="w-2.5 h-2.5" />
                                   {isBn ? 'লক (শুধু দেখা)' : 'Locked (View Only)'}
                                 </span>
                               )}
-                              {isLockedOtherStaff && (
+                              {(isLockedOtherStaff || isSubAdminLockedExisting) && (
                                 <span className="px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[10px] font-bold inline-flex items-center gap-0.5 shrink-0">
                                   <Lock className="w-2.5 h-2.5" />
-                                  {isBn ? 'লক' : 'Locked'}
+                                  {isSubAdminLockedExisting
+                                    ? (isBn ? 'শুধু দেখা' : 'View Only')
+                                    : (isBn ? 'লক' : 'Locked')}
                                 </span>
                               )}
                             </div>
@@ -1809,7 +1965,7 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
                         })}
                       </div>
 
-                      {/* Accidental Tap Undo / Clear Attendance Action Strip (within 5-min window for non-admin staff) */}
+                      {/* Accidental Tap Undo / Clear Attendance Action Strip */}
                       {rec && canEditThisStaff && !isConfirmingDelete && (
                         <div className="flex items-center justify-between gap-2 pt-0.5">
                           <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
@@ -1817,9 +1973,13 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
                               ? isBn
                                 ? 'ভুলে চাপ পড়েছে? হাজিরা মুছতে পারবেন'
                                 : 'Tapped by mistake? You can undo this attendance'
-                              : isBn
-                                ? `ভুলে চাপ পড়লে ${formatRemainingCountdown(lockState.remainingMs, true)} মিনিটের মধ্যে পরিবর্তন/মুছতে পারবেন`
-                                : `Can change/undo for ${formatRemainingCountdown(lockState.remainingMs, false)}`}
+                              : isSubAdminOwnCountdown && subAdminModCheck
+                                ? isBn
+                                  ? `নিজের এন্ট্রি ${formatRemainingCountdown(subAdminModCheck.remainingMs, true)} মিনিটের মধ্যে পরিবর্তন/মুছতে পারবেন`
+                                  : `Own entry editable for ${formatRemainingCountdown(subAdminModCheck.remainingMs, false)}`
+                                : isBn
+                                  ? `ভুলে চাপ পড়লে ${formatRemainingCountdown(lockState.remainingMs, true)} মিনিটের মধ্যে পরিবর্তন/মুছতে পারবেন`
+                                  : `Can change/undo for ${formatRemainingCountdown(lockState.remainingMs, false)}`}
                           </span>
                           <button
                             type="button"
@@ -2044,7 +2204,7 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
                   : 'Tap any staff card for full monthly detail or press PDF / Print directly'}
               </p>
               {monthlyStats.map((item) => {
-                const showSalaryForItem = isAdmin || isOwnStaffId(item.staff.id);
+                const showSalaryForItem = isAdmin || isSubAdmin || isOwnStaffId(item.staff.id);
                 return (
                   <div
                     key={item.staff.id}
@@ -2187,8 +2347,8 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
         {/* ============================================================ */}
         {activeTab === 'leaves' && (
           <div className="space-y-4">
-            {/* Multi-Day Leave Entry Form (Admin Only — Staff mark today's Leave from Daily Attendance within 5-min window) */}
-            {isAdmin ? (
+            {/* Multi-Day Leave Entry Form (Admin & Permitted Sub-Admin) */}
+            {isAdmin || hasSubAdminAttendancePerm ? (
               <form
                 onSubmit={handleApplyLeave}
                 className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3"
@@ -2384,7 +2544,11 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
                           </div>
                         </div>
 
-                        {(isAdmin || canModifyStaffOnDate(rec.staffId, rec.date)) && (
+                        {(isAdmin ||
+                          (isSubAdmin
+                            ? hasSubAdminAttendancePerm &&
+                              canModifyOwnedRecord(rec, user, 'staffAttendance', nowMs).allowed
+                            : canModifyStaffOnDate(rec.staffId, rec.date))) && (
                           <button
                             type="button"
                             onClick={() => {
@@ -2420,10 +2584,18 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
                             <button
                               type="button"
                               onClick={async () => {
-                                const liveLock = getStaffAttendanceLockState(rec, isAdmin, Date.now());
-                                if (!canModifyStaffOnDate(rec.staffId, rec.date) || (!isAdmin && liveLock.locked)) {
-                                  setConfirmDeleteLeaveId(null);
-                                  return;
+                                const liveNow = Date.now();
+                                if (isSubAdmin) {
+                                  if (!hasSubAdminAttendancePerm || !canModifyOwnedRecord(rec, user, 'staffAttendance', liveNow).allowed) {
+                                    setConfirmDeleteLeaveId(null);
+                                    return;
+                                  }
+                                } else {
+                                  const liveLock = getStaffAttendanceLockState(rec, isAdmin, liveNow);
+                                  if (!canModifyStaffOnDate(rec.staffId, rec.date) || (!isAdmin && liveLock.locked)) {
+                                    setConfirmDeleteLeaveId(null);
+                                    return;
+                                  }
                                 }
                                 await onDeleteAttendance(rec.id);
                                 setConfirmDeleteLeaveId(null);
@@ -2456,15 +2628,30 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
           selectedYear={selectedYear}
           todayIso={todayIso}
           isOwnProfile={isOwnStaffId(selectedDetailStaff.id)}
-          canViewSalary={isAdmin || isOwnStaffId(selectedDetailStaff.id)}
-          canDeleteDate={(dateStr) => canModifyStaffOnDate(selectedDetailStaff.id, dateStr)}
+          canViewSalary={isAdmin || isSubAdmin || isOwnStaffId(selectedDetailStaff.id)}
+          canDeleteDate={(dateStr) => {
+            if (isAdmin) return true;
+            if (isSubAdmin) {
+              const ex = getRecordForStaffOnDate(selectedDetailStaff.id, dateStr);
+              return Boolean(
+                hasSubAdminAttendancePerm &&
+                ex &&
+                canModifyOwnedRecord(ex, user, 'staffAttendance', nowMs).allowed
+              );
+            }
+            return canModifyStaffOnDate(selectedDetailStaff.id, dateStr);
+          }}
           onChangeMonth={(mIdx, yr) => {
             setSelectedMonthIdx(mIdx);
             setSelectedYear(yr);
           }}
           onDeleteAttendance={async (recordId: string) => {
             const rec = attendanceRecords.find((r) => r.id === recordId);
-            if (!isAdmin && rec) {
+            if (isSubAdmin && rec) {
+              if (!hasSubAdminAttendancePerm || !canModifyOwnedRecord(rec, user, 'staffAttendance', Date.now()).allowed) {
+                return;
+              }
+            } else if (!isAdmin && rec) {
               const liveLock = getStaffAttendanceLockState(rec, false, Date.now());
               if (rec.date !== todayIso || rec.staffId !== matchedOwnStaff?.id || liveLock.locked) {
                 return;
@@ -2487,7 +2674,7 @@ export const StaffAttendanceModal: React.FC<StaffAttendanceModalProps> = ({
         selectedMonthIdx={selectedMonthIdx}
         selectedYear={selectedYear}
         canViewSalary={Boolean(
-          printPreviewStaff && (isAdmin || isOwnStaffId(printPreviewStaff.id))
+          printPreviewStaff && (isAdmin || isSubAdmin || isOwnStaffId(printPreviewStaff.id))
         )}
         lang={lang}
         onClose={() => closeSubViewViaBack(() => setPrintPreviewStaffId(null))}

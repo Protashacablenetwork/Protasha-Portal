@@ -103,6 +103,7 @@ export interface InventoryItem {
   location?: string;
   notes?: string;
   recordedBy?: string;
+  createdAt?: string;
   updatedAt?: string;
 }
 

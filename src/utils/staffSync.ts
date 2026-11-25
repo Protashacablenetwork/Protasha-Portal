@@ -2,7 +2,14 @@ import { AppUser, StaffAccount, StaffSupportSession, UserSession } from '../type
 import { loadFirebase, loadFirestore, reportCloudError, CloudOperationType } from './cloudBridge';
 import { safeStorage } from './safeStorage';
 import { normalizePhoneNumber } from './permissions';
-import { isActualStaffAccount } from './ownerDueSync';
+import {
+  NonStaffUserRef,
+  isActualStaffAccount,
+  isOwnerRoleAccount,
+  isSubAdminOrAdminAccountMatch,
+  isSubAdminOrAdminRoleText,
+  setNonStaffUserRefs
+} from './ownerDueSync';
 
 const toSafeNumber = (val: unknown, fallback = 0): number => {
   const n = Number(val);
@@ -144,12 +151,13 @@ export async function deleteSingleStaffFromCloud(
 }
 
 /**
- * Automatically mirrors a `sub-admin` or `staff` account created/updated in User Management
- * into the unified Firestore `staff` directory so it appears immediately across Staff Accounts,
- * Staff Attendance, Support Tickets, and Ay-Byay Payroll without duplicates.
+ * Automatically mirrors ONLY `staff` accounts created/updated in User Management
+ * into the unified Firestore `staff` directory. Never adds `sub-admin`, `admin`, or `user`
+ * accounts to the staff directory, and cleans up any previously auto-synced entry when
+ * a user is created/updated as `sub-admin` or changed away from `staff`.
  */
 export async function syncStaffOrSubAdminUserToDirectory(appUser: AppUser): Promise<void> {
-  if (!appUser || (appUser.role !== 'sub-admin' && appUser.role !== 'staff')) return;
+  if (!appUser) return;
 
   let existingStaffList = readCachedStaffAccounts();
   try {
@@ -174,12 +182,62 @@ export async function syncStaffOrSubAdminUserToDirectory(appUser: AppUser): Prom
     return userPhoneNorm.length >= 6 && sPhoneNorm === userPhoneNorm;
   });
 
+  // Never add Sub-Admins (or regular Users/Admins) to the Staff Directory.
+  // If an old auto-synced entry exists from before, delete it (if 0 dues/txns) or mark as non-staff.
+  if (appUser.role !== 'staff') {
+    if (existingMatch) {
+      const roleLower = String(existingMatch.role || '').toLowerCase();
+      const isSyncedSubAdminRole = isSubAdminOrAdminRoleText(existingMatch);
+      const isSameUserDoc = String(existingMatch.id) === String(appUser.id);
+      const isOwnerOrCustomer =
+        roleLower.includes('মালিক') ||
+        roleLower.includes('অংশীদার') ||
+        roleLower.includes('owner') ||
+        roleLower.includes('partner') ||
+        roleLower.includes('সদস্য') ||
+        roleLower.includes('গ্রাহক') ||
+        roleLower.includes('customer') ||
+        roleLower.includes('member');
+
+      if (
+        !isOwnerOrCustomer &&
+        (appUser.role === 'sub-admin' || appUser.role === 'admin' || isSyncedSubAdminRole || isSameUserDoc)
+      ) {
+        const hasDueLedger =
+          (Number(existingMatch.totalDue) || 0) > 0 ||
+          (Number(existingMatch.totalCollected) || 0) > 0 ||
+          (Array.isArray(existingMatch.transactions) && existingMatch.transactions.length > 0);
+
+        if (!hasDueLedger) {
+          await deleteSingleStaffFromCloud(existingMatch.id, existingStaffList);
+        } else {
+          await upsertSingleStaffToCloud(
+            {
+              ...existingMatch,
+              role:
+                appUser.role === 'sub-admin'
+                  ? 'সাব-অ্যাডমিন'
+                  : appUser.role === 'admin'
+                  ? 'অ্যাডমিন'
+                  : 'অন্যান্য',
+              updatedAt: new Date().toISOString()
+            },
+            existingStaffList
+          );
+        }
+      }
+    }
+    return;
+  }
+
   if (existingMatch) {
+    const shouldNormalizeRole = isSubAdminOrAdminRoleText(existingMatch);
     await upsertSingleStaffToCloud(
       {
         ...existingMatch,
         name: appUser.name || existingMatch.name,
         phone: appUser.phone || existingMatch.phone,
+        role: shouldNormalizeRole ? 'স্টাফ' : existingMatch.role || 'স্টাফ',
         avatarUrl: appUser.avatarUrl || existingMatch.avatarUrl || '',
         isActive: appUser.status !== 'suspended',
         updatedAt: new Date().toISOString()
@@ -192,7 +250,7 @@ export async function syncStaffOrSubAdminUserToDirectory(appUser: AppUser): Prom
         id: sanitizeStaffId(appUser.id),
         name: appUser.name,
         phone: appUser.phone || '',
-        role: appUser.role === 'staff' ? 'স্টাফ' : 'সাব-এডমিন / স্টাফ',
+        role: 'স্টাফ',
         avatarUrl: appUser.avatarUrl || '',
         baseSalary: 0,
         totalDue: 0,
@@ -374,4 +432,71 @@ export async function syncStaffPinEverywhere(params: {
   } catch {}
 }
 
+export function syncUsersCollectionToNonStaffRefs(
+  usersList: Array<{ id?: string; phone?: string; role?: string }>
+): NonStaffUserRef[] {
+  const refs: NonStaffUserRef[] = [];
+  (usersList || []).forEach((u) => {
+    if (!u || (u.role !== 'sub-admin' && u.role !== 'admin')) return;
+    refs.push({
+      id: String(u.id || '').trim(),
+      phoneNorm: normalizePhoneNumber(u.phone),
+      role: u.role
+    });
+  });
+  setNonStaffUserRefs(refs);
+  return refs;
+}
 
+const reconciledStaffCleanupIds = new Set<string>();
+
+export async function reconcileSubAdminsOutOfStaffDirectory(
+  usersList: Array<{ id?: string; phone?: string; role?: string }>,
+  staffList: StaffAccount[]
+): Promise<void> {
+  const refs = syncUsersCollectionToNonStaffRefs(usersList);
+  if (!Array.isArray(staffList) || staffList.length === 0) return;
+
+  let workingList = [...staffList];
+  for (const acc of staffList) {
+    if (!acc || !acc.id || isOwnerRoleAccount(acc)) continue;
+    const roleLower = String(acc.role || '').toLowerCase();
+    const isCustomerOrMember =
+      roleLower.includes('সদস্য') ||
+      roleLower.includes('গ্রাহক') ||
+      roleLower.includes('customer') ||
+      roleLower.includes('member');
+    if (isCustomerOrMember) continue;
+
+    if (!isSubAdminOrAdminAccountMatch(acc, refs)) continue;
+
+    const cleanupKey = `${acc.id}:${acc.role || ''}`;
+    if (reconciledStaffCleanupIds.has(cleanupKey)) continue;
+    reconciledStaffCleanupIds.add(cleanupKey);
+
+    const hasDueLedger =
+      (Number(acc.totalDue) || 0) > 0 ||
+      (Number(acc.totalCollected) || 0) > 0 ||
+      (Array.isArray(acc.transactions) && acc.transactions.length > 0);
+
+    if (!hasDueLedger) {
+      workingList = await deleteSingleStaffFromCloud(acc.id, workingList).catch(() => workingList);
+    } else if (!isSubAdminOrAdminRoleText(acc)) {
+      const matchedRef = refs.find(
+        (r) =>
+          (r.id && r.id === String(acc.id).trim()) ||
+          (r.phoneNorm.length >= 6 && r.phoneNorm === normalizePhoneNumber(acc.phone))
+      );
+      const nextRole = matchedRef?.role === 'admin' ? 'অ্যাডমিন' : 'সাব-অ্যাডমিন';
+      const res = await upsertSingleStaffToCloud(
+        {
+          ...acc,
+          role: nextRole,
+          updatedAt: new Date().toISOString()
+        },
+        workingList
+      ).catch(() => null);
+      if (res?.updatedList) workingList = res.updatedList;
+    }
+  }
+}

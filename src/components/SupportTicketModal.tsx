@@ -48,11 +48,13 @@ import { isActualStaffAccount } from '../utils/ownerDueSync';
 import { toBengaliNumber } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import {
+  canModifyOwnedRecord,
   canModifySupportTicket,
   formatRemainingCountdown,
   hasSubAdminPermission,
   isSupportTicketOwner,
   normalizePhoneNumber,
+  SUB_ADMIN_EDIT_WINDOW_MS,
   SUPPORT_TICKET_EDIT_WINDOW_MS
 } from '../utils/permissions';
 import {
@@ -241,12 +243,26 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
     [hasSubAdminSupportPerm, user, staffAccounts]
   );
   const isMainPageStaff = hasSubAdminSupportPerm;
-  const isManualTempStaffSession = Boolean(staffSession) && !isMainPageStaff && !isAdmin && !isStaffRoleUser;
+  const isManualTempStaffSession =
+    Boolean(staffSession) && !isMainPageStaff && !isAdmin && !isStaffRoleUser && !isSubAdminUser;
   const isStaffActive = isMainPageStaff || isManualTempStaffSession;
-  const canViewAllTickets = isAdmin || isStaffActive;
-  const canChangeStatus = isAdmin || isStaffActive;
-  const canDeleteAnyMessage = isAdmin || isStaffActive;
-  const canMutateTickets = isAdmin || isStaffActive;
+  const canViewAllTickets = isAdmin || isSubAdminUser || isStaffRoleUser || isManualTempStaffSession;
+  const canMutateTickets = isAdmin || hasSubAdminSupportPerm || isManualTempStaffSession;
+  const canChangeStatusForTicket = (ticket: SupportTicket) => {
+    if (isAdmin || isManualTempStaffSession) return true;
+    if (!hasSubAdminSupportPerm) return false;
+    return canModifySupportTicket(ticket, user, null, nowTick).allowed;
+  };
+  const canDeleteMessageForUser = (msg: SupportTicketMessage) => {
+    if (isAdmin || isManualTempStaffSession) return true;
+    if (!hasSubAdminSupportPerm) return false;
+    return canModifyOwnedRecord(
+      { createdAt: msg.createdAt, senderId: msg.senderId },
+      user,
+      'supportTickets',
+      nowTick
+    ).allowed;
+  };
 
   const activeActorName = (
     (isManualTempStaffSession ? staffSession?.name : undefined) ||
@@ -278,9 +294,9 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
     ''
   ).slice(0, 32);
 
-  // Clear staff session automatically if Admin is logged in or user signs out
+  // Clear manual staff PIN session automatically if Admin, Sub-Admin, Staff role, or logged out
   useEffect(() => {
-    if (isAdmin || !user) {
+    if (isAdmin || isSubAdminUser || isStaffRoleUser || !user) {
       if (staffSession) {
         setStaffSession(null);
         try {
@@ -288,7 +304,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
         } catch {}
       }
     }
-  }, [isAdmin, user, staffSession]);
+  }, [isAdmin, isSubAdminUser, isStaffRoleUser, user, staffSession]);
 
   // Listen to Firestore settings/staff_support_auth for Staff Login PIN configuration
   useEffect(() => {
@@ -321,16 +337,17 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
     return tickets.filter((t) => isSupportTicketOwner(t, user, staffSession));
   }, [tickets, canViewAllTickets, user, isVisitor, staffSession]);
 
-  // Tick every second only when a non-admin has at least one owned ticket within the 10-minute edit window
+  // Tick every second only when a non-admin has at least one owned ticket within the edit window (30m for Sub-Admin, 10m otherwise)
   const hasActiveCountdownTicket = useMemo(() => {
     if (!isOpen || isAdmin) return false;
     const now = Date.now();
+    const activeWindowMs = isSubAdminUser ? SUB_ADMIN_EDIT_WINDOW_MS : SUPPORT_TICKET_EDIT_WINDOW_MS;
     return visibleTickets.some((t) => {
       if (!isSupportTicketOwner(t, user, staffSession)) return false;
       const createdMs = t.createdAt ? new Date(t.createdAt).getTime() : 0;
-      return createdMs > 0 && now - createdMs <= SUPPORT_TICKET_EDIT_WINDOW_MS + 2000;
+      return createdMs > 0 && now - createdMs <= activeWindowMs + 2000;
     });
-  }, [isOpen, isAdmin, visibleTickets, user, staffSession]);
+  }, [isOpen, isAdmin, isSubAdminUser, visibleTickets, user, staffSession]);
 
   useEffect(() => {
     if (!hasActiveCountdownTicket) return;
@@ -682,7 +699,8 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
   };
 
   const handleDeleteChatMessage = async (msgId: string) => {
-    if (!activeDetailTicket || !canDeleteAnyMessage) return;
+    const targetMsg = chatMessages.find((m) => m.id === msgId);
+    if (!activeDetailTicket || !targetMsg || !canDeleteMessageForUser(targetMsg)) return;
     sounds.playTap();
     setChatMessages((prev) => prev.filter((m) => m.id !== msgId));
     setConfirmDeleteMsgId(null);
@@ -946,8 +964,12 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
       if (!check.allowed) {
         setFormError(
           isBn
-            ? 'অভিযোগ দাখিলের ১০ মিনিট অতিক্রান্ত হয়েছে। এখন শুধুমাত্র অ্যাডমিন এটি পরিবর্তন করতে পারবেন।'
-            : 'The 10-minute edit window has expired. Only Admin can modify this ticket now.'
+            ? isSubAdminUser
+              ? 'নিজের অভিযোগ দাখিলের ৩০ মিনিট অতিক্রান্ত হয়েছে। এখন শুধুমাত্র অ্যাডমিন এটি পরিবর্তন করতে পারবেন।'
+              : 'অভিযোগ দাখিলের ১০ মিনিট অতিক্রান্ত হয়েছে। এখন শুধুমাত্র অ্যাডমিন এটি পরিবর্তন করতে পারবেন।'
+            : isSubAdminUser
+              ? 'The 30-minute own-entry edit window has expired. Only Admin can modify this ticket now.'
+              : 'The 10-minute edit window has expired. Only Admin can modify this ticket now.'
         );
         return;
       }
@@ -959,11 +981,12 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
       return;
     }
 
+    const allowStatusAndAssign = editingTicket ? canChangeStatusForTicket(editingTicket) : canMutateTickets;
     setIsSaving(true);
     setFormError('');
     try {
       const nowIso = new Date().toISOString();
-      const matchedStaff = canChangeStatus
+      const matchedStaff = allowStatusAndAssign
         ? staffAccounts.find((s) => s.id === assignedStaffId)
         : undefined;
       const nextNum = 1001 + tickets.length + Math.floor(Math.random() * 9);
@@ -1007,18 +1030,18 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
         category,
         priority,
         status: editingTicket ? editingTicket.status : 'pending',
-        assignedStaffId: canChangeStatus
+        assignedStaffId: allowStatusAndAssign
           ? matchedStaff
             ? matchedStaff.id
             : ''
           : editingTicket?.assignedStaffId || '',
-        assignedStaffName: canChangeStatus
+        assignedStaffName: allowStatusAndAssign
           ? matchedStaff
             ? matchedStaff.name
             : ''
           : editingTicket?.assignedStaffName || '',
         description: description.trim().slice(0, 2000),
-        resolutionNote: canChangeStatus
+        resolutionNote: allowStatusAndAssign
           ? resolutionNote.trim().slice(0, 2000)
           : editingTicket?.resolutionNote || '',
         createdBy: (editingTicket?.createdBy || actorName).slice(0, 128),
@@ -1055,7 +1078,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
     noteOverride?: string,
     resolverNameOverride?: string
   ) => {
-    if (isVisitor || !canChangeStatus) return;
+    if (isVisitor || !canChangeStatusForTicket(ticket)) return;
     sounds.playTap();
     const nowIso = new Date().toISOString();
     const actorName = activeActorName.slice(0, 150);
@@ -1137,7 +1160,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
   };
 
   const handleTogglePublicTracking = async (ticket: SupportTicket, enabled: boolean) => {
-    if (isVisitor || !canChangeStatus) return;
+    if (isVisitor || !canChangeStatusForTicket(ticket)) return;
     const updated: SupportTicket = {
       ...ticket,
       isPublicTrackingEnabled: enabled,
@@ -1147,7 +1170,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
   };
 
   const handleQuickAssign = async (ticket: SupportTicket, staffId: string) => {
-    if (isVisitor || !canChangeStatus) return;
+    if (isVisitor || !canChangeStatusForTicket(ticket)) return;
     sounds.playTap();
     const staff = staffAccounts.find((s) => s.id === staffId);
     const nowIso = new Date().toISOString();
@@ -1291,14 +1314,14 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
             </div>
           </div>
 
-          {/* 4-Step Progress Stepper inside Detail Header (Interactive for Admin & Staff only) */}
+          {/* 4-Step Progress Stepper inside Detail Header (Interactive for Admin, manual Staff PIN, or Sub-Admin on own ticket within 30m) */}
           <TicketProgressStepper
             status={activeDetailTicket.status}
             lang={lang}
             compact
-            interactive={canChangeStatus}
+            interactive={canChangeStatusForTicket(activeDetailTicket)}
             onSelectStatus={(nextSt) => {
-              if (!canChangeStatus) return;
+              if (!canChangeStatusForTicket(activeDetailTicket)) return;
               if (nextSt === 'resolved' && activeDetailTicket.status !== 'resolved') {
                 setDetailTab('tracking');
                 setResolvingTicketId(activeDetailTicket.id);
@@ -1462,7 +1485,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                           }`}
                         >
                           <span>{formatChatTime(msg.createdAt)}</span>
-                          {canDeleteAnyMessage && (
+                          {canDeleteMessageForUser(msg) && (
                             <button
                               type="button"
                               onClick={() =>
@@ -1476,7 +1499,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                           )}
                         </div>
 
-                        {confirmDeleteMsgId === msg.id && (
+                        {confirmDeleteMsgId === msg.id && canDeleteMessageForUser(msg) && (
                           <div className="mt-2 pt-2 border-t border-white/20 dark:border-slate-700 flex items-center justify-end gap-1.5">
                             <button
                               type="button"
@@ -1605,7 +1628,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
             <PublicTrackingShareCard
               ticket={activeDetailTicket}
               lang={lang}
-              canToggleVisibility={canChangeStatus}
+              canToggleVisibility={canChangeStatusForTicket(activeDetailTicket)}
               onToggleVisibility={(enabled) => handleTogglePublicTracking(activeDetailTicket, enabled)}
               onPreviewPublicLink={
                 onPreviewPublicLink
@@ -1680,8 +1703,8 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
             </button>
           )}
 
-          {/* Dedicated Staff Login Button (for non-admin / non-staff users) */}
-          {!canViewAllTickets && !isVisitor && !isStaffRoleUser && (
+          {/* Dedicated Staff Login Button (only for regular users without view-all access) */}
+          {!canViewAllTickets && !isVisitor && !isStaffRoleUser && !isSubAdminUser && (
             <button
               type="button"
               onClick={openStaffLoginModal}
@@ -1709,7 +1732,33 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
       {/* Main Scrollable Content */}
       <div className="flex-1 overflow-y-auto px-3.5 sm:px-6 lg:px-8 py-4 space-y-4 pb-24 w-full">
         {/* Role Access & Staff Mode Status Strip */}
-        {isStaffActive && !isAdmin ? (
+        {isSubAdminUser && !isAdmin ? (
+          <div className="p-3 rounded-2xl bg-indigo-50/90 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/70 flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
+              <ShieldCheck className="w-4.5 h-4.5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-extrabold text-indigo-950 dark:text-indigo-200 truncate">
+                {hasSubAdminSupportPerm
+                  ? isBn
+                    ? `সাব-অ্যাডমিন সাপোর্ট অ্যাক্সেস: ${activeActorName}`
+                    : `Sub-Admin Support Access: ${activeActorName}`
+                  : isBn
+                    ? `সাব-অ্যাডমিন (শুধু দেখার অনুমতি): ${activeActorName}`
+                    : `Sub-Admin (View-Only): ${activeActorName}`}
+              </p>
+              <p className="text-[11px] font-medium text-indigo-700 dark:text-indigo-300">
+                {hasSubAdminSupportPerm
+                  ? isBn
+                    ? 'সকল অভিযোগ দেখতে পারবেন; নতুন টিকেট যোগ ও ৩০ মিনিট নিজের টিকেট এডিট/ডিলিট করতে পারবেন (অন্যের ডেটা পরিবর্তন নয়)'
+                    : 'View all tickets, create new tickets, and edit/delete your own entries within 30 minutes'
+                  : isBn
+                    ? 'সকল অভিযোগ দেখতে পারবেন; নতুন টিকেট এন্ট্রির অনুমতি অ্যাডমিন থেকে চালু করা নেই'
+                    : 'All tickets visible; ticket creation permission is disabled by Admin'}
+              </p>
+            </div>
+          </div>
+        ) : isStaffActive && !isAdmin ? (
           <div className="p-3 rounded-2xl bg-indigo-50/90 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/70 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
@@ -1749,7 +1798,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                   : 'You are in Read-Only mode. Regular users cannot add or modify support tickets.'}
               </p>
             </div>
-            {!isStaffRoleUser && (
+            {!isStaffRoleUser && !isSubAdminUser && (
               <button
                 type="button"
                 onClick={openStaffLoginModal}
@@ -2035,7 +2084,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                     </span>
                   </div>
 
-                  {/* 10-Minute Edit/Delete Window Status Banner for Non-Admin Users & Staff */}
+                  {/* Edit/Delete Window Status Banner for Non-Admin Users & Sub-Admin */}
                   {!isAdmin && !isVisitor && (
                     modCheck.allowed ? (
                       <div className="px-2.5 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/35 border border-amber-200/80 dark:border-amber-800/60 flex items-center justify-between gap-2 text-[11px]">
@@ -2054,22 +2103,26 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                         <Lock className="w-3 h-3 shrink-0 text-slate-500" />
                         <span>
                           {isBn
-                            ? '১০ মিনিট অতিক্রান্ত — এখন শুধু অ্যাডমিন এডিট/ডিলিট নিয়ন্ত্রণ করতে পারবেন'
-                            : '10-minute window expired — Only Admin can edit or delete now'}
+                            ? isSubAdminUser
+                              ? '৩০ মিনিট অতিক্রান্ত — এখন শুধু অ্যাডমিন এডিট/ডিলিট নিয়ন্ত্রণ করতে পারবেন'
+                              : '১০ মিনিট অতিক্রান্ত — এখন শুধু অ্যাডমিন এডিট/ডিলিট নিয়ন্ত্রণ করতে পারবেন'
+                            : isSubAdminUser
+                              ? '30-minute window expired — Only Admin can edit or delete now'
+                              : '10-minute window expired — Only Admin can edit or delete now'}
                         </span>
                       </div>
                     ) : null
                   )}
 
-                  {/* 4-Step Visual Progress Tracker on Every Card (Interactive for Admin & Staff only) */}
+                  {/* 4-Step Visual Progress Tracker on Every Card */}
                   <div className="pt-1 pb-0.5">
                     <TicketProgressStepper
                       status={ticket.status}
                       lang={lang}
                       compact
-                      interactive={canChangeStatus}
+                      interactive={canChangeStatusForTicket(ticket)}
                       onSelectStatus={(nextSt) => {
-                        if (!canChangeStatus) return;
+                        if (!canChangeStatusForTicket(ticket)) return;
                         if (nextSt === 'resolved' && ticket.status !== 'resolved') {
                           setResolvingTicketId(ticket.id);
                           setQuickResolveNote(ticket.resolutionNote || '');
@@ -2217,7 +2270,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                     <div className="flex items-center gap-2 min-w-0">
                       <Wrench className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      {canChangeStatus ? (
+                      {canChangeStatusForTicket(ticket) ? (
                         <select
                           value={ticket.assignedStaffId || ''}
                           onChange={(e) => handleQuickAssign(ticket, e.target.value)}
@@ -2403,8 +2456,8 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                     </div>
                   )}
 
-                  {/* 4-Stage One-Tap Status Buttons (Admin & Staff only) */}
-                  {canChangeStatus && (
+                  {/* 4-Stage One-Tap Status Buttons */}
+                  {canChangeStatusForTicket(ticket) && (
                     <div className="grid grid-cols-4 gap-1.5 pt-0.5">
                       {TICKET_STAGES.map((st) => {
                         const isActive = ticket.status === st.id;
@@ -2586,7 +2639,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                 </div>
               </div>
 
-              {canChangeStatus && (
+              {(editingTicket ? canChangeStatusForTicket(editingTicket) : canMutateTickets) && (
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                     {isBn ? 'দায়িত্বপ্রাপ্ত টেকনিশিয়ান / স্টাফ' : 'Assign Technician / Staff'}
@@ -2619,7 +2672,7 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                 />
               </div>
 
-              {editingTicket && canChangeStatus && (
+              {editingTicket && canChangeStatusForTicket(editingTicket) && (
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                     {isBn ? 'সমাধান নোট' : 'Resolution Note'}
@@ -2639,8 +2692,12 @@ export const SupportTicketModal: React.FC<SupportTicketModalProps> = ({
                   <Clock className="w-3.5 h-3.5 shrink-0" />
                   <span>
                     {isBn
-                      ? 'অভিযোগ দাখিলের ১০ মিনিটের মধ্যে এডিট/ডিলিট করতে পারবেন — এরপর শুধু অ্যাডমিন নিয়ন্ত্রণ করবেন।'
-                      : 'You can edit/delete within 10 minutes of submission — after that only Admin controls it.'}
+                      ? isSubAdminUser
+                        ? 'অভিযোগ দাখিলের ৩০ মিনিটের মধ্যে আপনার নিজের টিকেট এডিট ও স্থায়ীভাবে মুছতে পারবেন — এরপর শুধু অ্যাডমিন নিয়ন্ত্রণ করবেন।'
+                        : 'অভিযোগ দাখিলের ১০ মিনিটের মধ্যে এডিট/ডিলিট করতে পারবেন — এরপর শুধু অ্যাডমিন নিয়ন্ত্রণ করবেন।'
+                      : isSubAdminUser
+                        ? 'You can edit/delete your own submission within 30 minutes — after that only Admin controls it.'
+                        : 'You can edit/delete within 10 minutes of submission — after that only Admin controls it.'}
                   </span>
                 </div>
               )}

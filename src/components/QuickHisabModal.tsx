@@ -41,6 +41,12 @@ import { useSubViewBack } from '../utils/useSubViewBack';
 import { showConfirm } from '../utils/uiFeedback';
 import { computeOwnersDividendLedger } from '../utils/ownerDueSync';
 import { OwnerDetailView } from './OwnerDetailView';
+import {
+  canModifyOwnedRecord,
+  getActorStamp,
+  hasSubAdminPermission,
+  isSubAdmin as checkIsSubAdmin
+} from '../utils/permissions';
 
 interface QuickHisabModalProps {
   isOpen: boolean;
@@ -90,6 +96,25 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
 }) => {
   const isBn = lang === 'bn';
   const isAdmin = user?.role === 'admin';
+  const isSubAdmin = checkIsSubAdmin(user);
+  const canAddOwner = isAdmin || (isSubAdmin && hasSubAdminPermission(user, 'quickHisab'));
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    if (!isOpen || !isSubAdmin) return;
+    setNowMs(Date.now());
+    const id = window.setInterval(() => setNowMs(Date.now()), 15000);
+    return () => window.clearInterval(id);
+  }, [isOpen, isSubAdmin]);
+
+  const canEditThisOwner = useCallback(
+    (owner: QuickHisabOwner | null | undefined) => {
+      if (!owner) return false;
+      if (isAdmin) return true;
+      return canModifyOwnedRecord(owner, user, 'quickHisab', nowMs).allowed;
+    },
+    [isAdmin, user, nowMs]
+  );
 
   // Month selection (e.g. '2026-11' or current month)
   const currentMonthKey = new Date().toISOString().substring(0, 7);
@@ -506,7 +531,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
 
   // Persist owners changes
   const saveUpdatedOwners = (newOwners: QuickHisabOwner[]) => {
-    const prevIds = new Set(owners.map(o => String(o.id)));
+    const prevById = new Map(owners.map(o => [String(o.id), o]));
     const nextIds = new Set(newOwners.map(o => String(o.id)));
 
     setOwners(newOwners);
@@ -514,25 +539,32 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
       safeStorage.setItem('protyasha_quick_hisab_owners', JSON.stringify(newOwners));
     } catch {}
 
-    // Save individual owner documents in dedicated collection 'quick_hisab_owners'
+    // Save only added/changed owner documents that the current user is allowed to write
     newOwners.forEach(o => {
-      safeSetDoc(doc(db, 'quick_hisab_owners', String(o.id)), {
-        ...o,
-        id: String(o.id)
-      }).catch(() => {});
+      const prev = prevById.get(String(o.id));
+      const changed = !prev || JSON.stringify(prev) !== JSON.stringify(o);
+      const allowed = prev ? canEditThisOwner(prev) : canAddOwner;
+      if (changed && allowed) {
+        safeSetDoc(doc(db, 'quick_hisab_owners', String(o.id)), {
+          ...o,
+          id: String(o.id)
+        }).catch(() => {});
+      }
     });
 
-    // Delete any removed owners from collection
-    prevIds.forEach(id => {
-      if (!nextIds.has(id)) {
+    // Delete any removed owners that the user is allowed to remove
+    prevById.forEach((prevOwner, id) => {
+      if (!nextIds.has(id) && canEditThisOwner(prevOwner)) {
         safeDeleteDoc(doc(db, 'quick_hisab_owners', id)).catch(() => {});
       }
     });
 
-    safeSetDoc(doc(db, 'settings', 'owners_meta'), {
-      initialized: true,
-      updatedAt: new Date().toISOString()
-    }).catch(() => {});
+    if (isAdmin) {
+      safeSetDoc(doc(db, 'settings', 'owners_meta'), {
+        initialized: true,
+        updatedAt: new Date().toISOString()
+      }).catch(() => {});
+    }
 
     if (onSaveOwners) {
       onSaveOwners(newOwners);
@@ -541,7 +573,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
 
   // Open editor for adding new owner
   const handleOpenAddOwner = () => {
-    if (!isAdmin) return;
+    if (!canAddOwner) return;
     sounds.playTap();
     setEditingOwner(null);
     setFormName(isBn ? `মালিক ${owners.length + 1}` : `Owner ${owners.length + 1}`);
@@ -555,7 +587,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
 
   // Open editor for editing existing owner
   const handleOpenEditOwner = (owner: QuickHisabOwner) => {
-    if (!isAdmin) return;
+    if (!canEditThisOwner(owner)) return;
     sounds.playTap();
     setEditingOwner(owner);
     setFormName(owner.name);
@@ -569,15 +601,20 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
 
   // Save Add/Edit
   const handleSaveOwnerForm = () => {
-    if (!isAdmin) return;
+    if (editingOwner) {
+      if (!canEditThisOwner(editingOwner)) return;
+    } else if (!canAddOwner) {
+      return;
+    }
     const cleanName = formName.trim();
     if (!cleanName) return;
 
     sounds.playSuccess();
+    const nowIso = new Date().toISOString();
     let updated: QuickHisabOwner[];
 
     if (editingOwner) {
-      // Edit
+      // Edit (preserve original recordedBy & createdAt)
       updated = owners.map(o => {
         if (o.id === editingOwner.id) {
           return {
@@ -589,7 +626,8 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
             shareUnits: formShareUnits,
             avatarUrl: formAvatarUrl,
             isHalf: formShareUnits === 0.5,
-            updatedAt: new Date().toISOString()
+            createdAt: o.createdAt || nowIso,
+            updatedAt: nowIso
           };
         }
         return o;
@@ -605,8 +643,9 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
         shareUnits: formShareUnits,
         avatarUrl: formAvatarUrl,
         isHalf: formShareUnits === 0.5,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        recordedBy: getActorStamp(user),
+        createdAt: nowIso,
+        updatedAt: nowIso
       };
       updated = [...owners, newOwner];
     }
@@ -617,7 +656,8 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
 
   // Delete owner
   const handleDeleteOwner = async (id: string | number) => {
-    if (!isAdmin) return;
+    const targetOwner = owners.find(o => o.id === id);
+    if (!targetOwner || !canEditThisOwner(targetOwner)) return;
     sounds.playTap();
     const confirmed = await showConfirm({
       message: isBn ? 'এই মালিককে তালিকা থেকে মুছে ফেলতে চান?' : 'Delete this owner from the list?',
@@ -654,14 +694,15 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
 
   // Quick Photo Upload directly from owner card
   const handleQuickPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!quickUploadOwnerId || !isAdmin) return;
+    const targetOwner = owners.find(o => o.id === quickUploadOwnerId);
+    if (!quickUploadOwnerId || !targetOwner || !canEditThisOwner(targetOwner)) return;
     const file = e.target.files?.[0];
     if (!file) return;
 
     try {
       const compressed = await compressImageFile(file, 260, 0.85);
       if (compressed) {
-        const updated = owners.map(o => o.id === quickUploadOwnerId ? { ...o, avatarUrl: compressed } : o);
+        const updated = owners.map(o => o.id === quickUploadOwnerId ? { ...o, avatarUrl: compressed, updatedAt: new Date().toISOString() } : o);
         saveUpdatedOwners(updated);
         sounds.playSuccess();
       }
@@ -767,12 +808,17 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
               <h2 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white leading-tight truncate">
                 {isBn ? 'কুইক হিসাব ও লভ্যাংশ ড্যাশবোর্ড' : 'Quick Hisab & Profit Dashboard'}
               </h2>
-              {isAdmin && (
+              {isAdmin ? (
                 <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 whitespace-nowrap shrink-0">
                   <Shield className="w-3 h-3 shrink-0" />
                   {isBn ? 'এডমিন' : 'Admin'}
                 </span>
-              )}
+              ) : isSubAdmin ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-700 dark:text-indigo-400 border border-indigo-500/30 whitespace-nowrap shrink-0">
+                  <Shield className="w-3 h-3 shrink-0" />
+                  {isBn ? 'সাব-অ্যাডমিন' : 'Sub-Admin'}
+                </span>
+              ) : null}
             </div>
             <p className="text-[10px] text-slate-500 dark:text-slate-400">
               {isBn ? `মোট ${owners.length} জন মালিক (${totalShareUnits} অংশ বণ্টন)` : `${owners.length} Owners (${totalShareUnits} Parts)`}
@@ -1057,26 +1103,42 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
               </p>
             </div>
 
-            {/* Admin-only controls: Add Owner & Reset (COMPLETELY HIDDEN FOR REGULAR USERS) */}
-            {isAdmin && (
+            {/* Owner Add (Admin or permitted Sub-Admin) & Reset (Admin only) */}
+            {(canAddOwner || isAdmin) && (
               <div className="flex items-center gap-1.5">
-                <button
-                  onClick={handleOpenAddOwner}
-                  className="px-2.5 py-1.5 rounded-xl bg-[#E52E2E] text-white text-[11px] font-bold flex items-center gap-1 shadow-sm active:scale-95 transition-all"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>{isBn ? 'নতুন মালিক' : 'Add'}</span>
-                </button>
-                <button
-                  onClick={handleResetToDefault}
-                  title={isBn ? 'ডিফল্ট তালিকায় রিসেট' : 'Reset to Default'}
-                  className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                </button>
+                {canAddOwner && (
+                  <button
+                    onClick={handleOpenAddOwner}
+                    className="px-2.5 py-1.5 rounded-xl bg-[#E52E2E] text-white text-[11px] font-bold flex items-center gap-1 shadow-sm active:scale-95 transition-all"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{isBn ? 'নতুন মালিক' : 'Add'}</span>
+                  </button>
+                )}
+                {isAdmin && (
+                  <button
+                    onClick={handleResetToDefault}
+                    title={isBn ? 'ডিফল্ট তালিকায় রিসেট' : 'Reset to Default'}
+                    className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200/50 dark:hover:bg-slate-800 transition-colors"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             )}
           </div>
+
+          {isSubAdmin && (
+            <div className="px-3 py-2 rounded-xl bg-indigo-50/80 dark:bg-indigo-950/30 border border-indigo-200/70 dark:border-indigo-800/50 text-[11px] font-semibold text-indigo-800 dark:text-indigo-200">
+              {canAddOwner
+                ? isBn
+                  ? 'সাব-অ্যাডমিন: সব তথ্য দেখতে পারবেন; নতুন মালিক যোগ এবং নিজের যোগ করা মালিক ৩০ মিনিটের মধ্যে এডিট বা মুছে ফেলতে পারবেন।'
+                  : 'Sub-Admin: View all data, add new owners, and edit/delete your own entries within 30 minutes.'
+                : isBn
+                ? 'সাব-অ্যাডমিন (শুধু দেখার অনুমতি): সব হিসাব দেখতে পারবেন, তবে ডেটা এন্ট্রি বা পরিবর্তনের অনুমতি চালু নেই।'
+                : 'Sub-Admin (View-only): Full view enabled; owner entry permission is not enabled.'}
+            </div>
+          )}
 
           {/* Search bar */}
           <div className="relative">
@@ -1187,8 +1249,8 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
                             </div>
                           )}
 
-                          {/* Admin-only quick camera icon to change photo directly */}
-                          {isAdmin && (
+                          {/* Quick camera icon for Admin or Sub-Admin within 30-min own window */}
+                          {canEditThisOwner(owner) && (
                             <button
                               type="button"
                               onClick={(e) => {
@@ -1268,8 +1330,8 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
                             : (isBn ? 'প্রাপ্য লভ্যাংশ' : 'Payable')}
                         </p>
 
-                        {/* Admin Quick Edit/Delete neatly aligned without squishing owner name */}
-                        {isAdmin && (
+                        {/* Quick Edit/Delete for Admin or Sub-Admin within 30-min own-entry window */}
+                        {canEditThisOwner(owner) && (
                           <div className="flex items-center gap-1 mt-2" onClick={(e) => e.stopPropagation()}>
                             <button
                               type="button"
@@ -1346,8 +1408,8 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
 
       </div>
 
-      {/* Admin Owner Add/Edit Modal (Only accessible to Admin) */}
-      {isEditorOpen && isAdmin && (
+      {/* Owner Add/Edit Modal (Admin or permitted Sub-Admin) */}
+      {isEditorOpen && (editingOwner ? canEditThisOwner(editingOwner) : canAddOwner) && (
         <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
           <div className="bg-white dark:bg-slate-900 rounded-3xl w-full max-w-sm p-5 shadow-2xl border border-slate-100 dark:border-slate-800 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -1511,7 +1573,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
 
             {/* Action Buttons */}
             <div className="pt-2 flex gap-2">
-              {editingOwner && (
+              {editingOwner && canEditThisOwner(editingOwner) && (
                 <button
                   type="button"
                   onClick={() => handleDeleteOwner(editingOwner.id)}
@@ -1666,6 +1728,7 @@ export const QuickHisabModal: React.FC<QuickHisabModalProps> = ({
           selectedMonth={selectedMonth}
           lang={lang}
           isAdmin={isAdmin}
+          canEditOwner={canEditThisOwner(selectedOwnerBreakdown.owner)}
           user={user}
           staffAccounts={staffAccounts}
           onSaveStaffAccounts={onSaveStaffAccounts}

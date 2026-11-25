@@ -14,7 +14,7 @@ import {
   InventoryLog,
   AppNavTab
 } from './types';
-import { isActualStaffAccount } from '../../utils/ownerDueSync';
+import { isActualStaffAccount, isSubAdminOrAdminAccountMatch } from '../../utils/ownerDueSync';
 import { Header } from './components/Header';
 import { StatsCards } from './components/StatsCards';
 import { DashboardOverview } from './components/DashboardOverview';
@@ -54,10 +54,17 @@ import {
   sanitizeStaffForFirestore,
   upsertSingleStaffToCloud,
   deleteSingleStaffFromCloud,
-  broadcastStaffAccounts
+  broadcastStaffAccounts,
+  syncUsersCollectionToNonStaffRefs,
+  reconcileSubAdminsOutOfStaffDirectory
 } from '../../utils/staffSync';
-import { hasSubAdminPermission } from '../../utils/permissions';
-import { staffDb, safeSetDoc, safeDeleteDoc, handleFirestoreError, OperationType } from '../../utils/firebase';
+import {
+  OwnedRecordLike,
+  canModifyOwnedRecord,
+  getActorStamp,
+  hasSubAdminPermission
+} from '../../utils/permissions';
+import { db, staffDb, safeSetDoc, safeDeleteDoc, handleFirestoreError, OperationType } from '../../utils/firebase';
 import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { safeStorage } from '../../utils/safeStorage';
 
@@ -123,9 +130,56 @@ export function AyByayPortal({
     }
   }, [propStaffAccounts]);
 
-  // Edit access strictly granted to Main Admin or Sub-Admin with 'ayByay' permission.
+  // Entry creation access strictly granted to Main Admin or Sub-Admin with 'ayByay' permission.
   // Regular users, attendance-only staff, and unpermitted sub-admins are strictly read-only.
-  const canEdit = isAdmin || (isSubAdmin && hasSubAdminPermission(currentUser, 'ayByay'));
+  const canCreateAyByay = isAdmin || (isSubAdmin && hasSubAdminPermission(currentUser, 'ayByay'));
+  const actorStamp = getActorStamp(currentUser) || (isAdmin ? 'admin-primary' : '');
+
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  useEffect(() => {
+    if (!isSubAdmin) return;
+    const timer = setInterval(() => setNowMs(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, [isSubAdmin]);
+
+  const getModifyState = useCallback(
+    (record: OwnedRecordLike | null | undefined, atMs: number = nowMs) => {
+      if (isAdmin) {
+        return {
+          allowed: true,
+          isOwner: true,
+          expired: false,
+          remainingMs: Number.POSITIVE_INFINITY
+        };
+      }
+      return canModifyOwnedRecord(record, currentUser, 'ayByay', atMs);
+    },
+    [isAdmin, currentUser, nowMs]
+  );
+
+  const canModifyRecord = useCallback(
+    (record: OwnedRecordLike | null | undefined, atMs: number = nowMs) =>
+      getModifyState(record, atMs).allowed,
+    [getModifyState]
+  );
+
+  const handlePermissionDenied = useCallback(
+    (customMsg?: string) => {
+      if (isAdmin || isSubAdmin || userRole === 'staff') {
+        setSyncToast({
+          message: customMsg || 'আপনার এই মডিউলে ডেটা পরিবর্তন করার অনুমতি নেই',
+          type: 'error'
+        });
+        return;
+      }
+      setIsAdminLoginModalOpen(true);
+      setSyncToast({
+        message: customMsg || 'নতুন এন্ট্রি করার জন্য প্রথমে এডমিন লগইন করুন',
+        type: 'error'
+      });
+    },
+    [isAdmin, isSubAdmin, userRole]
+  );
 
   useEffect(() => {
     const handleStaffChange = (e: any) => {
@@ -140,6 +194,46 @@ export function AyByayPortal({
     };
     window.addEventListener('staff-data-changed', handleStaffChange);
     return () => window.removeEventListener('staff-data-changed', handleStaffChange);
+  }, []);
+
+  const [nonStaffVersion, setNonStaffVersion] = useState(0);
+  const ayStaffAccountsRef = useRef<StaffAccount[]>(staffAccounts);
+  ayStaffAccountsRef.current = staffAccounts;
+  const ayUsersRef = useRef<Array<{ id?: string; phone?: string; role?: string }>>([]);
+
+  useEffect(() => {
+    const handleNonStaffUpdated = () => setNonStaffVersion((v) => v + 1);
+    window.addEventListener('non-staff-users-updated', handleNonStaffUpdated);
+    let unsubUsers: (() => void) | null = null;
+    try {
+      unsubUsers = onSnapshot(
+        collection(db, 'users'),
+        (snapshot) => {
+          const usersList: Array<{ id?: string; phone?: string; role?: string }> = [];
+          snapshot.forEach((docSnap) => {
+            const u = docSnap.data() as { id?: string; phone?: string; role?: string };
+            if (u) {
+              usersList.push({
+                id: String(u.id || docSnap.id),
+                phone: u.phone || '',
+                role: u.role || ''
+              });
+            }
+          });
+          ayUsersRef.current = usersList;
+          syncUsersCollectionToNonStaffRefs(usersList);
+          setNonStaffVersion((v) => v + 1);
+          if (ayStaffAccountsRef.current.length > 0) {
+            void reconcileSubAdminsOutOfStaffDirectory(usersList, ayStaffAccountsRef.current);
+          }
+        },
+        () => {}
+      );
+    } catch {}
+    return () => {
+      window.removeEventListener('non-staff-users-updated', handleNonStaffUpdated);
+      if (unsubUsers) unsubUsers();
+    };
   }, []);
 
   // Real-time synchronization with Google Cloud Firestore for Staff Accounts
@@ -163,6 +257,9 @@ export function AyByayPortal({
         });
         setStaffAccounts(cloudStaff);
         safeStorage.setItem('protyasha_staff', JSON.stringify(cloudStaff));
+        if (ayUsersRef.current.length > 0) {
+          void reconcileSubAdminsOutOfStaffDirectory(ayUsersRef.current, cloudStaff);
+        }
       }, (err) => {
         handleFirestoreError(err, OperationType.LIST, 'staff');
       });
@@ -312,7 +409,7 @@ export function AyByayPortal({
   }, []);
 
   const handleSaveStaffAccounts = (updated: StaffAccount[]) => {
-    if (!canEdit) return;
+    if (!canCreateAyByay) return;
     const sanitized = updated.map((s) => sanitizeStaffForFirestore(s));
     setStaffAccounts(sanitized);
     if (propOnSaveStaffAccounts) {
@@ -352,20 +449,26 @@ export function AyByayPortal({
         baseSalary: Number(acc.baseSalary) || 0,
         status: acc.isActive !== false ? 'active' : 'inactive',
         notes: acc.notes || '',
+        recordedBy: acc.recordedBy,
         createdAt: acc.createdAt || new Date().toISOString()
       });
     });
 
     // Include any optimistic local entries not yet reflected in staffAccounts
     (staffList || []).forEach(s => {
-      if (s && s.id && !seenIds.has(String(s.id))) {
+      if (
+        s &&
+        s.id &&
+        !seenIds.has(String(s.id)) &&
+        !isSubAdminOrAdminAccountMatch({ id: s.id, phone: s.phone, role: s.designation })
+      ) {
         seenIds.add(String(s.id));
         list.push(s);
       }
     });
 
     return list;
-  }, [staffAccounts, staffList]);
+  }, [staffAccounts, staffList, nonStaffVersion]);
 
   const [config, setConfig] = useState<AppConfig>(() => {
     let localSaved: any = null;
@@ -419,8 +522,8 @@ export function AyByayPortal({
     } catch {}
   }, [isDarkMode]);
 
-  // Admin Login State for New Entry - Derived from session
-  const isAdminLoggedIn = canEdit;
+  // Entry Access State for New Entry - Derived from session
+  const isAdminLoggedIn = canCreateAyByay;
   const [isAdminLoginModalOpen, setIsAdminLoginModalOpen] = useState<boolean>(false);
 
   // Current Navigation Tab
@@ -481,8 +584,8 @@ export function AyByayPortal({
   };
 
   const handleAddNewMonth = (monthKey: string) => {
-    if (!canEdit) {
-      setIsAdminLoginModalOpen(true);
+    if (!isAdmin) {
+      handlePermissionDenied('নতুন মাস শুরু করার অনুমতি শুধুমাত্র মূল অ্যাডমিনের জন্য');
       return;
     }
     const updated = Array.from(new Set([monthKey, ...managedMonths]));
@@ -674,10 +777,11 @@ export function AyByayPortal({
   // Navigation changer with history push
   const handleNavChange = useCallback((newNav: AppNavTab) => {
     setIsMobileDrawerOpen(false);
-    if (newNav === 'new_entry' && !canEdit) {
-      setIsAdminLoginModalOpen(true);
-      pushHistoryStep('admin-login');
-      setSyncToast({ message: 'নতুন এন্ট্রি করার জন্য প্রথমে এডমিন লগইন করুন', type: 'error' });
+    if (newNav === 'new_entry' && !canCreateAyByay) {
+      handlePermissionDenied('নতুন এন্ট্রি করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই');
+      if (!isAdmin && !isSubAdmin && userRole !== 'staff') {
+        pushHistoryStep('admin-login');
+      }
       return;
     }
     if (newNav !== activeNav) {
@@ -691,7 +795,7 @@ export function AyByayPortal({
       }
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
-  }, [activeNav, canEdit, pushHistoryStep]);
+  }, [activeNav, canCreateAyByay, handlePermissionDenied, isAdmin, isSubAdmin, userRole, pushHistoryStep]);
 
   // Global manual Go Back function
   const handleGoBack = useCallback(() => {
@@ -761,14 +865,27 @@ export function AyByayPortal({
 
   // Inventory Management Handlers
   const handleAddInventoryItem = async (item: Partial<InventoryItem>) => {
-    if (!canEdit) {
-      setIsAdminLoginModalOpen(true);
-      setSyncToast({ message: 'মালামাল পরিবর্তন করতে অ্যাডমিন বা অনুমোদিত সাব-অ্যাডমিন লগইন প্রয়োজন', type: 'error' });
+    if (!canCreateAyByay) {
+      handlePermissionDenied('মালামাল পরিবর্তন করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই');
       return;
     }
+    const existing = item.id ? inventoryItems.find(i => i.id === item.id) : undefined;
+    if (existing) {
+      const mod = getModifyState(existing, Date.now());
+      if (!mod.allowed) {
+        setSyncToast({
+          message: mod.isOwner && mod.expired
+            ? '৩০ মিনিট সময় অতিক্রান্ত হওয়ায় আপনি আর এই মালামাল এডিট করতে পারবেন না'
+            : 'আপনি শুধুমাত্র নিজের এন্ট্রি করা মালামাল ৩০ মিনিটের মধ্যে এডিট করতে পারবেন',
+          type: 'error'
+        });
+        return;
+      }
+    }
     try {
+      const nowIso = new Date().toISOString();
       const id = item.id || `INV-${Date.now()}`;
-      const payload = {
+      const payload: InventoryItem = {
         id,
         name: item.name || 'মালামাল',
         category: item.category || 'other',
@@ -779,8 +896,9 @@ export function AyByayPortal({
         supplier: item.supplier,
         location: item.location,
         notes: item.notes,
-        recordedBy: currentUser?.id || 'admin-primary',
-        updatedAt: new Date().toISOString()
+        recordedBy: existing?.recordedBy || actorStamp || 'admin-primary',
+        createdAt: existing?.createdAt || nowIso,
+        updatedAt: nowIso
       };
       await safeSetDoc(doc(staffDb, 'ay_byay_inventory', id), payload);
       setSyncToast({ message: 'মালামাল সফলভাবে সংরক্ষিত হয়েছে', type: 'success' });
@@ -791,10 +909,22 @@ export function AyByayPortal({
   };
 
   const handleDeleteInventoryItem = async (id: string) => {
-    if (!canEdit) {
-      setIsAdminLoginModalOpen(true);
-      setSyncToast({ message: 'মালামাল ডিলিট করতে অ্যাডমিন বা অনুমোদিত সাব-অ্যাডমিন লগইন প্রয়োজন', type: 'error' });
+    if (!canCreateAyByay) {
+      handlePermissionDenied('মালামাল ডিলিট করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই');
       return;
+    }
+    const existing = inventoryItems.find(i => i.id === id);
+    if (existing) {
+      const mod = getModifyState(existing, Date.now());
+      if (!mod.allowed) {
+        setSyncToast({
+          message: mod.isOwner && mod.expired
+            ? '৩০ মিনিট সময় অতিক্রান্ত হওয়ায় আপনি আর এই মালামাল মুছতে পারবেন না'
+            : 'আপনি শুধুমাত্র নিজের এন্ট্রি করা মালামাল ৩০ মিনিটের মধ্যে মুছতে পারবেন',
+          type: 'error'
+        });
+        return;
+      }
     }
     try {
       await safeDeleteDoc(doc(staffDb, 'ay_byay_inventory', id));
@@ -805,21 +935,36 @@ export function AyByayPortal({
   };
 
   const handleDeleteInventoryLog = async (id: string) => {
-    if (!canEdit) {
-      setIsAdminLoginModalOpen(true);
+    if (!canCreateAyByay) {
+      handlePermissionDenied('মুভমেন্ট লগ ডিলিট করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই');
       return;
     }
     try {
       const log = inventoryLogs.find(l => l.id === id);
       if (!log) return;
+
+      const mod = getModifyState(log, Date.now());
+      if (!mod.allowed) {
+        setSyncToast({
+          message: mod.isOwner && mod.expired
+            ? '৩০ মিনিট সময় অতিক্রান্ত হওয়ায় আপনি আর এই মুভমেন্ট লগ মুছতে পারবেন না'
+            : 'আপনি শুধুমাত্র নিজের এন্ট্রি করা মুভমেন্ট লগ ৩০ মিনিটের মধ্যে মুছতে পারবেন',
+          type: 'error'
+        });
+        return;
+      }
       
-      // Revert stock
+      // Revert stock (preserve original item createdAt and recordedBy)
       const item = inventoryItems.find(i => i.id === log.itemId);
       if (item) {
         const newStock = (log.type === 'in' || log.type === 'return') 
           ? Math.max(0, item.currentStock - log.quantity) 
           : item.currentStock + log.quantity;
-        await safeSetDoc(doc(staffDb, 'ay_byay_inventory', item.id), { ...item, currentStock: newStock });
+        await safeSetDoc(doc(staffDb, 'ay_byay_inventory', item.id), {
+          ...item,
+          currentStock: newStock,
+          updatedAt: new Date().toISOString()
+        });
       }
 
       await safeDeleteDoc(doc(staffDb, 'ay_byay_inventory_logs', id));
@@ -841,31 +986,35 @@ export function AyByayPortal({
     paymentMethod?: string;
     note?: string;
   }) => {
-    if (!canEdit) {
-      setIsAdminLoginModalOpen(true);
-      setSyncToast({ message: 'স্টক মুভমেন্ট রেকর্ড করতে অ্যাডমিন বা অনুমোদিত সাব-অ্যাডমিন লগইন প্রয়োজন', type: 'error' });
+    if (!canCreateAyByay) {
+      handlePermissionDenied('স্টক মুভমেন্ট রেকর্ড করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই');
       return;
     }
     try {
       const item = inventoryItems.find(i => i.id === logData.itemId);
       if (!item) return;
 
+      const nowIso = new Date().toISOString();
       const logId = `LOG-${Date.now()}`;
       const newLog: InventoryLog = {
         ...logData,
         id: logId,
         itemName: item.name,
         totalCost: (logData.costPerUnit || item.unitCost) * logData.quantity,
-        recordedBy: currentUser?.id,
-        createdAt: new Date().toISOString()
+        recordedBy: actorStamp || 'admin-primary',
+        createdAt: nowIso
       };
 
-      // Adjust item stock
+      // Adjust item stock (preserve item ownership & creation timestamp)
       const newStock = (logData.type === 'in' || logData.type === 'return')
         ? item.currentStock + logData.quantity
         : Math.max(0, item.currentStock - logData.quantity);
       
-      await safeSetDoc(doc(staffDb, 'ay_byay_inventory', item.id), { ...item, currentStock: newStock });
+      await safeSetDoc(doc(staffDb, 'ay_byay_inventory', item.id), {
+        ...item,
+        currentStock: newStock,
+        updatedAt: nowIso
+      });
       await safeSetDoc(doc(staffDb, 'ay_byay_inventory_logs', logId), newLog);
 
       setSyncToast({ message: 'স্টক রেকর্ড সফলভাবে সংরক্ষিত হয়েছে', type: 'success' });
@@ -984,7 +1133,7 @@ export function AyByayPortal({
         paymentMethod: existing?.paymentMethod || 'নগদ (Cash)',
         note: expectedNote,
         source: 'ay-byay',
-        recordedBy: existing?.recordedBy || currentUser?.id || 'system-bill-sync',
+        recordedBy: existing?.recordedBy || 'system-bill-sync',
         createdAt: existing?.createdAt || new Date().toISOString()
       };
 
@@ -997,7 +1146,7 @@ export function AyByayPortal({
         return updated;
       });
 
-      if (canEdit) {
+      if (isAdmin) {
         await safeSetDoc(doc(staffDb, 'ay_byay_transactions', txId), payload).catch(() => {});
       }
     };
@@ -1042,7 +1191,7 @@ export function AyByayPortal({
       window.removeEventListener('online', handleOnline);
       clearInterval(intervalId);
     };
-  }, [selectedMonth, canEdit, currentUser?.id]);
+  }, [selectedMonth, isAdmin]);
 
   // Compute live dashboard metrics for selected month
   const stats = useMemo(() => {
@@ -1117,9 +1266,8 @@ export function AyByayPortal({
 
   // Open New Transaction Form from anywhere
   const handleOpenNewTransaction = (type?: 'income' | 'expense', category?: string) => {
-    if (!canEdit) {
-      setIsAdminLoginModalOpen(true);
-      setSyncToast({ message: 'নতুন এন্ট্রি করার জন্য প্রথমে এডমিন লগইন করুন', type: 'error' });
+    if (!canCreateAyByay) {
+      handlePermissionDenied('নতুন এন্ট্রি করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই');
       return;
     }
     setFormInitialType(type || 'income');
@@ -1152,9 +1300,8 @@ export function AyByayPortal({
     paymentMethod: string;
     note?: string;
   }) => {
-    if (!canEdit) {
-      setIsAdminLoginModalOpen(true);
-      setSyncToast({ message: 'নতুন লেনদেন সংযোজন করতে প্রথমে এডমিন লগইন করুন', type: 'error' });
+    if (!canCreateAyByay) {
+      handlePermissionDenied('নতুন লেনদেন সংযোজন করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই');
       return false;
     }
     setIsSubmitting(true);
@@ -1163,7 +1310,7 @@ export function AyByayPortal({
       const payload: Transaction = {
         ...data,
         id: newId,
-        recordedBy: currentUser?.id || 'admin-primary',
+        recordedBy: actorStamp || 'admin-primary',
         recordedByGmail: currentUser?.gmail || undefined,
         source: 'ay-byay',
         createdAt: new Date().toISOString()
@@ -1191,20 +1338,39 @@ export function AyByayPortal({
 
   // Update existing transaction
   const handleUpdateTransaction = async (id: string, updatedData: Partial<Transaction>) => {
-    if (!canEdit) {
-      setIsAdminLoginModalOpen(true);
-      setSyncToast({ message: 'লেনদেন এডিট করার জন্য এডমিন লগইন প্রয়োজন', type: 'error' });
+    if (!canCreateAyByay) {
+      handlePermissionDenied('লেনদেন এডিট করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই');
       return false;
     }
 
     try {
       const existing = transactions.find(t => t.id === id);
       if (!existing) return false;
-      const updated = { ...existing, ...updatedData };
+
+      const mod = getModifyState(existing, Date.now());
+      if (!mod.allowed) {
+        setSyncToast({
+          message: mod.isOwner && mod.expired
+            ? '৩০ মিনিট সময় অতিক্রান্ত হওয়ায় আপনি আর এই লেনদেন এডিট করতে পারবেন না'
+            : 'আপনি শুধুমাত্র নিজের এন্ট্রি করা লেনদেন ৩০ মিনিটের মধ্যে এডিট করতে পারবেন',
+          type: 'error'
+        });
+        return false;
+      }
+
+      const updated: Transaction = {
+        ...existing,
+        ...updatedData,
+        id: existing.id,
+        recordedBy: existing.recordedBy,
+        recordedByGmail: existing.recordedByGmail,
+        source: existing.source,
+        createdAt: existing.createdAt
+      };
       await safeSetDoc(doc(staffDb, 'ay_byay_transactions', id), updated);
       try {
         const currentList = JSON.parse(safeStorage.getItem('isp_cache_txns') || '[]');
-        const updatedList = Array.isArray(currentList) ? currentList.map((t: any) => t.id === id ? { ...t, ...updatedData } : t) : [];
+        const updatedList = Array.isArray(currentList) ? currentList.map((t: any) => t.id === id ? updated : t) : [];
         safeStorage.setItem('isp_cache_txns', JSON.stringify(updatedList));
         safeStorage.setItem('protyasha_transactions', JSON.stringify(updatedList));
         
@@ -1219,16 +1385,26 @@ export function AyByayPortal({
     }
   };
 
-  // Delete transaction (Soft Delete for Recycle Bin compatibility)
+  // Delete transaction
   const handleDeleteTransaction = async (id: string) => {
-    if (!canEdit) {
-      setIsAdminLoginModalOpen(true);
-      setSyncToast({ message: 'লেনদেন ডিলিট করার জন্য এডমিন লগইন প্রয়োজন', type: 'error' });
+    if (!canCreateAyByay) {
+      handlePermissionDenied('লেনদেন ডিলিট করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই');
       return false;
     }
     try {
-      // 1. Delete document directly from Firestore so it doesn't auto-return
       const targetTx = transactionsRef.current.find(t => t.id === id);
+      const mod = getModifyState(targetTx, Date.now());
+      if (!targetTx || !mod.allowed) {
+        setSyncToast({
+          message: mod.isOwner && mod.expired
+            ? '৩০ মিনিট সময় অতিক্রান্ত হওয়ায় আপনি আর এই লেনদেন ডিলিট করতে পারবেন না'
+            : 'আপনি শুধুমাত্র নিজের এন্ট্রি করা লেনদেন ৩০ মিনিটের মধ্যে ডিলিট করতে পারবেন',
+          type: 'error'
+        });
+        return false;
+      }
+
+      // 1. Delete document directly from Firestore so it doesn't auto-return
       if (id.startsWith('tx-bill-') && targetTx) {
         try {
           const dismissedRaw = safeStorage.getItem('ay_byay_dismissed_auto_tx');
@@ -1267,9 +1443,8 @@ export function AyByayPortal({
 
   // STAFF MANAGEMENT HANDLERS (Unified Firestore 'staff' collection + instant app-wide sync)
   const handleAddStaff = async (data: Omit<Staff, 'id' | 'createdAt'>) => {
-    if (!canEdit) {
-      setIsAdminLoginModalOpen(true);
-      setSyncToast({ message: 'নতুন স্টাফ যোগ করতে এডমিন লগইন প্রয়োজন', type: 'error' });
+    if (!canCreateAyByay) {
+      handlePermissionDenied('নতুন স্টাফ যোগ করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই');
       return false;
     }
     try {
@@ -1291,7 +1466,7 @@ export function AyByayPortal({
           createdAt: nowIso,
           updatedAt: nowIso,
           isActive: data.status !== 'inactive',
-          recordedBy: currentUser?.id || currentUser?.name || 'admin'
+          recordedBy: actorStamp || 'admin-primary'
         },
         staffAccounts
       );
@@ -1306,13 +1481,24 @@ export function AyByayPortal({
   };
 
   const handleUpdateStaff = async (id: string, data: Partial<Staff>) => {
-    if (!canEdit) {
-      setIsAdminLoginModalOpen(true);
-      setSyncToast({ message: 'স্টাফ তথ্য পরিবর্তন করতে এডমিন লগইন প্রয়োজন', type: 'error' });
+    if (!canCreateAyByay) {
+      handlePermissionDenied('স্টাফ তথ্য পরিবর্তন করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই');
       return false;
     }
+    const existingAcc = staffAccounts.find(a => String(a.id) === String(id));
+    const targetRecord: OwnedRecordLike | undefined = existingAcc || staffList.find(s => String(s.id) === String(id));
+    const mod = getModifyState(targetRecord, Date.now());
+    if (!mod.allowed) {
+      setSyncToast({
+        message: mod.isOwner && mod.expired
+          ? '৩০ মিনিট সময় অতিক্রান্ত হওয়ায় আপনি আর এই কর্মীর তথ্য এডিট করতে পারবেন না'
+          : 'আপনি শুধুমাত্র নিজের যোগ করা কর্মীর তথ্য ৩০ মিনিটের মধ্যে এডিট করতে পারবেন',
+        type: 'error'
+      });
+      return false;
+    }
+
     try {
-      const existingAcc = staffAccounts.find(a => String(a.id) === String(id));
       const { updatedList } = await upsertSingleStaffToCloud(
         {
           ...(existingAcc || {
@@ -1336,6 +1522,8 @@ export function AyByayPortal({
             data.status !== undefined
               ? data.status === 'active'
               : existingAcc?.isActive !== false,
+          recordedBy: existingAcc?.recordedBy || actorStamp || 'admin-primary',
+          createdAt: existingAcc?.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString()
         },
         staffAccounts
@@ -1353,11 +1541,24 @@ export function AyByayPortal({
   };
 
   const handleDeleteStaff = async (id: string) => {
-    if (!canEdit) {
-      setIsAdminLoginModalOpen(true);
-      setSyncToast({ message: 'স্টাফ ডিলিট করতে এডমিন লগইন প্রয়োজন', type: 'error' });
+    if (!canCreateAyByay) {
+      handlePermissionDenied('স্টাফ ডিলিট করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই');
       return false;
     }
+    const targetRecord: OwnedRecordLike | undefined =
+      staffAccounts.find(a => String(a.id) === String(id)) ||
+      staffList.find(s => String(s.id) === String(id));
+    const mod = getModifyState(targetRecord, Date.now());
+    if (!mod.allowed) {
+      setSyncToast({
+        message: mod.isOwner && mod.expired
+          ? '৩০ মিনিট সময় অতিক্রান্ত হওয়ায় আপনি আর এই কর্মীকে মুছতে পারবেন না'
+          : 'আপনি শুধুমাত্র নিজের যোগ করা কর্মীকে ৩০ মিনিটের মধ্যে মুছতে পারবেন',
+        type: 'error'
+      });
+      return false;
+    }
+
     try {
       const updatedList = await deleteSingleStaffFromCloud(id, staffAccounts);
       setStaffAccounts(updatedList);
@@ -1384,12 +1585,28 @@ export function AyByayPortal({
     voucherNumber?: string;
     note?: string;
   }) => {
-    if (!canEdit) {
-      setIsAdminLoginModalOpen(true);
-      setSyncToast({ message: 'বেতন প্রদান করতে এডমিন লগইন প্রয়োজন', type: 'error' });
+    if (!canCreateAyByay) {
+      handlePermissionDenied('বেতন প্রদান করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই');
       return false;
     }
     try {
+      const recordId = `sal-${data.staffId}-${data.month}`;
+      const existingSalary = salariesRef.current.find(
+        s => s.id === recordId || (s.staffId === data.staffId && s.month === data.month)
+      );
+      if (existingSalary) {
+        const mod = getModifyState(existingSalary, Date.now());
+        if (!mod.allowed) {
+          setSyncToast({
+            message: mod.isOwner && mod.expired
+              ? '৩০ মিনিট সময় অতিক্রান্ত হওয়ায় আপনি আর এই বেতন রেকর্ড পরিবর্তন করতে পারবেন না'
+              : 'আপনি শুধুমাত্র নিজের এন্ট্রি করা বেতন রেকর্ড ৩০ মিনিটের মধ্যে পরিবর্তন করতে পারবেন',
+            type: 'error'
+          });
+          return false;
+        }
+      }
+
       const staffMember = effectiveStaffList.find(s => s.id === data.staffId);
       const baseSalaryNum = Math.max(0, Number(data.baseSalary) || 0);
       const bonusNum = Math.max(0, Number(data.bonusOrAllowance) || 0);
@@ -1400,7 +1617,6 @@ export function AyByayPortal({
       const appliedDeduction = Math.min(grossSalary, requestedDeduction);
       const netSalary = Math.max(0, grossSalary - appliedDeduction);
 
-      const recordId = `sal-${data.staffId}-${data.month}`;
       const payDate = data.paymentDate || new Date().toISOString().split('T')[0];
       const voucher = data.voucherNumber || `VCH-SAL-${Date.now().toString().slice(-4)}`;
 
@@ -1419,9 +1635,9 @@ export function AyByayPortal({
         paymentMethod: data.paymentMethod || 'নগদ (Cash)',
         voucherNumber: voucher,
         note: data.note || '',
-        recordedBy: currentUser?.id,
-        recordedByGmail: currentUser?.gmail || undefined,
-        createdAt: new Date().toISOString()
+        recordedBy: existingSalary?.recordedBy || actorStamp || 'admin-primary',
+        recordedByGmail: existingSalary ? existingSalary.recordedByGmail : (currentUser?.gmail || undefined),
+        createdAt: existingSalary?.createdAt || new Date().toISOString()
       };
 
       // 1. Permanently save salary record to Google Cloud Firestore staffDb collection 'staff_salaries'
@@ -1513,7 +1729,7 @@ export function AyByayPortal({
         const nextMonth = getNextMonthKey(data.month);
         const nextSalId = `sal-${data.staffId}-${nextMonth}`;
         const existingNextSal = salariesRef.current.find(s => s.id === nextSalId || (s.staffId === data.staffId && s.month === nextMonth));
-        if (!existingNextSal || existingNextSal.paymentStatus !== 'paid') {
+        if (!existingNextSal || (existingNextSal.paymentStatus !== 'paid' && canModifyRecord(existingNextSal, Date.now()))) {
           const nextBase = staffMember?.baseSalary || baseSalaryNum;
           const nextRecord: SalaryPayment = {
             id: nextSalId,
@@ -1530,8 +1746,8 @@ export function AyByayPortal({
             paymentMethod: record.paymentMethod,
             voucherNumber: `CF-${nextMonth.replace('-', '')}-${Date.now().toString().slice(-4)}`,
             note: `পূর্ববর্তী (${getMonthBengaliName(data.month)}) মাসের বেতন থেকে অবশিষ্ট কোম্পানি পাওনা স্বয়ংক্রিয় স্থানান্তর: ৳${carryForwardAmount}`,
-            recordedBy: currentUser?.id || 'admin-primary',
-            createdAt: new Date().toISOString()
+            recordedBy: existingNextSal?.recordedBy || actorStamp || 'admin-primary',
+            createdAt: existingNextSal?.createdAt || new Date().toISOString()
           };
 
           await safeSetDoc(doc(staffDb, 'staff_salaries', nextSalId), nextRecord).catch(() => {});
@@ -1548,7 +1764,9 @@ export function AyByayPortal({
             const nextMonthsList = Array.from(new Set([nextMonth, ...managedMonths]));
             setManagedMonths(nextMonthsList);
             safeStorage.setItem('isp_managed_months', JSON.stringify(nextMonthsList));
-            handleSaveConfig({ managedMonths: nextMonthsList });
+            if (isAdmin) {
+              handleSaveConfig({ managedMonths: nextMonthsList });
+            }
           }
           nextMonthCarried = nextMonth;
         }
@@ -1571,7 +1789,7 @@ export function AyByayPortal({
           note: `${getMonthBengaliName(data.month)} মাসের পূর্ণ বেতন খরচ এন্ট্রি: ৳${grossSalary} (মূল: ৳${baseSalaryNum}, বোনাস: ৳${bonusNum}, কর্তন: ৳${appliedDeduction}, নিট হাতে প্রদান: ৳${netSalary})${nextMonthCarried ? ` • পরের মাস (${getMonthBengaliName(nextMonthCarried)})-এ স্থানান্তর: ৳${carryForwardAmount}` : ''}। ভাউচার: ${voucher}`,
           source: 'ay-byay',
           createdAt: record.createdAt,
-          recordedBy: currentUser?.id
+          recordedBy: record.recordedBy
         };
         await safeSetDoc(doc(staffDb, 'ay_byay_transactions', txnId), salaryExpenseTx);
 
@@ -1603,13 +1821,22 @@ export function AyByayPortal({
   };
 
   const handleDeleteSalary = async (id: string) => {
-    if (!canEdit) {
-      setIsAdminLoginModalOpen(true);
-      setSyncToast({ message: 'বেতন রেকর্ড ডিলিট করতে এডমিন লগইন প্রয়োজন', type: 'error' });
+    if (!canCreateAyByay) {
+      handlePermissionDenied('বেতন রেকর্ড ডিলিট করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই');
       return false;
     }
     try {
       const salRecord = salaries.find(s => s.id === id);
+      const mod = getModifyState(salRecord, Date.now());
+      if (!salRecord || !mod.allowed) {
+        setSyncToast({
+          message: mod.isOwner && mod.expired
+            ? '৩০ মিনিট সময় অতিক্রান্ত হওয়ায় আপনি আর এই বেতন রেকর্ড ডিলিট করতে পারবেন না'
+            : 'আপনি শুধুমাত্র নিজের এন্ট্রি করা বেতন রেকর্ড ৩০ মিনিটের মধ্যে ডিলিট করতে পারবেন',
+          type: 'error'
+        });
+        return false;
+      }
 
       // 1. Delete directly from Google Cloud Firestore staffDb collections
       await safeDeleteDoc(doc(staffDb, 'ay_byay_salaries', id)).catch(err => {
@@ -1702,8 +1929,9 @@ export function AyByayPortal({
     }
   };
 
-  // Save Config to Firestore
+  // Save Config to Firestore (Main Admin only)
   const handleSaveConfig = async (newConfig: Partial<AppConfig>) => {
+    if (!isAdmin) return false;
     try {
       const merged = { ...config, ...newConfig };
       safeStorage.setItem('isp_admin_saved_config', JSON.stringify(merged));
@@ -1807,16 +2035,25 @@ export function AyByayPortal({
         onExportCsv={handleExportCsv}
         isDarkMode={isDarkMode}
         onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
-        isAdminLoggedIn={isAdminLoggedIn}
+        isAdminLoggedIn={isAdmin}
+        canCreateEntry={canCreateAyByay}
+        isSubAdmin={isSubAdmin}
         onOpenAdminLogin={() => {
           setIsAdminLoginModalOpen(true);
           pushHistoryStep('admin-login');
         }}
         onAdminLogout={() => {
           if (onAdminLogout) onAdminLogout();
-          setSyncToast({ message: 'এডমিন লগআউট সফল হয়েছে', type: 'success' });
+          setSyncToast({
+            message: isSubAdmin ? 'সাব-অ্যাডমিন লগআউট সফল হয়েছে' : 'এডমিন লগআউট সফল হয়েছে',
+            type: 'success'
+          });
         }}
         onOpenNewMonthModal={() => {
+          if (!isAdmin) {
+            handlePermissionDenied('নতুন মাস শুরু করার অনুমতি শুধুমাত্র মূল অ্যাডমিনের জন্য');
+            return;
+          }
           setIsNewMonthModalOpen(true);
           pushHistoryStep('new-month');
         }}
@@ -1883,8 +2120,8 @@ export function AyByayPortal({
             initialType={formInitialType}
             initialCategory={formInitialCategory}
             isOpenInitially={false}
-            isAdminLoggedIn={isAdminLoggedIn}
-            onRequireLogin={() => setIsAdminLoginModalOpen(true)}
+            isAdminLoggedIn={canCreateAyByay}
+            onRequireLogin={() => handlePermissionDenied('নতুন এন্ট্রি করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই')}
           />
 
           {/* ISP Revenue/Expense Stream Analysis & Quick Actions (NO TRANSACTION LIST!) */}
@@ -1900,7 +2137,7 @@ export function AyByayPortal({
             onNavigateToLedger={() => handleNavChange('transactions')}
             config={config}
             availableMonths={availableMonths}
-            isAdminLoggedIn={isAdminLoggedIn}
+            isAdminLoggedIn={canCreateAyByay}
           />
 
           {/* Dedicated Internet & Cable Network Business Shortcuts & PWA Banner */}
@@ -1977,8 +2214,12 @@ export function AyByayPortal({
           onViewSalarySlip={handleViewSalarySlip}
           config={config}
           onBackToDashboard={() => handleNavChange('dashboard')}
-          isAdminLoggedIn={isAdminLoggedIn}
-          onRequireLogin={() => setIsAdminLoginModalOpen(true)}
+          isAdminLoggedIn={canCreateAyByay}
+          isSubAdmin={isSubAdmin}
+          canModifyStaff={(stf) => canModifyRecord(stf)}
+          canModifySalary={(sal) => canModifyRecord(sal)}
+          getModifyInfo={(rec) => getModifyState(rec)}
+          onRequireLogin={() => handlePermissionDenied('এই মডিউলে ডেটা এন্ট্রি করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই')}
           staffAccounts={staffAccounts}
           onSaveStaffAccounts={handleSaveStaffAccounts}
           quickHisabOwners={quickHisabOwners}
@@ -2011,8 +2252,8 @@ export function AyByayPortal({
             initialType={formInitialType}
             initialCategory={formInitialCategory}
             isOpenInitially={true}
-            isAdminLoggedIn={isAdminLoggedIn}
-            onRequireLogin={() => setIsAdminLoginModalOpen(true)}
+            isAdminLoggedIn={canCreateAyByay}
+            onRequireLogin={() => handlePermissionDenied('নতুন এন্ট্রি করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই')}
           />
         </div>
       )}
@@ -2029,12 +2270,14 @@ export function AyByayPortal({
                 সর্বমোট {transactions.length} টি আয় ও ব্যয়ের বিস্তারিত রেকর্ড ও অনুসন্ধান
               </p>
             </div>
-            <button
-              onClick={() => handleOpenNewTransaction()}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition-colors self-start sm:self-auto cursor-pointer"
-            >
-              <span>+ নতুন এন্ট্রি</span>
-            </button>
+            {canCreateAyByay && (
+              <button
+                onClick={() => handleOpenNewTransaction()}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition-colors self-start sm:self-auto cursor-pointer"
+              >
+                <span>+ নতুন এন্ট্রি</span>
+              </button>
+            )}
           </div>
 
           <TransactionList
@@ -2048,8 +2291,18 @@ export function AyByayPortal({
               pushHistoryStep('txn-detail');
             }}
             onEditTransaction={(txn) => {
-              if (!isAdminLoggedIn) {
-                setIsAdminLoginModalOpen(true);
+              const mod = getModifyState(txn, Date.now());
+              if (!mod.allowed) {
+                if (!isAdmin && !isSubAdmin && userRole !== 'staff') {
+                  setIsAdminLoginModalOpen(true);
+                } else {
+                  setSyncToast({
+                    message: mod.isOwner && mod.expired
+                      ? '৩০ মিনিট সময় অতিক্রান্ত হওয়ায় আপনি আর এই লেনদেন এডিট করতে পারবেন না'
+                      : 'আপনি শুধুমাত্র নিজের এন্ট্রি করা লেনদেন ৩০ মিনিটের মধ্যে এডিট করতে পারবেন',
+                    type: 'error'
+                  });
+                }
                 return;
               }
               setSelectedTransaction(txn);
@@ -2059,7 +2312,9 @@ export function AyByayPortal({
             }}
             onDeleteTransaction={handleDeleteTransaction}
             currencySymbol={config.currencySymbol}
-            isAdminLoggedIn={isAdminLoggedIn}
+            isAdminLoggedIn={canCreateAyByay}
+            canModifyTransaction={(txn) => canModifyRecord(txn)}
+            getModifyInfo={(txn) => getModifyState(txn)}
           />
         </div>
       )}
@@ -2090,7 +2345,9 @@ export function AyByayPortal({
           }}
           onDeleteTransaction={handleDeleteTransaction}
           onViewSalarySlip={handleViewSalarySlip}
-          isAdminLoggedIn={isAdminLoggedIn}
+          isAdminLoggedIn={canCreateAyByay}
+          canCreateEntry={canCreateAyByay}
+          canModifyTransaction={(txn) => canModifyRecord(txn)}
         />
       )}
 
@@ -2106,8 +2363,12 @@ export function AyByayPortal({
             onLogMovement={handleLogMovement}
             currencySymbol={config.currencySymbol}
             onRefresh={fetchDataSilent}
-            isAdminLoggedIn={isAdminLoggedIn}
-            onRequireLogin={() => setIsAdminLoginModalOpen(true)}
+            isAdminLoggedIn={canCreateAyByay}
+            isSubAdmin={isSubAdmin}
+            canModifyItem={(item) => canModifyRecord(item)}
+            canModifyLog={(log) => canModifyRecord(log)}
+            getModifyInfo={(rec) => getModifyState(rec)}
+            onRequireLogin={() => handlePermissionDenied('মালামাল স্টক পরিবর্তন করার অনুমতি আপনার অ্যাকাউন্টে সক্রিয় নেই')}
             onOpenReportPage={(tab) => {
               setInventoryReportInitialTab(tab);
               handleNavChange('inventory_report');
@@ -2179,6 +2440,10 @@ export function AyByayPortal({
         selectedMonth={selectedMonth}
         onMonthChange={handleMonthChange}
         onOpenNewMonthModal={() => {
+          if (!isAdmin) {
+            handlePermissionDenied('নতুন মাস শুরু করার অনুমতি শুধুমাত্র মূল অ্যাডমিনের জন্য');
+            return;
+          }
           setIsNewMonthModalOpen(true);
           pushHistoryStep('new-month');
         }}
@@ -2187,14 +2452,19 @@ export function AyByayPortal({
         config={config}
         isDarkMode={isDarkMode}
         onToggleDarkMode={() => setIsDarkMode(!isDarkMode)}
-        isAdminLoggedIn={isAdminLoggedIn}
+        isAdminLoggedIn={isAdmin}
+        canCreateEntry={canCreateAyByay}
+        isSubAdmin={isSubAdmin}
         onOpenAdminLogin={() => {
           setIsAdminLoginModalOpen(true);
           pushHistoryStep('admin-login');
         }}
         onAdminLogout={() => {
           if (onAdminLogout) onAdminLogout();
-          setSyncToast({ message: 'এডমিন লগআউট সফল হয়েছে', type: 'success' });
+          setSyncToast({
+            message: isSubAdmin ? 'সাব-অ্যাডমিন লগআউট সফল হয়েছে' : 'এডমিন লগআউট সফল হয়েছে',
+            type: 'success'
+          });
         }}
         isDrawerOpen={isMobileDrawerOpen}
         onToggleDrawer={() => {
@@ -2254,7 +2524,8 @@ export function AyByayPortal({
         }}
         onDeleteTransaction={handleDeleteTransaction}
         onViewSalarySlip={handleViewSalarySlip}
-        isAdminLoggedIn={isAdminLoggedIn}
+        isAdminLoggedIn={canCreateAyByay}
+        canModifyTransaction={(txn) => canModifyRecord(txn)}
       />
 
       {/* MODAL 2: PRINTABLE SALARY SLIP / VOUCHER MODAL */}
@@ -2280,7 +2551,10 @@ export function AyByayPortal({
         onDelete={handleDeleteTransaction}
         currencySymbol={config.currencySymbol}
         initialEditMode={initialEditInModal}
-        isAdminLoggedIn={isAdminLoggedIn}
+        isAdminLoggedIn={canCreateAyByay}
+        isSubAdmin={isSubAdmin}
+        canModifyTransaction={(txn) => canModifyRecord(txn)}
+        getModifyInfo={(txn) => getModifyState(txn)}
       />
 
 
@@ -2292,7 +2566,7 @@ export function AyByayPortal({
         onConfirmMonth={handleAddNewMonth}
         currentSelectedMonth={selectedMonth}
         existingMonths={availableMonths}
-        isAdminLoggedIn={isAdminLoggedIn}
+        isAdminLoggedIn={isAdmin}
       />
     </main>
   );

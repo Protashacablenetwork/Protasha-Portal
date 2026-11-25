@@ -27,6 +27,7 @@ interface OwnerDetailViewProps {
   selectedMonth: string;
   lang: Language;
   isAdmin: boolean;
+  canEditOwner?: boolean;
   user: UserSession | null;
   staffAccounts: StaffAccount[];
   onSaveStaffAccounts?: (updated: StaffAccount[]) => void;
@@ -42,6 +43,7 @@ export const OwnerDetailView: React.FC<OwnerDetailViewProps> = ({
   selectedMonth,
   lang,
   isAdmin,
+  canEditOwner = isAdmin,
   user,
   staffAccounts,
   onSaveStaffAccounts,
@@ -169,7 +171,7 @@ export const OwnerDetailView: React.FC<OwnerDetailViewProps> = ({
             <Printer className="w-4 h-4" />
             <span className="hidden sm:inline">{isBn ? 'প্রিন্ট / PDF' : 'Print / PDF'}</span>
           </button>
-          {isAdmin && (
+          {canEditOwner && (
             <button
               type="button"
               onClick={() => {

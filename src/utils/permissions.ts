@@ -79,18 +79,62 @@ export function normalizePhoneNumber(phone?: string | null): string {
   return digits;
 }
 
-export function isTransactionOwner(trx: Transaction, user?: UserSession | null): boolean {
-  if (!user) return false;
+const STRONG_GENERIC_ACTORS = new Set([
+  'admin',
+  'admin-primary',
+  'admin-master',
+  'system',
+  'system-bill-sync',
+  'পে-রোল সিস্টেম',
+  'অ্যাডমিন',
+  'staff',
+  'অজানা'
+]);
+
+export function getActorStamp(user?: UserSession | null): string {
+  if (!user) return '';
+  return (user.id || normalizePhoneNumber(user.phone) || user.phone || user.gmail || '').trim();
+}
+
+export interface OwnedRecordLike {
+  recordedBy?: string | null;
+  recordedByGmail?: string | null;
+  createdById?: string | null;
+  createdByPhone?: string | null;
+  senderId?: string | null;
+  created?: number | null;
+  createdAt?: string | null;
+}
+
+export function isRecordOwner(record: OwnedRecordLike | null | undefined, user?: UserSession | null): boolean {
+  if (!record || !user) return false;
   if (user.role === 'admin') return true;
 
-  const recBy = (trx.recordedBy || '').trim();
-  const recGmail = (trx.recordedByGmail || '').trim().toLowerCase();
+  const userId = (user.id || '').trim();
+  const userPhoneRaw = (user.phone || '').trim();
+  const userPhoneNorm = normalizePhoneNumber(user.phone);
+  const userGmail = (user.gmail || '').trim().toLowerCase();
 
-  if (user.id && recBy && recBy === user.id) return true;
-  if (user.phone && recBy && recBy === user.phone.trim()) return true;
-  if (user.gmail && recGmail && recGmail === user.gmail.trim().toLowerCase()) return true;
+  const recGmail = (record.recordedByGmail || '').trim().toLowerCase();
+  if (userGmail && recGmail && recGmail === userGmail) return true;
+
+  const candidateValues = [record.recordedBy, record.createdById, record.createdByPhone, record.senderId];
+  for (const raw of candidateValues) {
+    const val = (raw || '').trim();
+    if (!val || STRONG_GENERIC_ACTORS.has(val.toLowerCase())) continue;
+    if (userId && val === userId) return true;
+    if (userPhoneRaw && val === userPhoneRaw) return true;
+    const valPhoneNorm = normalizePhoneNumber(val);
+    if (userPhoneNorm.length >= 10 && valPhoneNorm.length >= 10 && valPhoneNorm === userPhoneNorm) {
+      return true;
+    }
+  }
 
   return false;
+}
+
+export function isTransactionOwner(trx: Transaction, user?: UserSession | null): boolean {
+  return isRecordOwner(trx, user);
 }
 
 export interface TransactionModificationCheck {
@@ -100,12 +144,13 @@ export interface TransactionModificationCheck {
   remainingMs: number;
 }
 
-export function canModifyTransaction(
-  trx: Transaction,
+export function canModifyOwnedRecord(
+  record: OwnedRecordLike | null | undefined,
   user?: UserSession | null,
+  permKey?: SubAdminPermissionKey,
   now: number = Date.now()
 ): TransactionModificationCheck {
-  if (!user) {
+  if (!user || !record) {
     return { allowed: false, isOwner: false, expired: false, remainingMs: 0 };
   }
 
@@ -113,33 +158,51 @@ export function canModifyTransaction(
     return { allowed: true, isOwner: true, expired: false, remainingMs: Number.POSITIVE_INFINITY };
   }
 
-  if (user.role === 'sub-admin') {
-    if (!hasSubAdminPermission(user, 'addTransactions')) {
-      return { allowed: false, isOwner: false, expired: false, remainingMs: 0 };
-    }
-    const isOwner = isTransactionOwner(trx, user);
-    if (!isOwner) {
-      return { allowed: false, isOwner: false, expired: false, remainingMs: 0 };
-    }
-
-    const createdMs = typeof trx.created === 'number' && !isNaN(trx.created) ? trx.created : 0;
-    if (createdMs <= 0) {
-      return { allowed: false, isOwner: true, expired: true, remainingMs: 0 };
-    }
-
-    const elapsed = Math.max(0, now - createdMs);
-    const remainingMs = Math.max(0, SUB_ADMIN_EDIT_WINDOW_MS - elapsed);
-    const allowed = elapsed <= SUB_ADMIN_EDIT_WINDOW_MS;
-
-    return {
-      allowed,
-      isOwner: true,
-      expired: !allowed,
-      remainingMs
-    };
+  if (user.role !== 'sub-admin') {
+    return { allowed: false, isOwner: false, expired: false, remainingMs: 0 };
   }
 
-  return { allowed: false, isOwner: false, expired: false, remainingMs: 0 };
+  if (permKey && !hasSubAdminPermission(user, permKey)) {
+    return { allowed: false, isOwner: false, expired: false, remainingMs: 0 };
+  }
+
+  const isOwner = isRecordOwner(record, user);
+  if (!isOwner) {
+    return { allowed: false, isOwner: false, expired: false, remainingMs: 0 };
+  }
+
+  let createdMs = 0;
+  if (typeof record.created === 'number' && !isNaN(record.created) && record.created > 0) {
+    createdMs = record.created;
+  } else if (record.createdAt) {
+    const parsed = new Date(record.createdAt).getTime();
+    if (!isNaN(parsed) && parsed > 0) {
+      createdMs = parsed;
+    }
+  }
+
+  if (createdMs <= 0) {
+    return { allowed: false, isOwner: true, expired: true, remainingMs: 0 };
+  }
+
+  const elapsed = Math.max(0, now - createdMs);
+  const remainingMs = Math.max(0, SUB_ADMIN_EDIT_WINDOW_MS - elapsed);
+  const allowed = elapsed <= SUB_ADMIN_EDIT_WINDOW_MS;
+
+  return {
+    allowed,
+    isOwner: true,
+    expired: !allowed,
+    remainingMs
+  };
+}
+
+export function canModifyTransaction(
+  trx: Transaction,
+  user?: UserSession | null,
+  now: number = Date.now()
+): TransactionModificationCheck {
+  return canModifyOwnedRecord(trx, user, 'addTransactions', now);
 }
 
 export function isSupportTicketOwner(
@@ -151,13 +214,13 @@ export function isSupportTicketOwner(
 
   const actorIds = [user?.id, staffSession?.staffId]
     .map((v) => (v || '').trim())
-    .filter(Boolean);
+    .filter((v) => v && !STRONG_GENERIC_ACTORS.has(v.toLowerCase()));
   const actorPhones = [user?.phone, staffSession?.phone]
     .map((v) => normalizePhoneNumber(v))
     .filter((v) => v.length >= 6);
   const actorNames = [user?.name, staffSession?.name]
     .map((v) => (v || '').trim().toLowerCase())
-    .filter(Boolean);
+    .filter((v) => v && !STRONG_GENERIC_ACTORS.has(v));
 
   if (ticket.createdById && actorIds.includes(ticket.createdById.trim())) {
     return true;
@@ -208,24 +271,26 @@ export function canModifySupportTicket(
   }
 
   const canActAsSubAdmin = user?.role === 'sub-admin' && hasSubAdminPermission(user, 'supportTickets');
-  const canActAsStaffSession = Boolean(staffSession) && user?.role !== 'staff';
+  const canActAsStaffSession =
+    Boolean(staffSession) && user?.role !== 'staff' && user?.role !== 'sub-admin';
 
   if (!canActAsSubAdmin && !canActAsStaffSession) {
     return { allowed: false, isAdmin: false, isOwner: false, expired: false, remainingMs: 0 };
   }
 
-  const isOwner = isSupportTicketOwner(ticket, user, staffSession);
+  const isOwner = isSupportTicketOwner(ticket, user, canActAsSubAdmin ? null : staffSession);
   const createdMs = ticket.createdAt ? new Date(ticket.createdAt).getTime() : 0;
   if (!createdMs || isNaN(createdMs)) {
     return { allowed: false, isAdmin: false, isOwner, expired: true, remainingMs: 0 };
   }
 
+  const editWindowMs = canActAsSubAdmin ? SUB_ADMIN_EDIT_WINDOW_MS : SUPPORT_TICKET_EDIT_WINDOW_MS;
   const elapsed = Math.max(0, now - createdMs);
-  const remainingMs = Math.max(0, SUPPORT_TICKET_EDIT_WINDOW_MS - elapsed);
-  const withinWindow = elapsed <= SUPPORT_TICKET_EDIT_WINDOW_MS;
+  const remainingMs = Math.max(0, editWindowMs - elapsed);
+  const withinWindow = elapsed <= editWindowMs;
 
-  // Non-admins (permitted sub-admins or staff session) can only edit/delete their own complaint within 10 minutes of creation.
-  // Regular users, attendance-only staff, and visitors are strictly read-only.
+  // Permitted sub-admins can edit/delete/permanently remove their own complaint within 30 minutes of creation.
+  // Staff support session can edit/delete their own complaint within 10 minutes of creation.
   return {
     allowed: isOwner && withinWindow,
     isAdmin: false,

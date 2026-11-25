@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Staff, SalaryPayment, AppConfig } from '../types';
 import { STAFF_DESIGNATIONS, PAYMENT_METHODS, formatCurrency, getMonthBengaliName, getNextMonthKey } from '../data/categories';
 import { ConfirmModal } from './ConfirmModal';
@@ -6,7 +6,8 @@ import { StaffSalaryDetailPage } from './StaffSalaryDetailPage';
 import { StaffAccount, StaffTransaction, QuickHisabOwner } from '../../../types';
 import { safeStorage } from '../../../utils/safeStorage';
 import { showToast } from '../../../utils/uiFeedback';
-import { isActualStaffAccount } from '../../../utils/ownerDueSync';
+import { isActualStaffAccount, isSubAdminOrAdminAccountMatch } from '../../../utils/ownerDueSync';
+import { OwnedRecordLike, TransactionModificationCheck, formatRemainingCountdown } from '../../../utils/permissions';
 import {
   Users,
   Plus,
@@ -54,6 +55,10 @@ interface StaffSalaryManagerProps {
   config: AppConfig;
   onBackToDashboard?: () => void;
   isAdminLoggedIn?: boolean;
+  isSubAdmin?: boolean;
+  canModifyStaff?: (staff: Staff) => boolean;
+  canModifySalary?: (sal: SalaryPayment) => boolean;
+  getModifyInfo?: (rec: OwnedRecordLike) => TransactionModificationCheck;
   onRequireLogin?: () => void;
   staffAccounts?: StaffAccount[];
   onSaveStaffAccounts?: (accounts: StaffAccount[]) => void;
@@ -76,6 +81,10 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
   config,
   onBackToDashboard,
   isAdminLoggedIn = false,
+  isSubAdmin = false,
+  canModifyStaff,
+  canModifySalary,
+  getModifyInfo,
   onRequireLogin,
   staffAccounts = [],
   onSaveStaffAccounts,
@@ -83,9 +92,20 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
   selectedStaffId,
   onSelectStaffDetail
 }) => {
+  const checkModifyStaff = (stf: Staff): boolean =>
+    canModifyStaff ? canModifyStaff(stf) : isAdminLoggedIn;
+  const checkModifySalary = (sal: SalaryPayment): boolean =>
+    canModifySalary ? canModifySalary(sal) : isAdminLoggedIn;
   const [activeTab, setActiveTab] = useState<'payroll' | 'directory'>('payroll');
   const [payrollFilter, setPayrollFilter] = useState<'all' | 'paid' | 'pending'>('all');
   const [localSelectedStaffDetail, setLocalSelectedStaffDetail] = useState<Staff | null>(null);
+  const [nonStaffVersion, setNonStaffVersion] = useState(0);
+
+  useEffect(() => {
+    const handleNonStaffUpdated = () => setNonStaffVersion((v) => v + 1);
+    window.addEventListener('non-staff-users-updated', handleNonStaffUpdated);
+    return () => window.removeEventListener('non-staff-users-updated', handleNonStaffUpdated);
+  }, []);
 
   // Confirm Modal state
   const [confirmState, setConfirmState] = useState<{
@@ -177,7 +197,12 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
     const cleanPhone = (p: string) => (p || '').replace(/[^0-9]/g, '');
 
     (staffList || []).forEach(s => {
-      if (s && s.id && !seenIds.has(s.id)) {
+      if (
+        s &&
+        s.id &&
+        !seenIds.has(s.id) &&
+        !isSubAdminOrAdminAccountMatch({ id: s.id, phone: s.phone, role: s.designation })
+      ) {
         list.push(s);
         seenIds.add(s.id);
         const p = cleanPhone(s.phone);
@@ -195,7 +220,8 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
             ...list[idx],
             designation: list[idx].designation || acc.role || 'লাইন টেকনিশিয়ান',
             baseSalary: list[idx].baseSalary || acc.baseSalary || 15000,
-            phone: list[idx].phone || acc.phone
+            phone: list[idx].phone || acc.phone,
+            recordedBy: list[idx].recordedBy || acc.recordedBy
           };
         }
         return;
@@ -211,12 +237,13 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
         baseSalary: acc.baseSalary || 15000,
         status: acc.isActive !== false ? 'active' : 'inactive',
         notes: '',
+        recordedBy: acc.recordedBy,
         createdAt: acc.createdAt || new Date().toISOString()
       });
     });
 
     return list;
-  }, [staffList, staffAccounts]);
+  }, [staffList, staffAccounts, nonStaffVersion]);
 
   const activeStaffDetail = useMemo(() => {
     if (selectedStaffId !== undefined) {
@@ -265,6 +292,10 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
 
   // Open add staff
   const handleOpenAddStaff = () => {
+    if (!isAdminLoggedIn) {
+      if (onRequireLogin) onRequireLogin();
+      return;
+    }
     setEditingStaff(null);
     setStaffFormData({
       name: '',
@@ -280,6 +311,10 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
 
   // Open edit staff
   const handleOpenEditStaff = (stf: Staff) => {
+    if (!checkModifyStaff(stf)) {
+      showToast('আপনি শুধুমাত্র নিজের যোগ করা কর্মীর তথ্য ৩০ মিনিটের মধ্যে এডিট করতে পারবেন', 'error');
+      return;
+    }
     setEditingStaff(stf);
     setStaffFormData({
       name: stf.name,
@@ -316,11 +351,19 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
 
   // Open Pay Salary Modal
   const handleOpenPayModal = (staff: Staff, targetMonth?: string) => {
+    if (!isAdminLoggedIn) {
+      if (onRequireLogin) onRequireLogin();
+      return;
+    }
     const effectiveMonth = targetMonth || selectedMonth;
+    const existing = salaries.find(s => s.staffId === staff.id && s.month === effectiveMonth);
+    if (existing && !checkModifySalary(existing)) {
+      showToast('অন্যের তৈরি বেতন রেকর্ড পরিবর্তন করার অনুমতি নেই', 'error');
+      return;
+    }
     if (targetMonth && targetMonth !== selectedMonth) {
       onMonthChange(targetMonth);
     }
-    const existing = salaries.find(s => s.staffId === staff.id && s.month === effectiveMonth);
     const companyDue = getStaffCompanyDue(staff);
     setSelectedStaffForPay(staff);
 
@@ -376,6 +419,10 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
   const handleMarkPending = async (staff: Staff) => {
     const existing = salaryMap.get(staff.id);
     if (!existing) return;
+    if (!checkModifySalary(existing)) {
+      showToast('আপনি শুধুমাত্র নিজের এন্ট্রি করা বেতন রেকর্ড ৩০ মিনিটের মধ্যে বাতিল করতে পারবেন', 'error');
+      return;
+    }
     setConfirmState({
       isOpen: true,
       title: 'বেতন বকেয়া চিহ্নিতকরণ',
@@ -387,6 +434,13 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
     });
   };
 
+  const activeDetailModInfo = activeStaffDetail && getModifyInfo ? getModifyInfo(activeStaffDetail) : null;
+  const activeDetailCountdown =
+    isSubAdmin && activeDetailModInfo?.allowed && Number.isFinite(activeDetailModInfo.remainingMs)
+      ? formatRemainingCountdown(activeDetailModInfo.remainingMs, true)
+      : null;
+  const activeDetailSal = activeStaffDetail ? salaryMap.get(activeStaffDetail.id) : undefined;
+
   return (
     <div className="space-y-5 animate-in fade-in duration-200">
       {activeStaffDetail ? (
@@ -397,10 +451,17 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
           companyDue={getStaffCompanyDue(activeStaffDetail)}
           config={config}
           isAdminLoggedIn={isAdminLoggedIn}
+          canModifyStaff={checkModifyStaff(activeStaffDetail)}
+          canDisburseSalary={isAdminLoggedIn && (!activeDetailSal || (activeDetailSal.paymentStatus !== 'paid' && checkModifySalary(activeDetailSal)))}
+          staffModifyCountdown={activeDetailCountdown}
           onBack={() => openStaffDetail(null)}
           onPaySalary={(stf, targetMonth) => handleOpenPayModal(stf, targetMonth)}
           onEditStaff={(stf) => handleOpenEditStaff(stf)}
           onDeleteStaff={(stf) => {
+            if (!checkModifyStaff(stf)) {
+              showToast('আপনি শুধুমাত্র নিজের যোগ করা কর্মীকে ৩০ মিনিটের মধ্যে মুছতে পারবেন', 'error');
+              return;
+            }
             setConfirmState({
               isOpen: true,
               title: 'স্টাফ মুছে ফেলার নিশ্চিতকরণ',
@@ -824,21 +885,32 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
                                   <Printer className="w-3.5 h-3.5" />
                                   <span>রসিদ</span>
                                 </button>
-                                {isAdminLoggedIn && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleMarkPending(staff);
-                                    }}
-                                    className="px-2 py-1.5 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
-                                    title="রোলব্যাক / বাতিল করুন"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
+                                {sal && checkModifySalary(sal) && (
+                                  <>
+                                    {isSubAdmin && getModifyInfo && (() => {
+                                      const info = getModifyInfo(sal);
+                                      return info.allowed && Number.isFinite(info.remainingMs) ? (
+                                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[9px] font-bold">
+                                          <Clock className="w-2.5 h-2.5" />
+                                          {formatRemainingCountdown(info.remainingMs, true)}
+                                        </span>
+                                      ) : null;
+                                    })()}
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleMarkPending(staff);
+                                      }}
+                                      className="px-2 py-1.5 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                                      title="রোলব্যাক / বাতিল করুন"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </>
                                 )}
                               </>
                             ) : (
-                              isAdminLoggedIn && (
+                              isAdminLoggedIn && (!sal || checkModifySalary(sal)) && (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -875,19 +947,23 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
                 নেটওয়ার্ক ইঞ্জিনিয়ার, লাইন টেকনিশিয়ান ও বিল কালেকশন কর্মীদের তালিকা
               </p>
             </div>
-            <button
-              onClick={handleOpenAddStaff}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>নতুন কর্মী যোগ</span>
-            </button>
+            {isAdminLoggedIn && (
+              <button
+                onClick={handleOpenAddStaff}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition-colors cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>নতুন কর্মী যোগ</span>
+              </button>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
             {unifiedStaff.map(staff => {
               const currentSal = salaryMap.get(staff.id);
               const isPaid = currentSal && currentSal.paymentStatus === 'paid';
+              const canModThisStaff = checkModifyStaff(staff);
+              const staffModInfo = getModifyInfo ? getModifyInfo(staff) : null;
               return (
                 <div
                   key={staff.id}
@@ -952,17 +1028,27 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
                     >
                       <span>বিস্তারিত ও বেতন রশিদ →</span>
                     </button>
-                    {isAdminLoggedIn && (
+                    {canModThisStaff && (
                       <div className="flex items-center gap-1.5">
+                        {isSubAdmin && staffModInfo?.allowed && Number.isFinite(staffModInfo.remainingMs) && (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 text-[9px] font-bold">
+                            <Clock className="w-2.5 h-2.5" />
+                            {formatRemainingCountdown(staffModInfo.remainingMs, true)}
+                          </span>
+                        )}
                         <button
                           onClick={() => handleOpenEditStaff(staff)}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-medium transition-colors"
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-medium transition-colors cursor-pointer"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                           <span>এডিট</span>
                         </button>
                         <button
                           onClick={() => {
+                            if (!checkModifyStaff(staff)) {
+                              showToast('আপনি শুধুমাত্র নিজের যোগ করা কর্মীকে ৩০ মিনিটের মধ্যে মুছতে পারবেন', 'error');
+                              return;
+                            }
                             setConfirmState({
                               isOpen: true,
                               title: 'স্টাফ মুছে ফেলার নিশ্চিতকরণ',
@@ -973,7 +1059,7 @@ export const StaffSalaryManager: React.FC<StaffSalaryManagerProps> = ({
                               }
                             });
                           }}
-                          className="p-1.5 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors"
+                          className="p-1.5 rounded-lg hover:bg-rose-50 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
                           title="মুছুন"
                         >
                           <Trash2 className="w-4 h-4" />

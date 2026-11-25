@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { Language, PaymentChannel } from '../types';
 import { sounds } from '../utils/audio';
+import { canAddTransactions } from '../utils/permissions';
 import { SmartChannelIcon, getChannelGradient } from './SmartChannelIcon';
 
 interface GridMenuProps {
@@ -144,7 +145,8 @@ export const GridMenu: React.FC<GridMenuProps> = ({
     <div className="px-4 py-3 select-none">
       <div className="grid grid-cols-4 gap-2.5">
           {menuItems.map((item) => {
-            if (['income', 'expense', 'channels'].includes(item.id) && user?.role !== 'admin') return null;
+            if (item.id === 'channels' && user?.role !== 'admin') return null;
+            if ((item.id === 'income' || item.id === 'expense') && !canAddTransactions(user)) return null;
             
             const matchedChannel = item.channelName 
               ? channels.find(c => c.name === item.channelName) 

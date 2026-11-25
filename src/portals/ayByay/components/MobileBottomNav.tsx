@@ -43,6 +43,8 @@ interface MobileBottomNavProps {
   config?: AppConfig;
   onAdminLogout?: () => void;
   isAdminLoggedIn?: boolean;
+  canCreateEntry?: boolean;
+  isSubAdmin?: boolean;
   isDarkMode?: boolean;
   onToggleDarkMode?: () => void;
   onOpenAdminLogin?: () => void;
@@ -65,6 +67,8 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   config,
   onAdminLogout,
   isAdminLoggedIn,
+  canCreateEntry,
+  isSubAdmin = false,
   isDarkMode,
   onToggleDarkMode,
   onOpenAdminLogin,
@@ -73,6 +77,7 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   onToggleDrawer,
   onCloseDrawer
 }) => {
+  const canCreate = canCreateEntry ?? isAdminLoggedIn;
   // Local fallback if drawer state is not provided from parent
   const [internalDrawer, setInternalDrawer] = useState(false);
   const showDrawer = isDrawerOpen !== undefined ? isDrawerOpen : internalDrawer;
@@ -374,17 +379,19 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
               )}
 
               {/* Admin Login / Logout button */}
-              {isAdminLoggedIn ? (
+              {isAdminLoggedIn || isSubAdmin ? (
                 <button
                   type="button"
                   onClick={() => {
                     if (onAdminLogout) onAdminLogout();
                     handleCloseDrawer();
                   }}
-                  className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-xs cursor-pointer"
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-white text-xs font-bold transition shadow-xs cursor-pointer ${
+                    isSubAdmin ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-emerald-600 hover:bg-emerald-700'
+                  }`}
                 >
                   <ShieldCheck className="w-4 h-4" />
-                  <span>এডমিন লগআউট</span>
+                  <span>{isSubAdmin ? 'সাব-অ্যাডমিন লগআউট' : 'এডমিন লগআউট'}</span>
                 </button>
               ) : (
                 <button
@@ -436,8 +443,8 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
             <span className="text-[10px] mt-0.5">স্টক</span>
           </button>
 
-          {/* 3. New Entry (Floating Center Action) - Admin Only */}
-          {isAdminLoggedIn && (
+          {/* 3. New Entry (Floating Center Action) - Permitted Role */}
+          {canCreate && (
             <button
               onClick={() => handleNav('new_entry')}
               className="flex flex-col items-center justify-center min-w-[52px] min-h-[44px] -mt-4 group cursor-pointer"

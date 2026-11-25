@@ -27,7 +27,7 @@ import { compressImage } from '../utils/imageCompressor';
 import { savePersistentImage } from '../utils/imageStorage';
 import { useSubViewBack } from '../utils/useSubViewBack';
 import { doesOwnerMatchAccount, isActualStaffAccount, isNonStaffRoleAccount, isOwnerRoleAccount, normalizePersonName } from '../utils/ownerDueSync';
-import { hasSubAdminPermission, normalizePhoneNumber } from '../utils/permissions';
+import { canModifyOwnedRecord, formatRemainingCountdown, getActorStamp, hasSubAdminPermission, normalizePhoneNumber } from '../utils/permissions';
 
 interface StaffManagerModalProps {
   isOpen: boolean;
@@ -70,6 +70,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
   const [deletingStaff, setDeletingStaff] = useState<StaffAccount | null>(null);
   const [deletingTx, setDeletingTx] = useState<{ staffId: string; txId: string; note: string; amount: number } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -104,10 +105,18 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
   const [selectedStaffOptionId, setSelectedStaffOptionId] = useState('');
   const [selectedOwnerOptionId, setSelectedOwnerOptionId] = useState('');
 
+  const [nonStaffVersion, setNonStaffVersion] = useState(0);
+  useEffect(() => {
+    const handleNonStaffUpdated = () => setNonStaffVersion((v) => v + 1);
+    window.addEventListener('non-staff-users-updated', handleNonStaffUpdated);
+    return () => window.removeEventListener('non-staff-users-updated', handleNonStaffUpdated);
+  }, []);
+
   // Full active staff roster (for 1-click dropdown selection even when their company due is 0)
   const staffRoster = React.useMemo(() => {
+    void nonStaffVersion;
     return (accounts || []).filter(isActualStaffAccount);
-  }, [accounts]);
+  }, [accounts, nonStaffVersion]);
 
   // Deduplicated unique owners list from Quick Hisab for 1-click form autofill
   const uniqueOwners = React.useMemo(() => {
@@ -132,6 +141,14 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
   useEffect(() => {
     setAccounts(staffAccounts);
   }, [staffAccounts]);
+
+  // Refresh 30-min edit/delete countdown every 15s for Sub-Admin
+  useEffect(() => {
+    if (!isOpen || user?.role !== 'sub-admin') return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 15000);
+    return () => window.clearInterval(timer);
+  }, [isOpen, user?.role]);
 
   // Keep selectedStaff up to date if accounts change
   useEffect(() => {
@@ -279,13 +296,21 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
   };
 
   const isAdmin = user?.role === 'admin';
-  const canManageDues = isAdmin || (user?.role === 'sub-admin' && hasSubAdminPermission(user, 'staffManager'));
+  const isSubAdmin = user?.role === 'sub-admin';
+  const canAddDues = isAdmin || (isSubAdmin && hasSubAdminPermission(user, 'staffManager'));
+  const actorStamp = getActorStamp(user) || (isAdmin ? 'admin-primary' : '');
+
+  const canModifyAccount = (acc?: StaffAccount | null, checkTime: number = nowMs): boolean =>
+    Boolean(acc && (isAdmin || canModifyOwnedRecord(acc, user, 'staffManager', checkTime).allowed));
+
+  const canModifyTx = (tx?: StaffTransaction | null, checkTime: number = nowMs): boolean =>
+    Boolean(tx && (isAdmin || canModifyOwnedRecord(tx, user, 'staffManager', checkTime).allowed));
 
   // Create or Update Company Due Account (reusing existing staff/owner record to avoid duplicates)
   const handleSaveStaffForm = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canManageDues) {
-      showToast(isBn ? 'দুঃখিত, শুধুমাত্র অ্যাডমিন বা অনুমোদিত সাব-অ্যাডমিন হিসাব পরিবর্তন করতে পারবেন' : 'Sorry, only admin or permitted sub-admin can modify accounts');
+    if (!canAddDues) {
+      showToast(isBn ? 'দুঃখিত, এই অপশনে ডেটা এন্ট্রির অনুমতি নেই' : 'Sorry, you do not have permission to add dues');
       return;
     }
 
@@ -299,6 +324,14 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
     let updatedList: StaffAccount[] = [];
 
     if (editingStaff) {
+      if (!canModifyAccount(editingStaff, Date.now())) {
+        showToast(
+          isBn
+            ? 'সাব-অ্যাডমিন শুধুমাত্র নিজের তৈরি হিসাব ৩০ মিনিটের মধ্যে এডিট করতে পারবেন'
+            : 'Sub-Admin can only edit own created accounts within 30 minutes'
+        );
+        return;
+      }
       sounds.playSuccess();
       updatedList = accounts.map(a => {
         if (a.id === editingStaff.id) {
@@ -363,10 +396,11 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
           customerAddress: staffAddress.trim() || existingTargetAcc.address || '',
           reference: staffReference.trim() || existingTargetAcc.reference || '',
           note: staffNotes.trim() || 'কোম্পানি পাওনা যোগ',
-          recordedBy: user?.name || 'অ্যাডমিন',
+          recordedBy: actorStamp || 'admin-primary',
           created: Date.now()
         };
 
+        const allowAccountMetadataUpdate = canModifyAccount(existingTargetAcc, Date.now());
         updatedList = accounts.map((a) => {
           if (a.id !== existingTargetAcc.id) return a;
           const nextTxs = [...(a.transactions || []), dueTx];
@@ -374,10 +408,14 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
           const newTotalCollected = nextTxs.filter((t) => t.type === 'collection').reduce((s, t) => s + (t.amount || 0), 0);
           return {
             ...a,
-            address: staffAddress.trim() || a.address || '',
-            reference: staffReference.trim() || a.reference || '',
-            avatarUrl: staffAvatar || a.avatarUrl || '',
-            notes: staffNotes.trim() || a.notes || '',
+            ...(allowAccountMetadataUpdate
+              ? {
+                  address: staffAddress.trim() || a.address || '',
+                  reference: staffReference.trim() || a.reference || '',
+                  avatarUrl: staffAvatar || a.avatarUrl || '',
+                  notes: staffNotes.trim() || a.notes || ''
+                }
+              : {}),
             totalDue: newTotalDue,
             totalCollected: newTotalCollected,
             remainingDue: newTotalDue - newTotalCollected,
@@ -391,9 +429,10 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
         showToast(`"${existingTargetAcc.name}" এর খাতায় ${formatCurrency(initDueVal, lang)} কোম্পানি পাওনা যোগ হয়েছে!`);
       } else {
         const newAccountId = `staff-${Date.now()}`;
+        const createdMs = Date.now();
         const initialTx: StaffTransaction[] = [
           {
-            id: `stx-${Date.now()}`,
+            id: `stx-${createdMs}`,
             staffId: newAccountId,
             type: 'due',
             amount: initDueVal,
@@ -404,8 +443,8 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
             customerAddress: staffAddress.trim() || '',
             reference: staffReference.trim() || '',
             note: staffNotes.trim() || 'কোম্পানি পাওনা বিল',
-            recordedBy: user?.name || 'অ্যাডমিন',
-            created: Date.now()
+            recordedBy: actorStamp || 'admin-primary',
+            created: createdMs
           }
         ];
 
@@ -424,7 +463,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
           notes: staffNotes.trim() || '',
           isActive: true,
           baseSalary: 0,
-          recordedBy: user?.id || user?.name || 'admin',
+          recordedBy: actorStamp || 'admin-primary',
           createdAt: nowIso,
           transactions: initialTx
         };
@@ -496,8 +535,12 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
 
   // Open Edit Account Modal
   const handleOpenEditStaff = (staff: StaffAccount) => {
-    if (!canManageDues) {
-      showToast(isBn ? 'হিসাব পরিবর্তন করার অনুমতি নেই' : 'Permission denied');
+    if (!canModifyAccount(staff, Date.now())) {
+      showToast(
+        isBn
+          ? 'শুধুমাত্র নিজের তৈরি হিসাব ৩০ মিনিটের মধ্যে পরিবর্তন করা যাবে'
+          : 'You can only edit accounts you created within 30 minutes'
+      );
       return;
     }
     sounds.playTap();
@@ -519,8 +562,12 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
 
   // Request Delete Staff Account (Open Custom Dialog)
   const handleRequestDeleteStaff = (staff: StaffAccount) => {
-    if (!canManageDues) {
-      showToast(isBn ? 'ডিলিট করার অনুমতি নেই' : 'Permission denied');
+    if (!canModifyAccount(staff, Date.now())) {
+      showToast(
+        isBn
+          ? 'শুধুমাত্র নিজের তৈরি হিসাব ৩০ মিনিটের মধ্যে ডিলিট করা যাবে'
+          : 'You can only delete accounts you created within 30 minutes'
+      );
       return;
     }
     sounds.playTap();
@@ -530,7 +577,12 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
 
   // Confirm Delete Staff Account
   const handleConfirmDeleteStaff = () => {
-    if (!deletingStaff || !canManageDues) return;
+    if (!deletingStaff) return;
+    if (!canModifyAccount(deletingStaff, Date.now())) {
+      setDeletingStaff(null);
+      showToast(isBn ? '৩০ মিনিটের সময়সীমা শেষ বা অনুমতি নেই' : '30-minute window expired or permission denied');
+      return;
+    }
     sounds.playSuccess();
     const staffId = deletingStaff.id;
     const staffName = deletingStaff.name;
@@ -562,8 +614,8 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
 
   // Open Add Due or Record Collection Entry Modal
   const handleOpenEntry = (staff: StaffAccount, type: 'due' | 'collection') => {
-    if (!canManageDues) {
-      showToast(isBn ? 'হিসাব পরিবর্তন করার অনুমতি নেই' : 'Permission denied');
+    if (!canAddDues) {
+      showToast(isBn ? 'হিসাব এন্ট্রি করার অনুমতি নেই' : 'Permission denied');
       return;
     }
     sounds.playTap();
@@ -580,10 +632,14 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
     window.history.pushState({ staffModal: 'entry' }, '');
   };
 
-  // Open Edit Staff Transaction Modal (Admin & permitted Sub-Admin)
+  // Open Edit Staff Transaction Modal (Admin or Sub-Admin own entry within 30 mins)
   const handleOpenEditTx = (staff: StaffAccount, tx: StaffTransaction) => {
-    if (!canManageDues) {
-      showToast(isBn ? 'লেনদেন পরিবর্তন করার অনুমতি নেই' : 'Permission denied');
+    if (!canModifyTx(tx, Date.now())) {
+      showToast(
+        isBn
+          ? 'শুধুমাত্র নিজের এন্ট্রি করা লেনদেন ৩০ মিনিটের মধ্যে এডিট করা যাবে'
+          : 'You can only edit your own entry within 30 minutes'
+      );
       return;
     }
     sounds.playTap();
@@ -603,11 +659,20 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
   // Submit Dues / Collection Entry or Save Edited Transaction
   const handleSaveEntry = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canManageDues) {
-      showToast(isBn ? 'হিসাব পরিবর্তন করার অনুমতি নেই' : 'Permission denied');
+    if (!canAddDues) {
+      showToast(isBn ? 'হিসাব এন্ট্রি করার অনুমতি নেই' : 'Permission denied');
       return;
     }
     if (!entryStaff) return;
+
+    if (editingTx && !canModifyTx(editingTx, Date.now())) {
+      showToast(
+        isBn
+          ? '৩০ মিনিট সময়সীমা শেষ বা অন্য কারো এন্ট্রি পরিবর্তন করা যাবে না'
+          : '30-minute window expired or cannot edit others entry'
+      );
+      return;
+    }
 
     const amt = parseFloat(toEnglishNumber(entryAmount).replace(/,/g, ''));
     if (isNaN(amt) || amt <= 0) {
@@ -629,7 +694,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
         customerAddress: entryAddress.trim() || '',
         reference: entryReference.trim() || '',
         note: entryNote.trim() || (entryCustomerName.trim() ? entryCustomerName.trim() : (entryType === 'due' ? 'কোম্পানি পাওনা বিল' : 'স্টাফ কালেকশন ক্যাশ জমা')),
-        recordedBy: user?.name || editingTx.recordedBy || 'অ্যাডমিন',
+        recordedBy: editingTx.recordedBy || actorStamp || 'admin-primary',
       };
 
       const updatedList = accounts.map(a => {
@@ -688,7 +753,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
       customerAddress: entryAddress.trim() || '',
       reference: entryReference.trim() || '',
       note: entryNote.trim() || (entryCustomerName.trim() ? entryCustomerName.trim() : (entryType === 'due' ? 'কোম্পানি পাওনা বিল' : 'স্টাফ কালেকশন ক্যাশ জমা')),
-      recordedBy: user?.name || 'অ্যাডমিন',
+      recordedBy: actorStamp || 'admin-primary',
       created: Date.now()
     };
 
@@ -732,8 +797,12 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
 
   // Request Delete Individual Staff Transaction (Custom Dialog)
   const handleRequestDeleteTx = (staffId: string, tx: StaffTransaction) => {
-    if (!canManageDues) {
-      showToast(isBn ? 'ডিলিট করার অনুমতি নেই' : 'Permission denied');
+    if (!canModifyTx(tx, Date.now())) {
+      showToast(
+        isBn
+          ? 'শুধুমাত্র নিজের এন্ট্রি করা লেনদেন ৩০ মিনিটের মধ্যে ডিলিট করা যাবে'
+          : 'You can only delete your own entry within 30 minutes'
+      );
       return;
     }
     sounds.playTap();
@@ -748,7 +817,18 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
 
   // Confirm Delete Individual Staff Transaction
   const handleConfirmDeleteTx = () => {
-    if (!deletingTx || !canManageDues) return;
+    if (!deletingTx || !canAddDues) return;
+    const targetStaffObj = accounts.find(a => a.id === deletingTx.staffId);
+    const targetTxObj = targetStaffObj?.transactions?.find(t => String(t.id || '').trim() === String(deletingTx.txId || '').trim());
+    if (!isAdmin && (!targetTxObj || !canModifyTx(targetTxObj, Date.now()))) {
+      setDeletingTx(null);
+      showToast(
+        isBn
+          ? '৩০ মিনিটের সময়সীমা শেষ বা অন্য কারো এন্ট্রি মুছা যাবে না'
+          : '30-minute window expired or cannot delete others entry'
+      );
+      return;
+    }
     sounds.playSuccess();
     const { staffId, txId } = deletingTx;
 
@@ -1227,7 +1307,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
           </button>
 
           {/* Add Due / Account Button */}
-          {canManageDues && (
+          {canAddDues && (
             <button
               onClick={() => {
                 sounds.playTap();
@@ -1300,6 +1380,25 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
             </p>
           </div>
         </div>
+
+        {/* Sub-Admin Rule Banner */}
+        {isSubAdmin && (
+          <div
+            className={`px-3.5 py-2.5 rounded-2xl border text-[11px] font-bold ${
+              canAddDues
+                ? 'bg-indigo-50/80 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-800/60 text-indigo-800 dark:text-indigo-200'
+                : 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            {canAddDues
+              ? isBn
+                ? 'সাব-অ্যাডমিন: নতুন পাওনা ও কালেকশন এন্ট্রি অনুমোদিত • শুধু নিজের এন্ট্রি ৩০ মিনিটের মধ্যে এডিট বা মুছে ফেলতে পারবেন'
+                : 'Sub-Admin: Entry permitted • Edit or delete own entries within 30 minutes only'
+              : isBn
+                ? 'সাব-অ্যাডমিন (শুধু দেখার মোড): সম্পূর্ণ খাতা দেখতে পারবেন • ডেটা এন্ট্রির জন্য অ্যাডমিনের পার্মিশন প্রয়োজন'
+                : 'Sub-Admin (View-Only): Full ledger visible • Admin permission required for entries'}
+          </div>
+        )}
 
         {/* Search & Filter Bar */}
         <div className="relative">
@@ -1455,7 +1554,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                           >
                             <FileText className="w-3.5 h-3.5" />
                           </button>
-                          {canManageDues && (
+                          {canModifyAccount(staff) && (
                             <>
                               <button
                                 onClick={() => handleOpenEditStaff(staff)}
@@ -1509,7 +1608,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
 
                     {/* Bottom Action Row */}
                     <div className="flex gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
-                      {canManageDues && (
+                      {canAddDues && (
                         <>
                           <button
                             onClick={() => handleOpenEntry(staff, 'due')}
@@ -1535,7 +1634,7 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                           setSelectedStaff(staff);
                           window.history.pushState({ staffModal: 'detail' }, '');
                         }}
-                        className={`${canManageDues ? 'px-3' : 'flex-1'} h-9 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center justify-center active:scale-95`}
+                        className={`${canAddDues ? 'px-3' : 'flex-1'} h-9 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-bold flex items-center justify-center active:scale-95`}
                       >
                         {isBn ? 'খাতা' : 'Ledger'}
                       </button>
@@ -1625,7 +1724,13 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                 <p className="text-xs text-slate-400 py-4 text-center">
                   {isBn ? 'কোনো লেনদেন রেকর্ড পাওয়া যায়নি' : 'No transactions recorded yet'}
                 </p>
-              ) : (
+              ) : (() => {
+                const showTxActionCol =
+                  isAdmin ||
+                  (isSubAdmin &&
+                    hasSubAdminPermission(user, 'staffManager') &&
+                    (selectedStaff.transactions || []).some((t) => canModifyTx(t)));
+                return (
                 <div className="overflow-x-auto max-h-60">
                   <table className="w-full text-left border-collapse text-[10px]">
                     <thead>
@@ -1638,13 +1743,16 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                         <th className="p-2 border border-slate-200 dark:border-slate-700">টাকা</th>
                         <th className="p-2 border border-slate-200 dark:border-slate-700">রেফারেন্স</th>
                         <th className="p-2 border border-slate-200 dark:border-slate-700">স্টাটাস</th>
-                        {canManageDues && (
+                        {showTxActionCol && (
                           <th className="p-2 border border-slate-200 dark:border-slate-700 text-center">অ্যাকশন</th>
                         )}
                       </tr>
                     </thead>
                     <tbody>
-                      {getSortedTransactions(selectedStaff.transactions).map((tx, idx) => (
+                      {getSortedTransactions(selectedStaff.transactions).map((tx, idx) => {
+                        const txMod = canModifyOwnedRecord(tx, user, 'staffManager', nowMs);
+                        const allowRowAction = isAdmin || txMod.allowed;
+                        return (
                         <tr key={tx.id} className="border-b border-slate-100 dark:border-slate-700 hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                           <td className="p-2 border border-slate-200 dark:border-slate-700 font-bold">{toBengaliNumber(idx + 1)}</td>
                           <td className="p-2 border border-slate-200 dark:border-slate-700 whitespace-nowrap">{tx.date}</td>
@@ -1664,46 +1772,59 @@ export const StaffManagerModal: React.FC<StaffManagerModalProps> = ({
                               {tx.type === 'due' ? 'পাওনা' : 'জমা'}
                             </span>
                           </td>
-                          {canManageDues && (
+                          {showTxActionCol && (
                             <td className="p-2 border border-slate-200 dark:border-slate-700 text-center whitespace-nowrap">
-                              <div className="flex items-center justify-center gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleOpenEditTx(selectedStaff, tx);
-                                  }}
-                                  className="h-7 px-2 rounded-lg bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center gap-1 font-bold text-[11px] transition-all active:scale-95 shadow-2xs"
-                                  title="লেনদেন এডিট করুন"
-                                >
-                                  <Edit2 className="w-3 h-3" />
-                                  <span>এডিট</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleRequestDeleteTx(selectedStaff.id, tx);
-                                  }}
-                                  className="h-7 px-2 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center gap-1 font-bold text-[11px] transition-all active:scale-95 shadow-2xs"
-                                  title="লেনদেন ডিলিট করুন"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                  <span>ডিলিট</span>
-                                </button>
-                              </div>
+                              {allowRowAction ? (
+                                <div className="flex flex-col items-center gap-1">
+                                  <div className="flex items-center justify-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleOpenEditTx(selectedStaff, tx);
+                                      }}
+                                      className="h-7 px-2 rounded-lg bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center gap-1 font-bold text-[11px] transition-all active:scale-95 shadow-2xs"
+                                      title="লেনদেন এডিট করুন"
+                                    >
+                                      <Edit2 className="w-3 h-3" />
+                                      <span>এডিট</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleRequestDeleteTx(selectedStaff.id, tx);
+                                      }}
+                                      className="h-7 px-2 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center gap-1 font-bold text-[11px] transition-all active:scale-95 shadow-2xs"
+                                      title="লেনদেন ডিলিট করুন"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                      <span>ডিলিট</span>
+                                    </button>
+                                  </div>
+                                  {isSubAdmin && (
+                                    <span className="text-[9px] font-bold text-amber-600 dark:text-amber-400 tabular-nums">
+                                      {formatRemainingCountdown(txMod.remainingMs, true)}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-[10px] text-slate-400">—</span>
+                              )}
                             </td>
                           )}
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
-              )}
+                );
+              })()}
             </div>
 
             {/* Modal Bottom Actions (Admin & permitted Sub-Admin) */}
-            {canManageDues && (
+            {canAddDues && (
               <div className="flex gap-2 pt-2">
                 <button
                   onClick={() => handleOpenEntry(selectedStaff, 'due')}

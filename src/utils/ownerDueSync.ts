@@ -1,7 +1,62 @@
 import { QuickHisabOwner, StaffAccount, StaffTransaction, UserSession } from '../types';
 import { toEnglishNumber } from './formatters';
 import { normalizePhoneNumber } from './permissions';
+import { safeStorage } from './safeStorage';
 import { broadcastStaffAccounts, upsertSingleStaffToCloud } from './staffSync';
+
+export interface NonStaffUserRef {
+  id: string;
+  phoneNorm: string;
+  role: 'admin' | 'sub-admin';
+}
+
+const NON_STAFF_USER_REFS_KEY = 'protyasha_non_staff_user_refs';
+let cachedNonStaffUserRefs: NonStaffUserRef[] | null = null;
+
+export const getNonStaffUserRefs = (): NonStaffUserRef[] => {
+  if (cachedNonStaffUserRefs !== null) return cachedNonStaffUserRefs;
+  try {
+    const raw = safeStorage.getItem(NON_STAFF_USER_REFS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        cachedNonStaffUserRefs = parsed.filter(
+          (r) => r && (typeof r.id === 'string' || typeof r.phoneNorm === 'string')
+        );
+        return cachedNonStaffUserRefs;
+      }
+    }
+  } catch {}
+  cachedNonStaffUserRefs = [];
+  return cachedNonStaffUserRefs;
+};
+
+export const setNonStaffUserRefs = (refs: NonStaffUserRef[]): void => {
+  const dedupedMap = new Map<string, NonStaffUserRef>();
+  (refs || []).forEach((r) => {
+    if (!r) return;
+    const id = String(r.id || '').trim();
+    const phoneNorm = String(r.phoneNorm || '').trim();
+    const role = r.role === 'admin' ? 'admin' : 'sub-admin';
+    if (!id && phoneNorm.length < 6) return;
+    const key = `${role}:${id}:${phoneNorm}`;
+    dedupedMap.set(key, { id, phoneNorm, role });
+  });
+  const next = Array.from(dedupedMap.values());
+  const prevSerialized = JSON.stringify(getNonStaffUserRefs());
+  const nextSerialized = JSON.stringify(next);
+  cachedNonStaffUserRefs = next;
+  if (prevSerialized !== nextSerialized) {
+    try {
+      safeStorage.setItem(NON_STAFF_USER_REFS_KEY, nextSerialized);
+    } catch {}
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('non-staff-users-updated', { detail: next }));
+      }
+    } catch {}
+  }
+};
 
 export const isOwnerRoleAccount = (acc?: Pick<StaffAccount, 'role'> | { role?: string; designation?: string } | null): boolean => {
   if (!acc || (acc as StaffAccount).isActive === false) return false;
@@ -12,6 +67,48 @@ export const isOwnerRoleAccount = (acc?: Pick<StaffAccount, 'role'> | { role?: s
     roleText.includes('owner') ||
     roleText.includes('partner')
   );
+};
+
+export const isSubAdminOrAdminRoleText = (
+  acc?: Pick<StaffAccount, 'role'> | { role?: string; designation?: string } | null
+): boolean => {
+  if (!acc) return false;
+  const roleText = `${acc.role || ''} ${(acc as any).designation || ''}`.toLowerCase();
+  const trimmed = roleText.trim();
+  return (
+    roleText.includes('সাব-অ্যাডমিন') ||
+    roleText.includes('সাব-এডমিন') ||
+    roleText.includes('সাব অ্যাডমিন') ||
+    roleText.includes('সাব এডমিন') ||
+    roleText.includes('সাবঅ্যাডমিন') ||
+    roleText.includes('সাবএডমিন') ||
+    roleText.includes('sub-admin') ||
+    roleText.includes('sub admin') ||
+    roleText.includes('subadmin') ||
+    roleText.includes('sub_admin') ||
+    trimmed === 'অ্যাডমিন' ||
+    trimmed === 'এডমিন' ||
+    trimmed === 'admin'
+  );
+};
+
+export const isSubAdminOrAdminAccountMatch = (
+  acc?: { id?: string; phone?: string; role?: string; designation?: string } | null,
+  refsOverride?: NonStaffUserRef[]
+): boolean => {
+  if (!acc) return false;
+  if (isSubAdminOrAdminRoleText(acc)) return true;
+  const refs = refsOverride ?? getNonStaffUserRefs();
+  if (!refs || refs.length === 0) return false;
+  const accId = String(acc.id || '').trim();
+  const accPhoneNorm = normalizePhoneNumber(acc.phone);
+  return refs.some((ref) => {
+    if (accId && ref.id && accId === ref.id) return true;
+    if (accPhoneNorm.length >= 6 && ref.phoneNorm.length >= 6 && accPhoneNorm === ref.phoneNorm) {
+      return true;
+    }
+    return false;
+  });
 };
 
 export const isNonStaffRoleAccount = (
@@ -30,6 +127,7 @@ export const isNonStaffRoleAccount = (
     roleText.includes('customer') ||
     roleText.includes('member') ||
     roleText.includes('স্টাফ নয়') ||
+    isSubAdminOrAdminRoleText(acc) ||
     trimmed === 'অন্যান্য' ||
     trimmed === 'other'
   );
@@ -37,7 +135,9 @@ export const isNonStaffRoleAccount = (
 
 export const isActualStaffAccount = (acc?: StaffAccount | null): boolean => {
   if (!acc || acc.isActive === false) return false;
-  return !isNonStaffRoleAccount(acc);
+  if (isNonStaffRoleAccount(acc)) return false;
+  if (isSubAdminOrAdminAccountMatch(acc)) return false;
+  return true;
 };
 
 export const normalizePersonName = (raw?: string | null, stripParens = true): string => {

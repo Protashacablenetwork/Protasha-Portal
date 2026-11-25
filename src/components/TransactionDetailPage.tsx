@@ -25,7 +25,7 @@ import {
 } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import { canModifyTransaction, isSubAdmin as checkIsSubAdmin } from '../utils/permissions';
-import { showToast } from '../utils/uiFeedback';
+import { showConfirm, showToast } from '../utils/uiFeedback';
 
 interface TransactionDetailPageProps {
   transaction: Transaction;
@@ -34,6 +34,7 @@ interface TransactionDetailPageProps {
   onBack: () => void;
   onEdit: (trx: Transaction) => void;
   onDelete: (trx: Transaction) => void;
+  onPermanentDelete?: (id: string) => void;
   onViewReceipt: (trx: Transaction) => void;
   onOpenLogin: () => void;
 }
@@ -45,6 +46,7 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({
   onBack,
   onEdit,
   onDelete,
+  onPermanentDelete,
   onViewReceipt,
   onOpenLogin
 }) => {
@@ -415,12 +417,36 @@ export const TransactionDetailPage: React.FC<TransactionDetailPageProps> = ({
                   sounds.playTap();
                   onDelete(transaction);
                 }}
-                className="h-12 rounded-xl bg-[#E52E2E] hover:bg-rose-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-sm"
+                className="h-12 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-sm"
               >
                 <Trash2 className="w-4 h-4" />
-                <span>{lang === 'bn' ? '🗑️ ডিলিট করুন' : 'Delete Entry'}</span>
+                <span>{lang === 'bn' ? '🗑️ ডিলিট (রিসাইকেল)' : 'Move to Bin'}</span>
               </button>
             </div>
+            {onPermanentDelete && (
+              <button
+                onClick={async () => {
+                  sounds.playTap();
+                  const ok = await showConfirm({
+                    message:
+                      lang === 'bn'
+                        ? 'এই এন্ট্রিটি স্থায়ীভাবে মুছে ফেলতে চান? এটি আর পুনরুদ্ধার করা যাবে না।'
+                        : 'Permanently delete this entry? This cannot be undone.',
+                    confirmLabel: lang === 'bn' ? 'স্থায়ীভাবে মুছুন' : 'Delete Permanently',
+                    cancelLabel: lang === 'bn' ? 'বাতিল' : 'Cancel',
+                    danger: true
+                  });
+                  if (ok) {
+                    onPermanentDelete(transaction.id);
+                    onBack();
+                  }
+                }}
+                className="w-full h-11 rounded-xl bg-[#E52E2E] hover:bg-rose-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-sm"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>{lang === 'bn' ? 'স্থায়ীভাবে মুছে ফেলুন' : 'Delete Permanently'}</span>
+              </button>
+            )}
           </div>
         ) : isSubAdmin ? (
           <div className="p-3.5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 flex items-center gap-2 text-xs text-amber-900 dark:text-amber-300">

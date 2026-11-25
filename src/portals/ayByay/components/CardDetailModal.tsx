@@ -38,6 +38,7 @@ interface CardDetailModalProps {
   onOpenNewTransaction?: (type?: 'income' | 'expense', category?: string) => void;
   config?: AppConfig;
   isAdminLoggedIn?: boolean;
+  canModifyTransaction?: (txn: Transaction) => boolean;
 }
 
 export const CardDetailModal: React.FC<CardDetailModalProps> = ({
@@ -56,7 +57,8 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
   onViewSalarySlip,
   onOpenNewTransaction,
   config,
-  isAdminLoggedIn = false
+  isAdminLoggedIn = false,
+  canModifyTransaction
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
@@ -627,7 +629,7 @@ export const CardDetailModal: React.FC<CardDetailModalProps> = ({
                               ব্যালেন্স: {formatCurrency(runningBalance, currencySymbol)}
                             </span>
                           </div>
-                          {isAdminLoggedIn && onDeleteTransaction && (
+                          {(canModifyTransaction ? canModifyTransaction(txn) : isAdminLoggedIn) && onDeleteTransaction && (
                             <button
                               type="button"
                               disabled={deletingId === txn.id}

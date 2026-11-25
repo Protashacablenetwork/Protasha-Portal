@@ -29,6 +29,7 @@ import { compressImage } from '../utils/imageCompressor';
 import { saveStoredUser, findStoredUserByPhone } from '../utils/userStorage';
 import { normalizePhoneNumber } from '../utils/permissions';
 import { readCachedStaffAccounts } from '../utils/staffSync';
+import { isActualStaffAccount } from '../utils/ownerDueSync';
 import { useSubViewBack } from '../utils/useSubViewBack';
 import {
   authenticateWithFingerprint,
@@ -454,14 +455,18 @@ export const LoginView: React.FC<LoginViewProps> = ({
       } catch {}
 
       const inputNormPhone = normalizePhoneNumber(rawId);
-      const matchedStaff = staffList.find((s) => {
-        if (s.isActive === false) return false;
-        const sNormPhone = normalizePhoneNumber(s.phone);
-        if (inputNormPhone.length >= 6 && sNormPhone === inputNormPhone) return true;
-        if (s.userCode && s.userCode.trim().toLowerCase() === cleanId) return true;
-        if (String(s.id).trim().toLowerCase() === cleanId) return true;
-        return false;
-      });
+      const isNonStaffUserRecord =
+        userData && (userData.role === 'sub-admin' || userData.role === 'admin');
+      const matchedStaff = isNonStaffUserRecord
+        ? undefined
+        : staffList.find((s) => {
+            if (!isActualStaffAccount(s)) return false;
+            const sNormPhone = normalizePhoneNumber(s.phone);
+            if (inputNormPhone.length >= 6 && sNormPhone === inputNormPhone) return true;
+            if (s.userCode && s.userCode.trim().toLowerCase() === cleanId) return true;
+            if (String(s.id).trim().toLowerCase() === cleanId) return true;
+            return false;
+          });
 
       if (matchedStaff) {
         // Respect suspended status if a corresponding `users` account exists and is suspended

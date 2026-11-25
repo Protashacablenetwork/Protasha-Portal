@@ -154,7 +154,7 @@ service cloud.firestore {
       return data.keys().hasAll(['id', 'name', 'shareUnits']) &&
         data.keys().hasOnly([
           'id', 'name', 'phone', 'address', 'notes',
-          'shareUnits', 'avatarUrl', 'isHalf', 'createdAt', 'updatedAt'
+          'shareUnits', 'avatarUrl', 'isHalf', 'recordedBy', 'createdAt', 'updatedAt'
         ]) &&
         data.id is string && data.id.size() >= 1 && data.id.size() <= 128 &&
         data.name is string && data.name.size() >= 1 && data.name.size() <= 150 &&
@@ -164,6 +164,7 @@ service cloud.firestore {
         (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
         (!('avatarUrl' in data) || data.avatarUrl == null || (data.avatarUrl is string && data.avatarUrl.size() <= 900000)) &&
         (!('isHalf' in data) || data.isHalf is bool) &&
+        (!('recordedBy' in data) || data.recordedBy == null || (data.recordedBy is string && data.recordedBy.size() <= 128)) &&
         (!('createdAt' in data) || (data.createdAt is string && data.createdAt.size() <= 64)) &&
         (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
     }

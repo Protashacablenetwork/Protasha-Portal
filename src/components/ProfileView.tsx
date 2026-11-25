@@ -39,7 +39,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Language, SUB_ADMIN_PERMISSION_ITEMS, UserSession } from '../types';
-import { hasSubAdminPermission } from '../utils/permissions';
+import { canAddTransactions, hasSubAdminPermission } from '../utils/permissions';
 import { translations } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import { safeStorage } from '../utils/safeStorage';
@@ -780,10 +780,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   </div>
                   <div>
                     <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                      {isBn ? 'সাব-অ্যাডমিন অনুমোদিত সেবাসমূহ' : 'Sub-Admin Permitted Services'}
+                      {isBn ? 'সাব-অ্যাডমিন অনুমোদিত ডেটা এন্ট্রি' : 'Sub-Admin Entry Permissions'}
                     </h4>
                     <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                      {isBn ? 'মেইন অ্যাডমিনের নির্ধারিত পেইজ ও সেবার অনুমতি' : 'Services & pages enabled by Main Admin'}
+                      {isBn
+                        ? 'পুরো অ্যাপ ভিউ করা যাবে; চালু থাকা অপশনে ডেটা এন্ট্রি ও নিজ এন্ট্রি ৩০ মিনিটে এডিট/ডিলিট/স্থায়ী মুছে ফেলা যাবে।'
+                        : 'Full app view enabled; add entries in permitted modules and edit/delete/permanently remove own entries within 30 mins.'}
                     </p>
                   </div>
                 </div>
@@ -813,6 +815,34 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 })}
               </div>
             </div>
+          )}
+
+          {/* Recycle Bin Row (Main Admin + Sub-Admin with addTransactions permission for 30m own entries) */}
+          {(isAdmin || (isSubAdmin && canAddTransactions(user))) && (
+            <button
+              onClick={() => {
+                sounds.playTap();
+                onOpenRecycleBin();
+              }}
+              className="w-full p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors text-left cursor-pointer"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-orange-50 dark:bg-orange-950/40 text-orange-600 flex items-center justify-center">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100">
+                    {isBn ? 'রিসাইকেল বিন' : 'Recycle Bin'}
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {isAdmin
+                      ? (isBn ? 'ডিলিট হওয়া এন্ট্রি পুনরুদ্ধার ও স্থায়ীভাবে মুছুন' : 'Restore or permanently delete items')
+                      : (isBn ? 'নিজের ডিলিট করা এন্ট্রি (৩০ মিনিটে) পুনরুদ্ধার ও স্থায়ীভাবে মুছুন' : 'Restore or permanently delete own entries (30m)')}
+                  </p>
+                </div>
+              </div>
+              <ChevronRight className="w-5 h-5 text-slate-400" />
+            </button>
           )}
 
           {/* Admin Control Tools (Strictly for Admin) */}
@@ -966,30 +996,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     </h4>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
                       {isBn ? 'সাইটের পেজ, ক্যাটাগরি ও অ্যাকশন লিংক পরিবর্তন করুন' : 'Customize login page store, offer & help info'}
-                    </p>
-                  </div>
-                </div>
-                <ChevronRight className="w-5 h-5 text-slate-400" />
-              </button>
-
-              {/* Recycle Bin Row */}
-              <button
-                onClick={() => {
-                  sounds.playTap();
-                  onOpenRecycleBin();
-                }}
-                className="w-full p-4 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors text-left cursor-pointer"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-orange-50 dark:bg-orange-950/40 text-orange-600 flex items-center justify-center">
-                    <Trash2 className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-slate-800 dark:text-slate-100">
-                      {isBn ? 'রিসাইকেল বিন' : 'Recycle Bin'}
-                    </h4>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">
-                      {isBn ? 'ডিলিট হওয়া এন্ট্রি পুনরুদ্ধার' : 'Restore deleted transactions'}
                     </p>
                   </div>
                 </div>

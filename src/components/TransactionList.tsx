@@ -141,12 +141,12 @@ export const TransactionList: React.FC<TransactionListProps> = ({
             <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
             <span>
               {lang === 'bn'
-                ? 'সাব-এডমিন: এখানে কেবল আপনার নিজ এন্ট্রিকৃত লেনদেন দেখানো হচ্ছে'
-                : 'Sub-Admin: Showing only transactions added by you'}
+                ? 'সাব-অ্যাডমিন: সব লেনদেন দেখতে পারবেন; নিজের এন্ট্রি ৩০ মিনিট এডিট/ডিলিট'
+                : 'Sub-Admin: View all entries; edit/delete own entries within 30 mins'}
             </span>
           </div>
           <span className="text-[10px] font-extrabold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/50 px-2 py-0.5 rounded-full whitespace-nowrap shrink-0">
-            {lang === 'bn' ? '৩০ মিঃ এডিট/ডিলিট' : '30m Edit'}
+            {lang === 'bn' ? '৩০ মিঃ নিজের এন্ট্রি' : '30m Own Entry'}
           </span>
         </div>
       )}

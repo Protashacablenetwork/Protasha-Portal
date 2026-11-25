@@ -51,13 +51,12 @@ export const QuickChannels: React.FC<QuickChannelsProps> = ({
 }) => {
   const isBn = lang === 'bn';
   const isStaff = isStaffSessionActive(user);
+  const canViewAll = isStaff || user?.role === 'admin' || user?.role === 'sub-admin';
   const canAddTrx = canAddTransactions(user);
-  const isTrxRestricted = !isStaff && user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'transactions');
-  const isStaffManagerRestricted = !isStaff && user?.role === 'sub-admin' && !hasSubAdminPermission(user, 'staffManager');
 
-  const isTrxLocked = !isStaff && (isTrxRestricted || serviceStatuses.transactions?.isActive === false || String(serviceStatuses.transactions?.isActive) === 'false');
-  const isStaffLocked = !isStaff && (isStaffManagerRestricted || serviceStatuses.staffManager?.isActive === false || String(serviceStatuses.staffManager?.isActive) === 'false');
-  const isLedgerLocked = !isStaff && (serviceStatuses.ledger?.isActive === false || String(serviceStatuses.ledger?.isActive) === 'false');
+  const isTrxLocked = !canViewAll && (serviceStatuses.transactions?.isActive === false || String(serviceStatuses.transactions?.isActive) === 'false');
+  const isStaffLocked = !canViewAll && (serviceStatuses.staffManager?.isActive === false || String(serviceStatuses.staffManager?.isActive) === 'false');
+  const isLedgerLocked = !canViewAll && (serviceStatuses.ledger?.isActive === false || String(serviceStatuses.ledger?.isActive) === 'false');
 
   const normalizeMethodName = (rawMethod: string | undefined): string => {
     if (!rawMethod) return '';

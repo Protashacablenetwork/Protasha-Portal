@@ -24,7 +24,21 @@ import {
   CartesianGrid,
   Tooltip
 } from 'recharts';
+import { collection, onSnapshot } from 'firebase/firestore';
 import { Language, Transaction, PaymentChannel, UserSession } from '../types';
+import { Transaction as AyByayTransaction } from '../portals/ayByay/types';
+import {
+  isIncomeTransaction,
+  parseNumber,
+  getTransactionMonth
+} from '../portals/ayByay/data/categories';
+import {
+  fetchNetConnectionSummary,
+  fetchPrevMonthDueBillSummary,
+  BillServiceSummary
+} from '../portals/ayByay/utils/billSyncHelper';
+import { staffDb } from '../utils/firebase';
+import { safeStorage } from '../utils/safeStorage';
 import { toBengaliNumber } from '../utils/formatters';
 import { sounds } from '../utils/audio';
 import { DailyIncomeExpenseChart } from './DailyIncomeExpenseChart';
@@ -94,6 +108,36 @@ const printHtmlViaIframe = (htmlContent: string) => {
   }, 350);
 };
 
+const normalizeAyByayTx = (t: AyByayTransaction): Transaction => {
+  const isInc = isIncomeTransaction(t);
+  const createdMs = t.createdAt ? new Date(t.createdAt).getTime() || 0 : 0;
+  let timeStr = '';
+  if (createdMs > 0) {
+    try {
+      timeStr = new Date(createdMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      timeStr = '';
+    }
+  }
+  return {
+    id: String(t.id || ''),
+    trxId: String(t.id || ''),
+    type: isInc ? 'income' : 'expense',
+    method: t.paymentMethod || 'নগদ (Cash)',
+    amount: parseNumber(t.amount),
+    person: t.description || t.category || '',
+    phone: '',
+    date: t.date || (t.createdAt ? t.createdAt.slice(0, 10) : ''),
+    time: timeStr,
+    note: t.note || '',
+    category: t.category || (isInc ? 'অন্যান্য আয়' : 'অন্যান্য খরচ'),
+    source: 'ay-byay',
+    recordedBy: t.recordedBy,
+    recordedByGmail: t.recordedByGmail,
+    created: createdMs
+  };
+};
+
 export const ReportModal: React.FC<ReportModalProps> = ({
   isOpen,
   transactions,
@@ -107,37 +151,222 @@ export const ReportModal: React.FC<ReportModalProps> = ({
   onNextMonth
 }) => {
   const isSubAdmin = checkIsSubAdmin(user);
-  const [reportScope, setReportScope] = useState<'own' | 'all'>('own');
+  const [reportScope, setReportScope] = useState<'own' | 'all'>('all');
   const [reportPeriod, setReportPeriod] = useState<'monthly' | 'yearly'>('monthly');
   const [auditYear, setAuditYear] = useState<number>(currentYear);
+
+  // Live Ay-Byay transactions (cache + Firestore staffDb/ay_byay_transactions)
+  const [ayByayTxns, setAyByayTxns] = useState<AyByayTransaction[]>(() => {
+    try {
+      const saved = safeStorage.getItem('isp_cache_txns');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    return [];
+  });
+  const [autoBillSyncMap, setAutoBillSyncMap] = useState<Record<string, AyByayTransaction>>({});
 
   useEffect(() => {
     setAuditYear(currentYear);
   }, [currentYear]);
 
+  // Real-time Firestore listener + local event sync for Ay-Byay transactions
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleAyByayChanged = () => {
+      try {
+        const saved = safeStorage.getItem('isp_cache_txns');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) setAyByayTxns(parsed);
+        }
+      } catch {}
+    };
+    window.addEventListener('aybyay-data-changed', handleAyByayChanged);
+
+    let unsubscribe: (() => void) | null = null;
+    try {
+      unsubscribe = onSnapshot(
+        collection(staffDb, 'ay_byay_transactions'),
+        (snapshot) => {
+          const cloudTx: AyByayTransaction[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as any;
+            if (data && (data.id || docSnap.id) && !data.isDeleted && (!data.source || data.source === 'ay-byay')) {
+              cloudTx.push({ ...data, id: data.id || docSnap.id });
+            }
+          });
+          setAyByayTxns(cloudTx);
+          try {
+            safeStorage.setItem('isp_cache_txns', JSON.stringify(cloudTx));
+          } catch {}
+        },
+        () => {}
+      );
+    } catch {}
+
+    return () => {
+      window.removeEventListener('aybyay-data-changed', handleAyByayChanged);
+      if (unsubscribe) {
+        try {
+          unsubscribe();
+        } catch {}
+      }
+    };
+  }, [isOpen]);
+
+  // Sync live Bill Manager Pro auto-income entries ('নেট সংযোগ' & 'বকেয়া বিল') for active month
+  const activeMonthYM = `${currentYear}-${String(currentMonthIndex + 1).padStart(2, '0')}`;
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+
+    const getDismissedMap = (): Record<string, number> => {
+      try {
+        const raw = safeStorage.getItem('ay_byay_dismissed_auto_tx');
+        return raw ? JSON.parse(raw) : {};
+      } catch {
+        return {};
+      }
+    };
+
+    const buildAutoTx = (
+      txId: string,
+      summary: BillServiceSummary | null,
+      category: string,
+      descriptionTitle: string
+    ): AyByayTransaction | null => {
+      if (!summary || summary.totalPay <= 0) return null;
+      const dismissedMap = getDismissedMap();
+      if (dismissedMap[txId] !== undefined && dismissedMap[txId] === summary.totalPay) {
+        return null;
+      }
+      const nowYM = new Date().toISOString().slice(0, 7);
+      const txDate = activeMonthYM === nowYM ? new Date().toISOString().split('T')[0] : `${activeMonthYM}-01`;
+      return {
+        id: txId,
+        type: 'income',
+        description: `${descriptionTitle} (${summary.bnMonth} - ${summary.count} জন গ্রাহক)`,
+        category,
+        amount: summary.totalPay,
+        date: txDate,
+        paymentMethod: 'নগদ (Cash)',
+        note: `বিল ম্যানেজার প্রো থেকে রিয়েল-টাইম অটো আপডেট • মাস: ${summary.bnMonth} • মোট আদায়: ৳${summary.totalPay} • বকেয়া: ৳${summary.totalDue}`,
+        source: 'ay-byay',
+        recordedBy: 'system-bill-sync',
+        createdAt: `${txDate}T00:00:00.000Z`
+      };
+    };
+
+    const runSync = async () => {
+      try {
+        const [netConnSummary, prevDueSummary] = await Promise.all([
+          fetchNetConnectionSummary(activeMonthYM, false),
+          fetchPrevMonthDueBillSummary(activeMonthYM, false)
+        ]);
+        if (cancelled) return;
+        const netTx = buildAutoTx(
+          `tx-bill-net-conn-${activeMonthYM}`,
+          netConnSummary,
+          'নেট সংযোগ',
+          'নতুন নেট সংযোগ বিল আদায়'
+        );
+        const dueTx = buildAutoTx(
+          `tx-bill-due-prev-${activeMonthYM}`,
+          prevDueSummary,
+          'বকেয়া বিল',
+          'আগের মাসের বকেয়া বিল আদায়'
+        );
+        setAutoBillSyncMap((prev) => {
+          const next = { ...prev };
+          if (netTx) next[netTx.id] = netTx;
+          if (dueTx) next[dueTx.id] = dueTx;
+          return next;
+        });
+      } catch {}
+    };
+
+    void runSync();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, activeMonthYM]);
+
   const isBn = lang === 'bn';
 
-  // Scope transactions when sub-admin chooses between their own vs full organization report
+  // Normalize Ay-Byay transactions (falling back cleanly to ay-byay items from prop if needed)
+  const ayByayReportTransactions = useMemo(() => {
+    const mergedMap = new Map<string, AyByayTransaction>();
+    (ayByayTxns || []).forEach((t) => {
+      if (t && t.id && !(t as any).isDeleted) {
+        mergedMap.set(t.id, t);
+      }
+    });
+    Object.values(autoBillSyncMap).forEach((autoTx) => {
+      const existing = mergedMap.get(autoTx.id);
+      if (!existing || Math.round(parseNumber(existing.amount)) !== Math.round(parseNumber(autoTx.amount))) {
+        mergedMap.set(autoTx.id, {
+          ...autoTx,
+          date: existing?.date && getTransactionMonth(existing.date) === getTransactionMonth(autoTx.date)
+            ? existing.date
+            : autoTx.date,
+          paymentMethod: existing?.paymentMethod || autoTx.paymentMethod,
+          createdAt: existing?.createdAt || autoTx.createdAt
+        });
+      }
+    });
+
+    if (mergedMap.size === 0 && Array.isArray(transactions)) {
+      transactions.forEach((t) => {
+        if (t && !t.isDeleted && t.source === 'ay-byay') {
+          mergedMap.set(t.id, {
+            id: t.id,
+            type: t.type,
+            description: t.person || t.category,
+            category: t.category,
+            amount: t.amount,
+            date: t.date,
+            paymentMethod: t.method,
+            note: t.note,
+            recordedBy: t.recordedBy,
+            recordedByGmail: t.recordedByGmail,
+            source: 'ay-byay',
+            createdAt: t.created ? new Date(t.created).toISOString() : undefined
+          });
+        }
+      });
+    }
+
+    return Array.from(mergedMap.values()).map(normalizeAyByayTx);
+  }, [ayByayTxns, autoBillSyncMap, transactions]);
+
+  // Scope transactions when sub-admin chooses between their own vs full Ay-Byay report
   const scopedTransactions = useMemo(() => {
-    const nonDeleted = transactions.filter((trx) => !trx.isDeleted);
+    const nonDeleted = ayByayReportTransactions.filter((trx) => !trx.isDeleted);
     if (isSubAdmin && reportScope === 'own') {
       return nonDeleted.filter((trx) => isTransactionOwner(trx, user));
     }
     return nonDeleted;
-  }, [transactions, isSubAdmin, reportScope, user]);
+  }, [ayByayReportTransactions, isSubAdmin, reportScope, user]);
 
-  // Monthly active transactions
+  // Monthly active transactions (sorted chronologically: 1st added on top, 2nd below)
   const activeTransactions = useMemo(() => {
-    return scopedTransactions.filter((trx) => {
-      const parts = (trx.date || '').split('-');
-      if (parts.length >= 2) {
-        const y = parseInt(parts[0], 10);
-        const m = parseInt(parts[1], 10) - 1;
-        return y === currentYear && m === currentMonthIndex;
-      }
-      return true;
+    const filtered = scopedTransactions.filter((trx) => {
+      return getTransactionMonth(trx.date || '') === activeMonthYM;
     });
-  }, [scopedTransactions, currentYear, currentMonthIndex]);
+    return [...filtered].sort((a, b) => {
+      const dA = new Date(a.date || 0).getTime() || 0;
+      const dB = new Date(b.date || 0).getTime() || 0;
+      if (dA !== dB) return dA - dB;
+      const cA = Number(a.created) || 0;
+      const cB = Number(b.created) || 0;
+      if (cA !== cB) return cA - cB;
+      return String(a.id || '').localeCompare(String(b.id || ''));
+    });
+  }, [scopedTransactions, activeMonthYM]);
 
   // Monthly totals
   const { totalIncome, totalExpense, netBalance } = useMemo(() => {
@@ -152,12 +381,10 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
   // Yearly audit data
   const yearlyData = useMemo(() => {
+    const yearPrefix = `${auditYear}-`;
     const yearTrx = scopedTransactions.filter((trx) => {
-      const parts = (trx.date || '').split('-');
-      if (parts.length >= 1) {
-        return parseInt(parts[0], 10) === auditYear;
-      }
-      return false;
+      const ym = getTransactionMonth(trx.date || '');
+      return ym.startsWith(yearPrefix);
     });
 
     const monthlyBreakdown = Array.from({ length: 12 }, (_, idx) => ({
@@ -178,10 +405,11 @@ export const ReportModal: React.FC<ReportModalProps> = ({
     let yExpense = 0;
 
     yearTrx.forEach((trx) => {
-      const parts = (trx.date || '').split('-');
+      const ym = getTransactionMonth(trx.date || '');
+      const parts = ym.split('-');
       const mIdx = parts.length >= 2 ? parseInt(parts[1], 10) - 1 : 0;
       const bucket = monthlyBreakdown[mIdx >= 0 && mIdx < 12 ? mIdx : 0];
-      const cat = trx.category || (trx.type === 'income' ? 'বিল কালেকশন' : 'অফিস খরচ');
+      const cat = trx.category || (trx.type === 'income' ? 'অন্যান্য আয়' : 'অন্যান্য খরচ');
 
       if (trx.type === 'income') {
         bucket.income += trx.amount;
@@ -257,7 +485,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
         const incVal = isInc ? t.amount : '';
         const expVal = !isInc ? t.amount : '';
         const status = isInc ? 'আয়' : 'পরিশোধ';
-        csv += `"${t.date}","${t.time}","${t.trxId}","${t.person || ''}","${t.phone || ''}","${t.type}","${t.method}","${t.category}","${incVal}","${expVal}","${status}","${(t.note || '').replace(/"/g, '""')}"\n`;
+        csv += `"${t.date}","${t.time}","${t.trxId}","${(t.person || '').replace(/"/g, '""')}","${t.phone || ''}","${t.type}","${(t.method || '').replace(/"/g, '""')}","${(t.category || '').replace(/"/g, '""')}","${incVal}","${expVal}","${status}","${(t.note || '').replace(/"/g, '""')}"\n`;
       });
       fileName = `protyasha_monthly_audit_${MONTHS_EN[currentMonthIndex]}_${currentYear}.csv`;
     } else {
@@ -289,12 +517,14 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       const rows = activeTransactions
         .map((trx) => {
           const isInc = trx.type === 'income';
+          const desc = trx.person && trx.person !== trx.category ? trx.person : (trx.category || (isInc ? 'অন্যান্য আয়' : 'অন্যান্য খরচ'));
+          const catOrRef = trx.category || '-';
           return `
             <tr>
               <td>${trx.date}</td>
               <td>${trx.trxId || '-'}</td>
-              <td>${trx.category || (isInc ? 'বিল কালেকশন' : 'অফিস খরচ')}</td>
-              <td>${trx.person || '-'}</td>
+              <td>${desc}</td>
+              <td>${catOrRef}</td>
               <td>${trx.method || '-'}</td>
               <td style="color:#16a34a;font-weight:bold;">${isInc ? trx.amount : ''}</td>
               <td style="color:#dc2626;font-weight:bold;">${!isInc ? trx.amount : ''}</td>
@@ -305,12 +535,12 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 
       tableHtml = `
         <table border="1">
-          <tr><th colspan="8" style="font-size:16px;font-weight:bold;background:#f8fafc;">প্রত্যাশা ক্যাবল নেটওয়ার্ক — মাসিক অডিট রিপোর্ট (${monthTitle})</th></tr>
+          <tr><th colspan="8" style="font-size:16px;font-weight:bold;background:#f8fafc;">প্রত্যাশা ক্যাবল নেটওয়ার্ক — আয়-ব্যয় মাসিক অডিট রিপোর্ট (${monthTitle})</th></tr>
           <tr style="background:#e2e8f0;font-weight:bold;">
             <th>তারিখ</th>
             <th>ট্রানজেকশন আইডি</th>
-            <th>খাত / বিবরণ</th>
-            <th>ব্যক্তি / গ্রাহক</th>
+            <th>বিবরণ</th>
+            <th>খাত</th>
             <th>মাধ্যম</th>
             <th>আয় (৳)</th>
             <th>ব্যয় (৳)</th>
@@ -421,8 +651,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
       activeTransactions.forEach((trx) => {
         const isInc = trx.type === 'income';
         const shortDate = getShortDateStr(trx.date);
-        const desc = trx.category || (isInc ? 'বিল কালেকশন' : 'অফিস খরচ');
-        const ref = trx.note || trx.person || '-';
+        const desc = trx.person && trx.person !== trx.category ? trx.person : (trx.category || (isInc ? 'অন্যান্য আয়' : 'অন্যান্য খরচ'));
+        const ref = trx.note || (trx.person && trx.person !== trx.category ? trx.category : trx.method) || '-';
         const incAmt = isInc ? toBengaliNumber(trx.amount) : '';
         const expAmt = !isInc ? toBengaliNumber(trx.amount) : '';
         const statusStr = isInc ? 'আয়' : 'পরিশোধ';
@@ -673,7 +903,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                 {isBn ? 'মাসিক ও বাৎসরিক অডিট রিপোর্ট' : 'Monthly & Yearly Audit'}
               </h2>
               <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                {isBn ? 'প্রত্যাশা ক্যাবল নেটওয়ার্ক হিসাব খাতা' : 'Protasha Cable Network Audit'}
+                {isBn ? 'আয়-ব্যয় হিসাব খাতা · প্রত্যাশা ক্যাবল নেটওয়ার্ক' : 'Ay-Byay Audit · Protasha Cable Network'}
               </p>
             </div>
           </div>
@@ -961,8 +1191,8 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                       activeTransactions.map((trx) => {
                         const isInc = trx.type === 'income';
                         const shortDate = getShortDateStr(trx.date);
-                        const desc = trx.category || (isInc ? 'বিল কালেকশন' : 'অফিস খরচ');
-                        const ref = trx.note || trx.person || '-';
+                        const desc = trx.person && trx.person !== trx.category ? trx.person : (trx.category || (isInc ? 'অন্যান্য আয়' : 'অন্যান্য খরচ'));
+                        const ref = trx.note || (trx.person && trx.person !== trx.category ? trx.category : trx.method) || '-';
                         const incAmt = isInc ? toBengaliNumber(trx.amount) : '';
                         const expAmt = !isInc ? toBengaliNumber(trx.amount) : '';
                         const statusStr = isInc ? 'আয়' : 'পরিশোধ';

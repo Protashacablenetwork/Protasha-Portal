@@ -13,8 +13,10 @@ import {
   ChevronRight,
   Filter,
   Trash2,
-  Edit2
+  Edit2,
+  Clock
 } from 'lucide-react';
+import { TransactionModificationCheck, formatRemainingCountdown } from '../../../utils/permissions';
 
 interface TransactionListProps {
   transactions: Transaction[];
@@ -25,6 +27,8 @@ interface TransactionListProps {
   onDeleteTransaction: (id: string) => void;
   currencySymbol?: string;
   isAdminLoggedIn?: boolean;
+  canModifyTransaction?: (txn: Transaction) => boolean;
+  getModifyInfo?: (txn: Transaction) => TransactionModificationCheck;
 }
 
 export const TransactionList: React.FC<TransactionListProps> = ({
@@ -36,6 +40,8 @@ export const TransactionList: React.FC<TransactionListProps> = ({
   onDeleteTransaction,
   currencySymbol = '৳',
   isAdminLoggedIn = false,
+  canModifyTransaction,
+  getModifyInfo,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'week' | 'month'>('all');
@@ -293,32 +299,46 @@ export const TransactionList: React.FC<TransactionListProps> = ({
 
                   {/* Action buttons */}
                   <div className="flex items-center gap-1 pl-1">
-                    {isAdminLoggedIn && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onEditTransaction(entry);
-                          }}
-                          title="এডিট করুন"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-slate-800 transition cursor-pointer"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeleteConfirmTxn(entry);
-                          }}
-                          title="ডিলিট করুন"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 transition cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </>
-                    )}
+                    {(() => {
+                      const canModify = canModifyTransaction ? canModifyTransaction(entry) : isAdminLoggedIn;
+                      const modInfo = getModifyInfo ? getModifyInfo(entry) : null;
+                      if (!canModify) return null;
+                      return (
+                        <>
+                          {modInfo && Number.isFinite(modInfo.remainingMs) && modInfo.remainingMs > 0 && (
+                            <span
+                              title="সাব-অ্যাডমিন এডিট/ডিলিট করার বাকি সময়"
+                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 text-[10px] font-bold"
+                            >
+                              <Clock className="w-2.5 h-2.5" />
+                              {formatRemainingCountdown(modInfo.remainingMs, true)}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onEditTransaction(entry);
+                            }}
+                            title="এডিট করুন"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-slate-800 transition cursor-pointer"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteConfirmTxn(entry);
+                            }}
+                            title="ডিলিট করুন"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 transition cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      );
+                    })()}
                     <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500 transition" />
                   </div>
                 </div>

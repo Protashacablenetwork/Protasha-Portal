@@ -42,7 +42,11 @@ import {
   adminForceReleaseSession,
   DeviceSessionRecord
 } from '../utils/deviceSession';
-import { syncStaffOrSubAdminUserToDirectory, syncStaffPinEverywhere } from '../utils/staffSync';
+import {
+  syncStaffOrSubAdminUserToDirectory,
+  syncStaffPinEverywhere,
+  syncUsersCollectionToNonStaffRefs
+} from '../utils/staffSync';
 import { useSubViewBack } from '../utils/useSubViewBack';
 import { showConfirm } from '../utils/uiFeedback';
 
@@ -140,6 +144,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
         })
       );
       setUsers(enhanced);
+      syncUsersCollectionToNonStaffRefs(enhanced);
     } catch (e) {
       console.error(e);
       setErrorMsg(isBn ? 'ইউজার তালিকা লোড করা যায়নি' : 'Failed to load user list');
@@ -167,6 +172,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
         if (cloudUsers.length > 0) {
           cloudUsers.forEach(u => saveStoredUser(u));
           setUsers(cloudUsers);
+          syncUsersCollectionToNonStaffRefs(cloudUsers);
         }
       }, (err) => {
         handleFirestoreError(err, OperationType.LIST, 'users');
@@ -316,8 +322,13 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       saveStoredUser(updatedUser);
       await safeSetDoc(doc(db, 'users', editingUser.id), firestorePayload, { merge: true });
 
-      // Auto-sync Sub-Admin & Staff accounts into unified staff directory
-      if (updatedUser.role === 'sub-admin' || updatedUser.role === 'staff') {
+      // Sync only Staff accounts into unified staff directory (and clean up any legacy sub-admin staff entry)
+      if (
+        updatedUser.role === 'staff' ||
+        editingUser.role === 'staff' ||
+        updatedUser.role === 'sub-admin' ||
+        editingUser.role === 'sub-admin'
+      ) {
         await syncStaffOrSubAdminUserToDirectory(updatedUser).catch(() => {});
       }
       if (updatedUser.role === 'staff') {
@@ -459,11 +470,9 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       // 2. Save in Firestore
       await safeSetDoc(doc(db, 'users', newId), newUser);
 
-      // 3. Auto-sync Sub-Admin & Staff accounts into unified staff directory
-      if (newUser.role === 'sub-admin' || newUser.role === 'staff') {
-        await syncStaffOrSubAdminUserToDirectory(newUser).catch(() => {});
-      }
+      // 3. Auto-sync only Staff role accounts into unified staff directory (never Sub-Admins)
       if (newUser.role === 'staff') {
+        await syncStaffOrSubAdminUserToDirectory(newUser).catch(() => {});
         await syncStaffPinEverywhere({
           staffId: newUser.id,
           phone: newUser.phone,
@@ -505,6 +514,9 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
       deleteStoredUser(id);
       await safeDeleteDoc(doc(db, 'users', id));
       if (targetUser) {
+        if (targetUser.role === 'sub-admin' || targetUser.role === 'staff') {
+          await syncStaffOrSubAdminUserToDirectory({ ...targetUser, role: 'user' }).catch(() => {});
+        }
         await adminForceReleaseSession({
           id: targetUser.id,
           phone: targetUser.phone,
@@ -778,7 +790,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                   >
                     <option value="user">{isBn ? 'সাধারণ ইউজার (শুধু দেখা)' : 'Regular User (Read-Only)'}</option>
                     <option value="staff">{isBn ? 'স্টাফ (পুরো অ্যাপ দেখা ও হাজিরা)' : 'Staff (Full App View & Attendance)'}</option>
-                    <option value="sub-admin">{isBn ? 'সাব-অ্যাডমিন (নির্ধারিত সেবা)' : 'Sub-Admin (Custom Access)'}</option>
+                    <option value="sub-admin">{isBn ? 'সাব-অ্যাডমিন (পুরো অ্যাপ ভিউ ও নির্দিষ্ট এন্ট্রি)' : 'Sub-Admin (Full View & Custom Entry)'}</option>
                     <option value="admin">{isBn ? 'অ্যাডমিন' : 'Admin'}</option>
                   </select>
                 </div>
@@ -820,10 +832,12 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div>
                       <p className="text-xs font-extrabold text-amber-950 dark:text-amber-200">
-                        {isBn ? 'সাব-অ্যাডমিন নির্দিষ্ট সেবা ও পেইজ পারমিশন' : 'Sub-Admin Service & Page Permissions'}
+                        {isBn ? 'সাব-অ্যাডমিন ডেটা এন্ট্রি পারমিশন' : 'Sub-Admin Data Entry Permissions'}
                       </p>
                       <p className="text-[10px] text-amber-800/80 dark:text-amber-300/80">
-                        {isBn ? 'যেসব অপশন চালু রাখবেন শুধু সেগুলোই ব্যবহার করতে পারবেন' : 'Only enabled sections below will be accessible'}
+                        {isBn
+                          ? 'পুরো অ্যাপ দেখা যাবে; শুধু চালু অপশনে ডেটা এন্ট্রি এবং নিজ এন্ট্রি ৩০ মিনিটে এডিট/ডিলিট/স্থায়ী মুছে ফেলা যাবে।'
+                          : 'Full app is viewable; entry allowed only in enabled options, own edit/delete within 30 mins.'}
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5">

@@ -63,8 +63,6 @@ import { getPrevMonthKey } from '../portals/ayByay/data/categories';
 import {
   REPORT_MONTHS_BN,
   REPORT_MONTHS_EN,
-  REPORT_MONTHS_SHORT_BN,
-  REPORT_MONTHS_SHORT_EN,
   buildComprehensiveReport,
   buildAutomatedReportHtml,
   exportAutomatedReportExcel
@@ -140,6 +138,7 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
   const [selectedMonthIdx, setSelectedMonthIdx] = useState<number>(now.getMonth());
   const [isSyncingBills, setIsSyncingBills] = useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [isDownloadMenuOpen, setIsDownloadMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<SectionKey>('overview');
   const [chartMetric, setChartMetric] = useState<'company' | 'channel'>('company');
 
@@ -559,9 +558,9 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
 
   return (
     <div className="fixed inset-0 z-[130] bg-[#F8FAFC] dark:bg-[#090D16] flex flex-col overflow-hidden text-slate-900 dark:text-slate-100">
-      {/* Sticky Enterprise Header Bar: 3 clean zones */}
-      <header className="shrink-0 bg-white dark:bg-[#0F172A] border-b border-slate-200/90 dark:border-slate-800/90 px-3 sm:px-6 h-16 flex items-center justify-between gap-3 sm:gap-8">
-        <div className="flex items-center gap-3 min-w-0">
+      {/* Sticky App Header Bar */}
+      <header className="shrink-0 bg-white dark:bg-[#0F172A] border-b border-slate-200/90 dark:border-slate-800/90 px-3 sm:px-6 h-15 sm:h-16 flex items-center justify-between gap-2 sm:gap-6 relative z-30">
+        <div className="flex items-center gap-2.5 min-w-0">
           <button
             type="button"
             onClick={() => {
@@ -569,21 +568,17 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
               onClose();
             }}
             aria-label={isBn ? 'ফিরে যান' : 'Back'}
-            className="min-w-[44px] min-h-[44px] w-10 h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-center text-slate-700 dark:text-slate-200 transition-colors cursor-pointer shrink-0"
+            className="min-w-[40px] min-h-[40px] w-10 h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-center text-slate-700 dark:text-slate-200 transition-colors cursor-pointer shrink-0"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap truncate">
-              <span>{isBn ? 'রিপোর্ট সেন্টার' : 'Reports'}</span>
-              <span>/</span>
-              <span className="text-slate-700 dark:text-slate-200 font-semibold">
-                {isBn ? report.periodTitleBn : report.periodTitleEn}
-              </span>
-            </div>
-            <h1 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate whitespace-nowrap">
-              {isBn ? 'অটোমেটেড অ্যাপ রিপোর্ট' : 'Automated App Report'}
+            <h1 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate whitespace-nowrap leading-tight">
+              {isBn ? 'অটোমেটেড রিপোর্ট' : 'Automated Report'}
             </h1>
+            <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400 truncate whitespace-nowrap">
+              {isBn ? report.periodTitleBn : report.periodTitleEn}
+            </p>
           </div>
         </div>
 
@@ -595,23 +590,24 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
           </span>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <button
             type="button"
             onClick={handleRefresh}
             disabled={isSyncingBills}
             title={isBn ? 'লাইভ ডেটা রিফ্রেশ করুন' : 'Refresh live data'}
-            className="min-h-[40px] px-2.5 sm:px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
+            className="w-10 h-10 sm:w-auto sm:px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
           >
             <RefreshCw className={`w-4 h-4 ${isSyncingBills ? 'animate-spin text-rose-600' : ''}`} />
             <span className="hidden md:inline">{isBn ? 'সিংক' : 'Sync'}</span>
           </button>
 
+          {/* Desktop Direct Export Buttons */}
           <button
             type="button"
             onClick={handleDownloadExcel}
             disabled={isExportingExcel}
-            className="min-h-[40px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
+            className="hidden sm:flex min-h-[40px] px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-60"
           >
             <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
             <span>Excel</span>
@@ -620,11 +616,60 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
           <button
             type="button"
             onClick={handlePrintPdf}
-            className="min-h-[40px] px-3.5 rounded-xl bg-[#E52E2E] hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+            className="hidden sm:flex min-h-[40px] px-3.5 rounded-xl bg-[#E52E2E] hover:bg-rose-700 text-white text-xs font-bold items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
           >
             <Printer className="w-4 h-4" />
             <span>{isBn ? 'PDF / প্রিন্ট' : 'PDF / Print'}</span>
           </button>
+
+          {/* Mobile Unified Download CTA + Clean Dropdown */}
+          <div className="relative sm:hidden">
+            <button
+              type="button"
+              onClick={() => {
+                sounds.playTap();
+                setIsDownloadMenuOpen((o) => !o);
+              }}
+              className="min-h-[40px] px-3 rounded-xl bg-[#E52E2E] hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <Download className="w-4 h-4" />
+              <span>{isBn ? 'ডাউনলোড' : 'Download'}</span>
+            </button>
+
+            {isDownloadMenuOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setIsDownloadMenuOpen(false)}
+                />
+                <div className="absolute right-0 mt-2 w-48 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-xl z-50 overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsDownloadMenuOpen(false);
+                      handlePrintPdf();
+                    }}
+                    className="w-full px-3.5 py-3 text-left text-xs font-bold text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer"
+                  >
+                    <Printer className="w-4 h-4 text-[#E52E2E]" />
+                    <span>{isBn ? 'PDF / প্রিন্ট রিপোর্ট' : 'PDF / Print Report'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsDownloadMenuOpen(false);
+                      handleDownloadExcel();
+                    }}
+                    disabled={isExportingExcel}
+                    className="w-full px-3.5 py-3 text-left text-xs font-bold text-slate-800 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2.5 cursor-pointer disabled:opacity-60"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                    <span>{isBn ? 'Excel (.xlsx) ফাইল' : 'Excel (.xlsx) File'}</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
@@ -709,20 +754,20 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
         {/* Main Workspace Canvas */}
         <main ref={scrollContainerRef} className="flex-1 overflow-y-auto">
           <div className="max-w-6xl mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-5 pb-20">
-            {/* Period Switcher & Month Selection Toolbar */}
-            <section className="bg-white dark:bg-[#0F172A] border border-slate-200/90 dark:border-slate-800/90 rounded-2xl p-4 space-y-3.5">
-              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            {/* Unified Single Period Selector Card (No duplicate month bar) */}
+            <section className="bg-white dark:bg-[#0F172A] border border-slate-200/90 dark:border-slate-800/90 rounded-2xl p-3 sm:p-4 space-y-3">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2.5">
                 {/* Mode Toggle: Monthly vs Annual */}
-                <div className="inline-flex p-1 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 self-start">
+                <div className="grid grid-cols-2 md:inline-flex p-1 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 w-full md:w-auto">
                   <button
                     type="button"
                     onClick={() => {
                       sounds.playTap();
                       setMode('monthly');
                     }}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer text-center ${
                       mode === 'monthly'
-                        ? 'bg-[#E52E2E] text-white'
+                        ? 'bg-[#E52E2E] text-white shadow-xs'
                         : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
@@ -734,9 +779,9 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
                       sounds.playTap();
                       setMode('yearly');
                     }}
-                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer ${
+                    className={`px-4 py-2 rounded-lg text-xs font-bold whitespace-nowrap transition-colors cursor-pointer text-center ${
                       mode === 'yearly'
-                        ? 'bg-[#E52E2E] text-white'
+                        ? 'bg-[#E52E2E] text-white shadow-xs'
                         : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
                     }`}
                   >
@@ -744,33 +789,21 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
                   </button>
                 </div>
 
-                {/* Year & Month Picker */}
-                <div className="flex flex-wrap items-center gap-2">
+                {/* Single Clean Year & Month Picker */}
+                <div className="flex items-center justify-between gap-2 w-full md:w-auto">
                   <button
                     type="button"
                     onClick={handlePrevPeriod}
                     aria-label={isBn ? 'পূর্ববর্তী সময়' : 'Previous period'}
-                    className="w-10 h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-center cursor-pointer"
+                    className="w-10 h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-center cursor-pointer shrink-0"
                   >
                     <ChevronLeft className="w-4 h-4" />
                   </button>
 
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+                  <div className="flex-1 md:flex-initial flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 min-h-[40px]">
                     <Calendar className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
-                    <select
-                      value={selectedYear}
-                      onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
-                      className="bg-transparent text-xs sm:text-sm font-bold text-slate-900 dark:text-white focus:outline-none cursor-pointer tabular-nums"
-                    >
-                      {availableYears.map((y) => (
-                        <option key={y} value={y} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                          {isBn ? `${toBengaliNumber(y)} সাল` : `${y}`}
-                        </option>
-                      ))}
-                    </select>
                     {mode === 'monthly' && (
                       <>
-                        <span className="text-slate-300 dark:text-slate-600">·</span>
                         <select
                           value={selectedMonthIdx}
                           onChange={(e) => setSelectedMonthIdx(parseInt(e.target.value, 10))}
@@ -782,87 +815,55 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
                             </option>
                           ))}
                         </select>
+                        <span className="text-slate-300 dark:text-slate-600">·</span>
                       </>
                     )}
+                    <select
+                      value={selectedYear}
+                      onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
+                      className="bg-transparent text-xs sm:text-sm font-bold text-slate-900 dark:text-white focus:outline-none cursor-pointer tabular-nums"
+                    >
+                      {availableYears.map((y) => (
+                        <option key={y} value={y} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                          {isBn ? `${toBengaliNumber(y)} সাল` : `${y}`}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <button
                     type="button"
                     onClick={handleNextPeriod}
                     aria-label={isBn ? 'পরবর্তী সময়' : 'Next period'}
-                    className="w-10 h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-center cursor-pointer"
+                    className="w-10 h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center justify-center cursor-pointer shrink-0"
                   >
                     <ChevronRight className="w-4 h-4" />
                   </button>
                 </div>
               </div>
-
-              {/* 12-Month Quick Selection Bar */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-1">
-                {REPORT_MONTHS_SHORT_BN.map((shortBn, idx) => {
-                  const isSelected = mode === 'monthly' && selectedMonthIdx === idx;
-                  return (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => {
-                        sounds.playTap();
-                        setSelectedMonthIdx(idx);
-                        setMode('monthly');
-                      }}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
-                        isSelected
-                          ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-                      }`}
-                    >
-                      {isBn ? shortBn : REPORT_MONTHS_SHORT_EN[idx]}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Mobile Section Quick Jump Strip */}
-              <div className="flex lg:hidden items-center gap-1.5 overflow-x-auto no-scrollbar pt-2 border-t border-slate-100 dark:border-slate-800">
-                {visibleNavItems.map((item) => (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => scrollToSection(item.key)}
-                    className={`px-2.5 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer border ${
-                      activeSection === item.key
-                        ? 'border-slate-900 dark:border-white bg-slate-900 dark:bg-white text-white dark:text-slate-900'
-                        : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
-                    }`}
-                  >
-                    {item.icon}
-                    <span>{isBn ? item.labelBn : item.labelEn}</span>
-                  </button>
-                ))}
-              </div>
             </section>
 
-            {/* Section 1: 4-Column Executive KPI Strip */}
+            {/* Section 1: 2x2 Mobile / 4-Column Desktop Executive KPI Strip */}
             <section
               ref={(el) => {
                 sectionRefs.current.overview = el;
               }}
-              className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5 scroll-mt-4"
+              className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5 scroll-mt-4"
             >
               {/* KPI 1: Company Income */}
               <div className="bg-white dark:bg-[#0F172A] border border-slate-200/90 dark:border-slate-800/90 rounded-2xl overflow-hidden flex flex-col">
                 <div className="h-[3px] bg-emerald-600" />
-                <div className="p-4 flex-1 flex flex-col justify-between">
-                  <div className="flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400">
-                    <span>{isBn ? 'কোম্পানি মোট আয়' : 'Company Income'}</span>
-                    <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                <div className="p-3 sm:p-4 flex-1 flex flex-col justify-between">
+                  <div className="flex items-center justify-between gap-1 text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400">
+                    <span className="truncate">{isBn ? 'কোম্পানি আয়' : 'Income'}</span>
+                    <TrendingUp className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                   </div>
-                  <div className="mt-2.5 text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 font-mono tabular-nums tracking-tight">
+                  <div className="mt-1.5 sm:mt-2.5 text-lg sm:text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 font-mono tabular-nums tracking-tight truncate">
                     {fmt(report.companyIncome)}
                   </div>
-                  <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
-                    <span>{isBn ? `${numFmt(report.companyIncomeCount)} টি আয় এন্ট্রি` : `${report.companyIncomeCount} entries`}</span>
-                    <span className="font-semibold text-slate-700 dark:text-slate-300">
+                  <div className="mt-2 pt-1.5 sm:pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-1 text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
+                    <span className="truncate">{isBn ? `${numFmt(report.companyIncomeCount)} এন্ট্রি` : `${report.companyIncomeCount} entries`}</span>
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 hidden sm:inline">
                       {isBn ? report.periodTitleBn : report.periodTitleEn}
                     </span>
                   </div>
@@ -872,17 +873,17 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
               {/* KPI 2: Company Expense */}
               <div className="bg-white dark:bg-[#0F172A] border border-slate-200/90 dark:border-slate-800/90 rounded-2xl overflow-hidden flex flex-col">
                 <div className="h-[3px] bg-rose-600" />
-                <div className="p-4 flex-1 flex flex-col justify-between">
-                  <div className="flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400">
-                    <span>{isBn ? 'কোম্পানি মোট ব্যয়' : 'Company Expense'}</span>
-                    <TrendingDown className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                <div className="p-3 sm:p-4 flex-1 flex flex-col justify-between">
+                  <div className="flex items-center justify-between gap-1 text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400">
+                    <span className="truncate">{isBn ? 'কোম্পানি ব্যয়' : 'Expense'}</span>
+                    <TrendingDown className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-600 dark:text-rose-400 shrink-0" />
                   </div>
-                  <div className="mt-2.5 text-2xl font-extrabold text-rose-600 dark:text-rose-400 font-mono tabular-nums tracking-tight">
+                  <div className="mt-1.5 sm:mt-2.5 text-lg sm:text-2xl font-extrabold text-rose-600 dark:text-rose-400 font-mono tabular-nums tracking-tight truncate">
                     {fmt(report.companyExpense)}
                   </div>
-                  <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
-                    <span>{isBn ? `বেতন: ${fmt(report.salaryPaidTotal)}` : `Payroll: ${fmt(report.salaryPaidTotal)}`}</span>
-                    <span>{isBn ? `ব্যয় হার ${numFmt(expenseRatioPct)}%` : `${expenseRatioPct}% of inc.`}</span>
+                  <div className="mt-2 pt-1.5 sm:pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-1 text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
+                    <span className="truncate">{isBn ? `বেতন: ${fmt(report.salaryPaidTotal)}` : `Pay: ${fmt(report.salaryPaidTotal)}`}</span>
+                    <span className="shrink-0">{numFmt(expenseRatioPct)}%</span>
                   </div>
                 </div>
               </div>
@@ -890,13 +891,13 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
               {/* KPI 3: Net Profit / Net Loss (Signed) */}
               <div className="bg-white dark:bg-[#0F172A] border border-slate-200/90 dark:border-slate-800/90 rounded-2xl overflow-hidden flex flex-col">
                 <div className={`h-[3px] ${isNetLoss ? 'bg-rose-600' : isBreakEven ? 'bg-slate-400' : 'bg-emerald-600'}`} />
-                <div className="p-4 flex-1 flex flex-col justify-between">
-                  <div className="flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400">
-                    <span>
+                <div className="p-3 sm:p-4 flex-1 flex flex-col justify-between">
+                  <div className="flex items-center justify-between gap-1 text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400">
+                    <span className="truncate">
                       {isNetLoss
                         ? isBn
                           ? 'নিট লস / ঘাটতি'
-                          : 'Net Loss / Deficit'
+                          : 'Net Loss'
                         : isBreakEven
                         ? isBn
                           ? 'নিট ব্যালেন্স'
@@ -906,15 +907,15 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
                         : 'Net Profit'}
                     </span>
                     {isNetLoss ? (
-                      <ArrowDownRight className="w-4 h-4 text-rose-600 dark:text-rose-400" />
+                      <ArrowDownRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-rose-600 dark:text-rose-400 shrink-0" />
                     ) : isBreakEven ? (
-                      <Minus className="w-4 h-4 text-slate-500" />
+                      <Minus className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-500 shrink-0" />
                     ) : (
-                      <ArrowUpRight className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                      <ArrowUpRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                     )}
                   </div>
                   <div
-                    className={`mt-2.5 text-2xl font-extrabold font-mono tabular-nums tracking-tight ${
+                    className={`mt-1.5 sm:mt-2.5 text-lg sm:text-2xl font-extrabold font-mono tabular-nums tracking-tight truncate ${
                       isNetLoss
                         ? 'text-rose-600 dark:text-rose-400'
                         : isBreakEven
@@ -924,17 +925,17 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
                   >
                     {fmtSigned(report.companyNet)}
                   </div>
-                  <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
-                    <span>
+                  <div className="mt-2 pt-1.5 sm:pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-1 text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
+                    <span className="truncate">
                       {isNetLoss
                         ? isBn
-                          ? 'আয়ের তুলনায় ঘাটতি'
-                          : 'Operating deficit'
+                          ? 'ঘাটতি হার'
+                          : 'Deficit'
                         : isBn
                         ? 'নিট মার্জিন'
-                        : 'Net margin'}
+                        : 'Margin'}
                     </span>
-                    <span className="font-bold text-slate-700 dark:text-slate-200">
+                    <span className="font-bold text-slate-700 dark:text-slate-200 shrink-0">
                       {profitMarginPct < 0 ? `-${numFmt(Math.abs(profitMarginPct))}%` : `${numFmt(profitMarginPct)}%`}
                     </span>
                   </div>
@@ -944,13 +945,13 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
               {/* KPI 4: Channel Cashflow */}
               <div className="bg-white dark:bg-[#0F172A] border border-slate-200/90 dark:border-slate-800/90 rounded-2xl overflow-hidden flex flex-col">
                 <div className="h-[3px] bg-slate-800 dark:bg-slate-400" />
-                <div className="p-4 flex-1 flex flex-col justify-between">
-                  <div className="flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400">
-                    <span>{isBn ? 'চ্যানেল নিট প্রবাহ' : 'Channel Net Flow'}</span>
-                    <Wallet className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                <div className="p-3 sm:p-4 flex-1 flex flex-col justify-between">
+                  <div className="flex items-center justify-between gap-1 text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400">
+                    <span className="truncate">{isBn ? 'চ্যানেল প্রবাহ' : 'Channel Flow'}</span>
+                    <Wallet className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-600 dark:text-slate-300 shrink-0" />
                   </div>
                   <div
-                    className={`mt-2.5 text-2xl font-extrabold font-mono tabular-nums tracking-tight ${
+                    className={`mt-1.5 sm:mt-2.5 text-lg sm:text-2xl font-extrabold font-mono tabular-nums tracking-tight truncate ${
                       report.channelNetFlow < 0
                         ? 'text-rose-600 dark:text-rose-400'
                         : 'text-slate-900 dark:text-white'
@@ -958,9 +959,9 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
                   >
                     {fmtSigned(report.channelNetFlow)}
                   </div>
-                  <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
-                    <span>{isBn ? `জমা ${fmt(report.channelTotalIn)}` : `In ${fmt(report.channelTotalIn)}`}</span>
-                    <span>{isBn ? `খরচ ${fmt(report.channelTotalOut)}` : `Out ${fmt(report.channelTotalOut)}`}</span>
+                  <div className="mt-2 pt-1.5 sm:pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-1 text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400 tabular-nums">
+                    <span className="truncate">{isBn ? `জমা ${fmt(report.channelTotalIn)}` : `In ${fmt(report.channelTotalIn)}`}</span>
+                    <span className="truncate">{isBn ? `খরচ ${fmt(report.channelTotalOut)}` : `Out ${fmt(report.channelTotalOut)}`}</span>
                   </div>
                 </div>
               </div>
@@ -1593,22 +1594,22 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="relative">
+                <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full lg:w-auto">
+                  <div className="relative col-span-2 sm:col-span-1">
                     <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       value={ledgerSearch}
                       onChange={(e) => setLedgerSearch(e.target.value)}
                       placeholder={isBn ? 'খাত বা বিবরণ খুঁজুন...' : 'Search ledger...'}
-                      className="pl-8 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-slate-400 w-44 sm:w-52"
+                      className="pl-8 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-slate-400 w-full sm:w-52 min-h-[38px]"
                     />
                   </div>
 
                   <select
                     value={ledgerModuleFilter}
                     onChange={(e) => setLedgerModuleFilter(e.target.value as any)}
-                    className="px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
+                    className="px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer min-h-[38px] w-full sm:w-auto"
                   >
                     <option value="all">{isBn ? 'সব মডিউল' : 'All Modules'}</option>
                     <option value="ay-byay">{isBn ? 'আয়-ব্যয়' : 'Ay-Byay'}</option>
@@ -1618,7 +1619,7 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
                   <select
                     value={ledgerTypeFilter}
                     onChange={(e) => setLedgerTypeFilter(e.target.value as any)}
-                    className="px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer"
+                    className="px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer min-h-[38px] w-full sm:w-auto"
                   >
                     <option value="all">{isBn ? 'আয় ও ব্যয়' : 'All Types'}</option>
                     <option value="income">{isBn ? 'শুধু আয়' : 'Income Only'}</option>
@@ -1631,7 +1632,7 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
                       sounds.playTap();
                       setLedgerOrder((o) => (o === 'asc' ? 'desc' : 'asc'));
                     }}
-                    className="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                    className="col-span-2 sm:col-span-1 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-1.5 whitespace-nowrap cursor-pointer min-h-[38px]"
                   >
                     <ArrowUpDown className="w-3.5 h-3.5" />
                     <span>{ledgerOrder === 'asc' ? (isBn ? '১ম → শেষ' : '1st → Last') : isBn ? 'শেষ → ১ম' : 'Last → 1st'}</span>
@@ -1649,7 +1650,64 @@ export const ComprehensiveReportModal: React.FC<ComprehensiveReportModalProps> =
                 </div>
               ) : (
                 <>
-                  <div className="overflow-x-auto">
+                  {/* Native Mobile App List View (< sm) */}
+                  <div className="sm:hidden divide-y divide-slate-100 dark:divide-slate-800">
+                    {ledgerItemsWithRunning.slice(0, ledgerLimit).map((row) => (
+                      <div key={row.id} className="p-3.5 flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-2.5 min-w-0">
+                          <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5 tabular-nums">
+                            {numFmt(row.filteredIndex)}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                              {row.category}
+                            </div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                              {row.description}
+                            </div>
+                            <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 font-mono tabular-nums truncate">
+                              {isBn ? toBengaliNumber(row.date) : row.date}
+                              {row.timeLabel ? ` · ${isBn ? toBengaliNumber(row.timeLabel) : row.timeLabel}` : ''} ·{' '}
+                              {isBn ? row.moduleLabelBn : row.moduleLabelEn} · {row.method}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <div
+                            className={`text-xs font-mono font-extrabold tabular-nums ${
+                              row.type === 'income'
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-rose-600 dark:text-rose-400'
+                            }`}
+                          >
+                            {row.type === 'income' ? '+' : '-'}
+                            {fmt(row.amount)}
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-500 dark:text-slate-400 tabular-nums mt-0.5">
+                            {isBn ? 'স্থিতি:' : 'Net:'} {fmtSigned(row.runningBalance)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/70 flex items-center justify-between text-[11px] font-bold">
+                      <span className="text-slate-600 dark:text-slate-300">
+                        {isBn ? `মোট (${numFmt(ledgerItemsWithRunning.length)} টি)` : `Total (${ledgerItemsWithRunning.length})`}
+                      </span>
+                      <span
+                        className={`font-mono tabular-nums ${
+                          ledgerFilteredIn - ledgerFilteredOut < 0
+                            ? 'text-rose-600 dark:text-rose-400'
+                            : 'text-emerald-600 dark:text-emerald-400'
+                        }`}
+                      >
+                        {fmtSigned(ledgerFilteredIn - ledgerFilteredOut)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Desktop Enterprise Ledger Table (sm+) */}
+                  <div className="hidden sm:block overflow-x-auto">
                     <table className="w-full text-xs text-left border-collapse">
                       <thead className="bg-slate-50 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-800">
                         <tr>

@@ -162,7 +162,10 @@ import type { PrayerTimings } from './utils/prayerTimeService';
 import { safeStorage } from './utils/safeStorage';
 import {
   canAddTransactions,
+  canModifyOwnedRecord,
+  canModifySupportTicket,
   canModifyTransaction,
+  getActorStamp,
   hasSubAdminPermission,
   isTransactionOwner,
   isLoggedInSession,
@@ -177,7 +180,9 @@ import {
   findMatchedStaffForUser,
   isStaffOrAdminUser,
   syncMainLoginStaffSession,
-  syncStaffPinEverywhere
+  syncStaffPinEverywhere,
+  syncUsersCollectionToNonStaffRefs,
+  reconcileSubAdminsOutOfStaffDirectory
 } from './utils/staffSync';
 import { isActualStaffAccount } from './utils/ownerDueSync';
 import type { UpdateCheckResult } from './utils/appVersion';
@@ -434,6 +439,10 @@ export default function App() {
     }
     return initialStaffAccounts;
   });
+  const [nonStaffUsersVersion, setNonStaffUsersVersion] = useState(0);
+  const staffAccountsRef = useRef<StaffAccount[]>(staffAccounts);
+  staffAccountsRef.current = staffAccounts;
+  const cloudUsersRef = useRef<Array<{ id?: string; phone?: string; role?: string }>>([]);
 
   // Quick Hisab Owners State (Admin controllable, synced across devices)
   const [quickHisabOwners, setQuickHisabOwners] = useState<QuickHisabOwner[]>(() => {
@@ -759,16 +768,48 @@ export default function App() {
     };
   }, [user?.id, user?.phone, user?.role, lang]);
 
-  // Real-time synchronization with Cloud Firestore for Staff Accounts (deferred after login for fast boot)
+  // Real-time synchronization with Cloud Firestore for Staff Accounts & Non-Staff User Role Cross-Check
   useEffect(() => {
     if (!user) return;
     let active = true;
-    let unsubscribe: (() => void) | null = null;
+    let unsubscribeStaff: (() => void) | null = null;
+    let unsubscribeUsers: (() => void) | null = null;
+
+    const handleNonStaffUpdated = () => {
+      setNonStaffUsersVersion((v) => v + 1);
+    };
+    window.addEventListener('non-staff-users-updated', handleNonStaffUpdated);
+
     const timer = setTimeout(() => {
       Promise.all([loadFirebase(), loadFirestore()])
         .then(([{ db, staffDb, handleFirestoreError, OperationType }, { collection, doc, onSnapshot, getDoc }]) => {
           if (!active) return;
-          unsubscribe = onSnapshot(collection(staffDb, 'staff'), async (snapshot) => {
+
+          unsubscribeUsers = onSnapshot(
+            collection(db, 'users'),
+            (snap) => {
+              const usersList: Array<{ id?: string; phone?: string; role?: string }> = [];
+              snap.forEach((dSnap) => {
+                const u = dSnap.data() as { id?: string; phone?: string; role?: string };
+                if (u) {
+                  usersList.push({
+                    id: String(u.id || dSnap.id),
+                    phone: u.phone || '',
+                    role: u.role || ''
+                  });
+                }
+              });
+              cloudUsersRef.current = usersList;
+              syncUsersCollectionToNonStaffRefs(usersList);
+              setNonStaffUsersVersion((v) => v + 1);
+              if (staffAccountsRef.current.length > 0) {
+                void reconcileSubAdminsOutOfStaffDirectory(usersList, staffAccountsRef.current);
+              }
+            },
+            () => {}
+          );
+
+          unsubscribeStaff = onSnapshot(collection(staffDb, 'staff'), async (snapshot) => {
             if (snapshot.empty) {
               try {
                 const metaSnap = await getDoc(doc(db, 'settings', 'staff_meta'));
@@ -795,6 +836,9 @@ export default function App() {
             });
             setStaffAccounts(cloudStaff);
             broadcastStaffAccounts(cloudStaff);
+            if (cloudUsersRef.current.length > 0) {
+              void reconcileSubAdminsOutOfStaffDirectory(cloudUsersRef.current, cloudStaff);
+            }
           }, (err) => {
             handleFirestoreError(err, OperationType.LIST, 'staff');
           });
@@ -806,7 +850,9 @@ export default function App() {
     return () => {
       active = false;
       clearTimeout(timer);
-      if (unsubscribe) unsubscribe();
+      window.removeEventListener('non-staff-users-updated', handleNonStaffUpdated);
+      if (unsubscribeStaff) unsubscribeStaff();
+      if (unsubscribeUsers) unsubscribeUsers();
     };
   }, [Boolean(user)]);
 
@@ -2082,6 +2128,7 @@ export default function App() {
       if (
         user?.role === 'staff' ||
         user?.role === 'admin' ||
+        user?.role === 'sub-admin' ||
         isStaffSessionActive(user)
       ) {
         return false;
@@ -2186,14 +2233,14 @@ export default function App() {
       if (isPopupNoticeManagerOpen) setIsPopupNoticeManagerOpen(false);
       if (isDriveBackupOpen) setIsDriveBackupOpen(false);
     } else if (user.role === 'sub-admin') {
-      if (activeTab === 'transactions' && !hasSubAdminPermission(user, 'transactions')) setActiveTab('home');
-      if (activeTab === 'ledger' && !hasSubAdminPermission(user, 'ledger')) setActiveTab('home');
-      if (activePortal === 'ay-byay' && !hasSubAdminPermission(user, 'ayByay')) setActivePortal(null);
-      if (activePortal === 'bill-manager' && !hasSubAdminPermission(user, 'billManager')) setActivePortal(null);
-      if (isQuickHisabOpen && !hasSubAdminPermission(user, 'quickHisab')) setIsQuickHisabOpen(false);
-      if (isStaffManagerOpen && !hasSubAdminPermission(user, 'staffManager')) setIsStaffManagerOpen(false);
-      if (isSupportTicketsOpen && !hasSubAdminPermission(user, 'supportTickets')) setIsSupportTicketsOpen(false);
-      if (isStaffAttendanceOpen && !hasSubAdminPermission(user, 'staffAttendance')) setIsStaffAttendanceOpen(false);
+      if (isRecycleBinOpen && !canAddTransactions(user)) setIsRecycleBinOpen(false);
+      if (isUserManagementOpen) setIsUserManagementOpen(false);
+      if (isBannerManagerOpen) setIsBannerManagerOpen(false);
+      if (isChannelManagerOpen) setIsChannelManagerOpen(false);
+      if (isFooterSettingsOpen) setIsFooterSettingsOpen(false);
+      if (isServiceManagerOpen) setIsServiceManagerOpen(false);
+      if (isPopupNoticeManagerOpen) setIsPopupNoticeManagerOpen(false);
+      if (isDriveBackupOpen) setIsDriveBackupOpen(false);
     }
   }, [
     user,
@@ -2849,13 +2896,10 @@ export default function App() {
       }, 0);
   }, [transactions]);
 
-  // Sub-admin transaction list sees only their own entries; Admin/others keep full list view
+  // Sub-admin and all roles can view the full transaction list (mutation remains restricted)
   const transactionsForList = useMemo(() => {
-    if (user?.role === 'sub-admin') {
-      return transactions.filter(t => isTransactionOwner(t, user));
-    }
     return transactions;
-  }, [transactions, user]);
+  }, [transactions]);
 
   const userDistrictSlug = (currentDistrict?.nameEn || 'dhaka').toLowerCase().replace(/[^a-z0-9]/g, '');
   const userDistrictUnderscoreSlug = (currentDistrict?.nameEn || 'dhaka').toLowerCase().replace(/[^a-z0-9]/g, '_');
@@ -2946,36 +2990,10 @@ export default function App() {
     if (
       user?.role === 'staff' ||
       user?.role === 'admin' ||
+      user?.role === 'sub-admin' ||
       isStaffSessionActive(user)
     ) {
       return true;
-    }
-
-    // Sub-Admin granular permissions configured by Main Admin
-    if (user?.role === 'sub-admin') {
-      const subAdminMap: Record<string, SubAdminPermissionKey | undefined> = {
-        transactions: 'transactions',
-        ledger: 'ledger',
-        billManager: 'billManager',
-        ayByay: 'ayByay',
-        quickHisab: 'quickHisab',
-        staffManager: 'staffManager',
-        staffAttendance: 'staffAttendance',
-        supportTickets: 'supportTickets'
-      };
-      const permKey = subAdminMap[serviceId];
-      if (permKey && !hasSubAdminPermission(user, permKey)) {
-        sounds.playTap();
-        showAppToast(
-          lang === 'bn' ? 'অনুমতি সীমাবদ্ধ' : 'Access Restricted',
-          lang === 'bn'
-            ? `মেইন এডমিন আপনার সাব-এডমিন অ্যাকাউন্টে "${displayName}" সেবার অনুমতি চালু করেননি।`
-            : `Main Admin has not enabled "${displayName}" permission for this Sub-Admin account.`,
-          'amber',
-          5000
-        );
-        return false;
-      }
     }
 
     const status = serviceStatuses[serviceId];
@@ -3287,17 +3305,38 @@ export default function App() {
   };
 
   const handleRestore = (id: string) => {
-    sounds.playSuccess();
     const targetTrx = transactions.find(t => t.id === id);
+    if (!targetTrx || !canModifyTransaction(targetTrx, user).allowed) {
+      sounds.playTap();
+      showAppToast(
+        lang === 'bn' ? 'পুনরুদ্ধারের অনুমতি বা সময়সীমা নেই' : 'Restore Permission Denied',
+        lang === 'bn'
+          ? 'সাব-অ্যাডমিন কেবল নিজের ডিলিট করা এন্ট্রি ৩০ মিনিটের মধ্যে পুনরুদ্ধার করতে পারবেন।'
+          : 'Sub-Admin can only restore their own deleted entries within 30 minutes.',
+        'amber'
+      );
+      return;
+    }
+    sounds.playSuccess();
     const updatedTransactions = transactions.map(t => (t.id === id ? { ...t, isDeleted: false } : t));
     setTransactions(updatedTransactions);
-    if (targetTrx) {
-      cloudSet(['transactions', id], { ...targetTrx, isDeleted: false }).catch(() => {});
-    }
+    cloudSet(['transactions', id], { ...targetTrx, isDeleted: false }).catch(() => {});
     logAction('Restored Transaction', 'লেনদেন পুনরুদ্ধার', `ID: ${id}`);
   };
 
   const handlePermanentDelete = async (id: string) => {
+    const targetTrx = transactions.find(t => t.id === id);
+    if (!targetTrx || !canModifyTransaction(targetTrx, user).allowed) {
+      sounds.playTap();
+      showAppToast(
+        lang === 'bn' ? 'স্থায়ী ডিলিট করার অনুমতি বা সময়সীমা নেই' : 'Delete Permission Denied',
+        lang === 'bn'
+          ? 'সাব-অ্যাডমিন কেবল নিজের এন্ট্রি ৩০ মিনিটের মধ্যে স্থায়ীভাবে মুছতে পারবেন।'
+          : 'Sub-Admin can only permanently delete their own entries within 30 minutes.',
+        'amber'
+      );
+      return;
+    }
     sounds.playTap();
     const ok = await showConfirm(
       lang === 'bn' ? 'এই লেনদেনটি স্থায়ীভাবে মুছে ফেলতে চান?' : 'Delete permanently?',
@@ -3323,6 +3362,7 @@ export default function App() {
   };
 
   const handleEmptyTrash = () => {
+    if (user?.role !== 'admin') return;
     sounds.playTap();
     const deletedItems = transactions.filter(t => t.isDeleted);
     const updatedTransactions = transactions.filter(t => !t.isDeleted);
@@ -3427,12 +3467,67 @@ export default function App() {
   };
 
   const handleSaveQuickHisabOwners = (updatedOwners: QuickHisabOwner[]) => {
-    const normalizedOwners = updatedOwners.map(o => ({ ...o, id: String(o.id) }));
+    const nowIso = new Date().toISOString();
+    const actor = getActorStamp(user);
+    const prevMap = new Map(quickHisabOwners.map(o => [String(o.id), o]));
+
+    if (user?.role !== 'admin') {
+      if (user?.role !== 'sub-admin' || !hasSubAdminPermission(user, 'quickHisab')) {
+        showAppToast(
+          lang === 'bn' ? 'অনুমতি নেই' : 'Permission Denied',
+          lang === 'bn' ? 'কুইক হিসাব ডেটা এন্ট্রির অনুমতি নেই।' : 'No Quick Hisab entry permission.',
+          'amber'
+        );
+        return;
+      }
+      const nextMap = new Map(updatedOwners.map(o => [String(o.id), o]));
+      for (const prevOwner of quickHisabOwners) {
+        const pid = String(prevOwner.id);
+        const nextOwner = nextMap.get(pid);
+        if (!nextOwner) {
+          if (!canModifyOwnedRecord(prevOwner, user, 'quickHisab').allowed) {
+            showAppToast(
+              lang === 'bn' ? 'মোছার অনুমতি নেই' : 'Delete Denied',
+              lang === 'bn' ? 'অন্যের মালিকানা এন্ট্রি বা ৩০ মিনিট অতিক্রান্ত এন্ট্রি মুছতে পারবেন না।' : 'Cannot delete others or expired owner entries.',
+              'amber'
+            );
+            return;
+          }
+        } else {
+          const modified =
+            prevOwner.name !== nextOwner.name ||
+            (prevOwner.phone || '') !== (nextOwner.phone || '') ||
+            (prevOwner.address || '') !== (nextOwner.address || '') ||
+            (prevOwner.notes || '') !== (nextOwner.notes || '') ||
+            prevOwner.shareUnits !== nextOwner.shareUnits ||
+            (prevOwner.avatarUrl || '') !== (nextOwner.avatarUrl || '') ||
+            Boolean(prevOwner.isHalf) !== Boolean(nextOwner.isHalf);
+          if (modified && !canModifyOwnedRecord(prevOwner, user, 'quickHisab').allowed) {
+            showAppToast(
+              lang === 'bn' ? 'এডিটের অনুমতি নেই' : 'Edit Denied',
+              lang === 'bn' ? 'অন্যের মালিকানা এন্ট্রি বা ৩০ মিনিট অতিক্রান্ত এন্ট্রি এডিট করতে পারবেন না।' : 'Cannot edit others or expired owner entries.',
+              'amber'
+            );
+            return;
+          }
+        }
+      }
+    }
+
+    const normalizedOwners = updatedOwners.map(o => {
+      const prevOwner = prevMap.get(String(o.id));
+      return {
+        ...o,
+        id: String(o.id),
+        recordedBy: prevOwner?.recordedBy || o.recordedBy || actor || undefined,
+        createdAt: prevOwner?.createdAt || o.createdAt || nowIso,
+        updatedAt: nowIso
+      };
+    });
     const nextIds = new Set(normalizedOwners.map(o => String(o.id)));
     const removedIds = quickHisabOwners
       .map(o => String(o.id))
       .filter(id => !nextIds.has(id));
-    const nowIso = new Date().toISOString();
 
     setQuickHisabOwners(normalizedOwners);
     try {
@@ -3500,14 +3595,113 @@ export default function App() {
   };
 
   const handleSaveStaffAccounts = (updated: StaffAccount[]) => {
-    const cleanUpdated: StaffAccount[] = JSON.parse(JSON.stringify(updated)).map((s: StaffAccount) =>
-      sanitizeStaffForFirestore(s)
-    );
+    const actor = getActorStamp(user);
+    const prevMap = new Map(staffAccounts.map(s => [String(s.id), s]));
+
+    if (user?.role !== 'admin') {
+      if (user?.role !== 'sub-admin' || !hasSubAdminPermission(user, 'staffManager')) {
+        showAppToast(
+          lang === 'bn' ? 'অনুমতি নেই' : 'Permission Denied',
+          lang === 'bn' ? 'স্টাফ/কোম্পানি পাওনা ডেটা এন্ট্রির অনুমতি নেই।' : 'No Staff Dues entry permission.',
+          'amber'
+        );
+        return;
+      }
+      const nextMap = new Map(updated.map(s => [String(s.id), s]));
+      for (const prevStaff of staffAccounts) {
+        const sid = String(prevStaff.id);
+        const nextStaff = nextMap.get(sid);
+        if (!nextStaff) {
+          if (!canModifyOwnedRecord(prevStaff, user, 'staffManager').allowed) {
+            showAppToast(
+              lang === 'bn' ? 'মোছার অনুমতি নেই' : 'Delete Denied',
+              lang === 'bn' ? 'অন্যের তৈরি বা ৩০ মিনিট অতিক্রান্ত অ্যাকাউন্ট মোছা যাবে না।' : 'Cannot delete others or expired staff account.',
+              'amber'
+            );
+            return;
+          }
+          continue;
+        }
+        const profileChanged =
+          prevStaff.name !== nextStaff.name ||
+          (prevStaff.phone || '') !== (nextStaff.phone || '') ||
+          (prevStaff.role || '') !== (nextStaff.role || '') ||
+          (prevStaff.userCode || '') !== (nextStaff.userCode || '') ||
+          (prevStaff.address || '') !== (nextStaff.address || '') ||
+          (prevStaff.reference || '') !== (nextStaff.reference || '') ||
+          (prevStaff.notes || '') !== (nextStaff.notes || '') ||
+          (prevStaff.avatarUrl || '') !== (nextStaff.avatarUrl || '') ||
+          (prevStaff.baseSalary || 0) !== (nextStaff.baseSalary || 0) ||
+          prevStaff.isActive !== nextStaff.isActive;
+        if (profileChanged && !canModifyOwnedRecord(prevStaff, user, 'staffManager').allowed) {
+          showAppToast(
+            lang === 'bn' ? 'এডিটের অনুমতি নেই' : 'Edit Denied',
+            lang === 'bn' ? 'অন্যের তৈরি বা ৩০ মিনিট অতিক্রান্ত স্টাফ প্রোফাইল এডিট করা যাবে না।' : 'Cannot edit others or expired staff profile.',
+            'amber'
+          );
+          return;
+        }
+        const prevTxList = prevStaff.transactions || [];
+        const nextTxMap = new Map((nextStaff.transactions || []).map(tx => [String(tx.id), tx]));
+        for (const prevTx of prevTxList) {
+          const nextTx = nextTxMap.get(String(prevTx.id));
+          if (!nextTx) {
+            if (!canModifyOwnedRecord(prevTx, user, 'staffManager').allowed) {
+              showAppToast(
+                lang === 'bn' ? 'মোছার অনুমতি নেই' : 'Delete Denied',
+                lang === 'bn' ? 'অন্যের এন্ট্রি বা ৩০ মিনিট অতিক্রান্ত লেনদেন মোছা যাবে না।' : 'Cannot delete others or expired transactions.',
+                'amber'
+              );
+              return;
+            }
+          } else {
+            const txChanged =
+              prevTx.type !== nextTx.type ||
+              prevTx.amount !== nextTx.amount ||
+              prevTx.date !== nextTx.date ||
+              (prevTx.time || '') !== (nextTx.time || '') ||
+              (prevTx.userName || '') !== (nextTx.userName || '') ||
+              (prevTx.customerName || '') !== (nextTx.customerName || '') ||
+              (prevTx.customerAddress || '') !== (nextTx.customerAddress || '') ||
+              (prevTx.reference || '') !== (nextTx.reference || '') ||
+              (prevTx.note || '') !== (nextTx.note || '');
+            if (txChanged && !canModifyOwnedRecord(prevTx, user, 'staffManager').allowed) {
+              showAppToast(
+                lang === 'bn' ? 'এডিটের অনুমতি নেই' : 'Edit Denied',
+                lang === 'bn' ? 'অন্যের এন্ট্রি বা ৩০ মিনিট অতিক্রান্ত লেনদেন এডিট করা যাবে না।' : 'Cannot edit others or expired transactions.',
+                'amber'
+              );
+              return;
+            }
+          }
+        }
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    const cleanUpdated: StaffAccount[] = JSON.parse(JSON.stringify(updated)).map((s: StaffAccount) => {
+      const prevStaff = prevMap.get(String(s.id));
+      const prevTxMap = new Map((prevStaff?.transactions || []).map(tx => [String(tx.id), tx]));
+      const stampedTxs = (s.transactions || []).map((tx) => {
+        const prevTx = prevTxMap.get(String(tx.id));
+        return {
+          ...tx,
+          recordedBy: prevTx?.recordedBy || tx.recordedBy || actor || undefined,
+          created: prevTx?.created || tx.created || Date.now()
+        };
+      });
+      return sanitizeStaffForFirestore({
+        ...s,
+        recordedBy: prevStaff?.recordedBy || s.recordedBy || actor || undefined,
+        createdAt: prevStaff?.createdAt || s.createdAt || nowIso,
+        transactions: stampedTxs
+      });
+    });
+
     const nextIds = new Set(cleanUpdated.map(s => String(s.id)));
     const removedIds = staffAccounts
       .map(s => String(s.id))
       .filter(id => !nextIds.has(id));
-    const nowIso = new Date().toISOString();
 
     setStaffAccounts(cleanUpdated);
     broadcastStaffAccounts(cleanUpdated);
@@ -3528,6 +3722,17 @@ export default function App() {
   };
 
   const handleDeleteStaffAccount = (staffId: string) => {
+    const target = staffAccounts.find(s => String(s.id) === String(staffId));
+    if (user?.role !== 'admin') {
+      if (!target || !canModifyOwnedRecord(target, user, 'staffManager').allowed) {
+        showAppToast(
+          lang === 'bn' ? 'মোছার অনুমতি নেই' : 'Delete Denied',
+          lang === 'bn' ? 'অন্যের বা ৩০ মিনিট অতিক্রান্ত স্টাফ অ্যাকাউন্ট মোছা যাবে না।' : 'Cannot delete others or expired staff account.',
+          'amber'
+        );
+        return;
+      }
+    }
     const remaining = staffAccounts.filter(s => String(s.id) !== String(staffId));
     const nowIso = new Date().toISOString();
     setStaffAccounts(remaining);
@@ -3543,6 +3748,41 @@ export default function App() {
 
   // Support Ticket Handlers (Firestore 'support_tickets')
   const handleSaveSupportTicket = async (ticket: SupportTicket) => {
+    const existing = supportTickets.find((t) => t.id === ticket.id);
+    if (user?.role === 'sub-admin') {
+      if (!hasSubAdminPermission(user, 'supportTickets')) {
+        showAppToast(
+          lang === 'bn' ? 'অনুমতি নেই' : 'Permission Denied',
+          lang === 'bn' ? 'সাপোর্ট টিকেট ডেটা এন্ট্রির অনুমতি নেই।' : 'No support ticket entry permission.',
+          'amber'
+        );
+        return;
+      }
+      if (existing) {
+        const metaChanged =
+          existing.customerName !== ticket.customerName ||
+          existing.customerPhone !== ticket.customerPhone ||
+          (existing.customerCode || '') !== (ticket.customerCode || '') ||
+          (existing.area || '') !== (ticket.area || '') ||
+          existing.category !== ticket.category ||
+          existing.priority !== ticket.priority ||
+          existing.status !== ticket.status ||
+          (existing.assignedStaffId || '') !== (ticket.assignedStaffId || '') ||
+          (existing.assignedStaffName || '') !== (ticket.assignedStaffName || '') ||
+          (existing.description || '') !== (ticket.description || '') ||
+          (existing.resolutionNote || '') !== (ticket.resolutionNote || '') ||
+          Boolean(existing.isPublicTrackingEnabled) !== Boolean(ticket.isPublicTrackingEnabled);
+        if (metaChanged && !canModifySupportTicket(existing, user, null).allowed) {
+          showAppToast(
+            lang === 'bn' ? 'এডিটের অনুমতি নেই' : 'Edit Denied',
+            lang === 'bn' ? 'সাব-অ্যাডমিন কেবল নিজের তৈরি টিকেট ৩০ মিনিটের মধ্যে পরিবর্তন করতে পারবেন।' : 'Only own tickets within 30 minutes can be modified.',
+            'amber'
+          );
+          return;
+        }
+      }
+    }
+
     setSupportTickets((prev) => {
       const exists = prev.some((t) => t.id === ticket.id);
       const next = exists ? prev.map((t) => (t.id === ticket.id ? ticket : t)) : [ticket, ...prev];
@@ -3565,6 +3805,17 @@ export default function App() {
   };
 
   const handleDeleteSupportTicket = async (ticketId: string) => {
+    const existing = supportTickets.find((t) => t.id === ticketId);
+    if (user?.role === 'sub-admin') {
+      if (!existing || !canModifySupportTicket(existing, user, null).allowed) {
+        showAppToast(
+          lang === 'bn' ? 'মোছার অনুমতি নেই' : 'Delete Denied',
+          lang === 'bn' ? 'অন্যের বা ৩০ মিনিট অতিক্রান্ত টিকেট মোছা যাবে না।' : 'Cannot delete others or expired support tickets.',
+          'amber'
+        );
+        return;
+      }
+    }
     setSupportTickets((prev) => {
       const next = prev.filter((t) => t.id !== ticketId);
       try {
@@ -3582,32 +3833,110 @@ export default function App() {
 
   // Staff Attendance & Leave Handlers (Firestore 'staff_attendance')
   const handleSaveAttendance = async (record: StaffAttendanceRecord) => {
+    const existing = attendanceRecords.find((r) => r.id === record.id);
+    const nowIso = new Date().toISOString();
+    const actor = getActorStamp(user);
+
+    if (user?.role === 'sub-admin') {
+      if (!hasSubAdminPermission(user, 'staffAttendance')) {
+        showAppToast(
+          lang === 'bn' ? 'অনুমতি নেই' : 'Permission Denied',
+          lang === 'bn' ? 'স্টাফ হাজিরা এন্ট্রির অনুমতি নেই।' : 'No staff attendance entry permission.',
+          'amber'
+        );
+        return;
+      }
+      if (existing && !canModifyOwnedRecord(existing, user, 'staffAttendance').allowed) {
+        showAppToast(
+          lang === 'bn' ? 'এডিটের অনুমতি নেই' : 'Edit Denied',
+          lang === 'bn' ? 'অন্যের বা ৩০ মিনিট অতিক্রান্ত হাজিরা এডিট করা যাবে না।' : 'Cannot edit others or expired attendance.',
+          'amber'
+        );
+        return;
+      }
+    }
+
+    const recordToSave: StaffAttendanceRecord = existing
+      ? {
+          ...record,
+          recordedBy: existing.recordedBy || record.recordedBy || actor || undefined,
+          createdAt: existing.createdAt || record.createdAt || existing.updatedAt || nowIso
+        }
+      : {
+          ...record,
+          recordedBy: record.recordedBy || actor || undefined,
+          createdAt: record.createdAt || nowIso
+        };
+
     setAttendanceRecords((prev) => {
-      const exists = prev.some((r) => r.id === record.id);
-      const next = exists ? prev.map((r) => (r.id === record.id ? record : r)) : [record, ...prev];
+      const exists = prev.some((r) => r.id === recordToSave.id);
+      const next = exists ? prev.map((r) => (r.id === recordToSave.id ? recordToSave : r)) : [recordToSave, ...prev];
       try {
         safeStorage.setItem('protyasha_staff_attendance', JSON.stringify(next));
       } catch {}
       return next;
     });
 
-    await cloudSet(['staff_attendance', String(record.id)], record).catch((err) => {
-      void reportCloudError(err, CloudOperationType.WRITE, `staff_attendance/${record.id}`);
+    await cloudSet(['staff_attendance', String(recordToSave.id)], recordToSave).catch((err) => {
+      void reportCloudError(err, CloudOperationType.WRITE, `staff_attendance/${recordToSave.id}`);
       throw err;
     });
 
     logAction(
       'Staff Attendance Marked',
       'স্টাফ হাজিরা আপডেট',
-      `${record.staffName} • ${record.date} (${record.status})`
+      `${recordToSave.staffName} • ${recordToSave.date} (${recordToSave.status})`
     );
   };
 
   const handleSaveBulkAttendance = async (records: StaffAttendanceRecord[]) => {
     if (!records.length) return;
+    const nowIso = new Date().toISOString();
+    const actor = getActorStamp(user);
+    const existingMap = new Map(attendanceRecords.map((r) => [r.id, r]));
+
+    let filteredRecords = records;
+    if (user?.role === 'sub-admin') {
+      if (!hasSubAdminPermission(user, 'staffAttendance')) {
+        showAppToast(
+          lang === 'bn' ? 'অনুমতি নেই' : 'Permission Denied',
+          lang === 'bn' ? 'স্টাফ হাজিরা ও ছুটি এন্ট্রির অনুমতি নেই।' : 'No staff attendance entry permission.',
+          'amber'
+        );
+        return;
+      }
+      filteredRecords = records.filter((rec) => {
+        const existing = existingMap.get(rec.id);
+        return !existing || canModifyOwnedRecord(existing, user, 'staffAttendance').allowed;
+      });
+      if (filteredRecords.length === 0) {
+        showAppToast(
+          lang === 'bn' ? 'এডিটের অনুমতি নেই' : 'Edit Denied',
+          lang === 'bn' ? 'নির্বাচিত তারিখে অন্যের বা ৩০ মিনিট অতিক্রান্ত রেকর্ড থাকায় আপডেট হয়নি।' : 'Existing records belong to others or passed 30-min window.',
+          'amber'
+        );
+        return;
+      }
+    }
+
+    const stampedRecords = filteredRecords.map((rec) => {
+      const existing = existingMap.get(rec.id);
+      return existing
+        ? {
+            ...rec,
+            recordedBy: existing.recordedBy || rec.recordedBy || actor || undefined,
+            createdAt: existing.createdAt || rec.createdAt || existing.updatedAt || nowIso
+          }
+        : {
+            ...rec,
+            recordedBy: rec.recordedBy || actor || undefined,
+            createdAt: rec.createdAt || nowIso
+          };
+    });
+
     setAttendanceRecords((prev) => {
       const map = new Map(prev.map((r) => [r.id, r]));
-      records.forEach((r) => map.set(r.id, r));
+      stampedRecords.forEach((r) => map.set(r.id, r));
       const next = Array.from(map.values());
       try {
         safeStorage.setItem('protyasha_staff_attendance', JSON.stringify(next));
@@ -3616,7 +3945,7 @@ export default function App() {
     });
 
     await Promise.all(
-      records.map((rec) =>
+      stampedRecords.map((rec) =>
         cloudSet(['staff_attendance', String(rec.id)], rec).catch((err) => {
           void reportCloudError(err, CloudOperationType.WRITE, `staff_attendance/${rec.id}`);
         })
@@ -3626,11 +3955,23 @@ export default function App() {
     logAction(
       'Bulk Attendance Updated',
       'স্টাফ হাজিরা/ছুটি সংরক্ষণ',
-      `${records.length}টি এন্ট্রি আপডেট করা হয়েছে`
+      `${stampedRecords.length}টি এন্ট্রি আপডেট করা হয়েছে`
     );
   };
 
   const handleDeleteAttendance = async (recordId: string) => {
+    const existing = attendanceRecords.find((r) => r.id === recordId);
+    if (user?.role !== 'admin') {
+      if (!existing || !canModifyOwnedRecord(existing, user, 'staffAttendance').allowed) {
+        showAppToast(
+          lang === 'bn' ? 'মোছার অনুমতি নেই' : 'Delete Denied',
+          lang === 'bn' ? 'অন্যের বা ৩০ মিনিট অতিক্রান্ত হাজিরা মোছা যাবে না।' : 'Cannot delete others or expired attendance.',
+          'amber'
+        );
+        return;
+      }
+    }
+
     setAttendanceRecords((prev) => {
       const next = prev.filter((r) => r.id !== recordId);
       try {
@@ -3839,6 +4180,23 @@ export default function App() {
   };
 
   const handleDeleteStaffTransaction = (staffId: string, txId: string) => {
+    const targetStaff = staffAccounts.find(s => String(s.id) === String(staffId));
+    const targetTx = (targetStaff?.transactions || []).find(t => {
+      const tid = String(t.id || '').trim();
+      const tIdArg = String(txId || '').trim();
+      return (tid && tIdArg && tid === tIdArg) || (!tid && String(t.created) === tIdArg);
+    });
+    if (user?.role !== 'admin') {
+      if (!targetTx || !canModifyOwnedRecord(targetTx, user, 'staffManager').allowed) {
+        showAppToast(
+          lang === 'bn' ? 'মোছার অনুমতি নেই' : 'Delete Denied',
+          lang === 'bn' ? 'অন্যের এন্ট্রি বা ৩০ মিনিট অতিক্রান্ত লেনদেন মোছা যাবে না।' : 'Cannot delete others or expired transactions.',
+          'amber'
+        );
+        return;
+      }
+    }
+
     setStaffAccounts(prev => {
       const updated = prev.map(staff => {
         if (staff.id === staffId) {
@@ -3956,6 +4314,7 @@ export default function App() {
               onBack={() => closeOverlayViaBack(() => setSelectedTransaction(null))}
               onEdit={handleStartEdit}
               onDelete={handleDeleteTransaction}
+              onPermanentDelete={handlePermanentDelete}
               onViewReceipt={(trx) => {
                 setReceiptTransaction(trx);
                 pushHistoryStep();
@@ -4128,7 +4487,8 @@ export default function App() {
                       if (t.status === 'resolved') return false;
                       if (
                         user?.role === 'admin' ||
-                        (user?.role === 'sub-admin' && hasSubAdminPermission(user, 'supportTickets'))
+                        user?.role === 'sub-admin' ||
+                        user?.role === 'staff'
                       ) {
                         return true;
                       }
@@ -4144,7 +4504,10 @@ export default function App() {
                         (r.status === 'present' || r.status === 'late' || r.status === 'half_day')
                     ).length;
                   })()}
-                  totalStaffCount={staffAccounts.filter(isActualStaffAccount).length}
+                  totalStaffCount={(() => {
+                    void nonStaffUsersVersion;
+                    return staffAccounts.filter(isActualStaffAccount).length;
+                  })()}
                   onOpenSupportTickets={() => {
                     if (!checkServiceAccess('supportTickets', 'সাপোর্ট টিকেট ও কমপ্লেইন')) return;
                     sounds.playTap();
@@ -4246,9 +4609,7 @@ export default function App() {
                 {/* Header for Transactions Screen */}
                 <div className="sticky top-0 z-30 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 px-4 h-14 flex items-center justify-between shadow-2xs">
                   <h1 className="text-base font-bold text-slate-900 dark:text-white mx-auto">
-                    {user?.role === 'sub-admin'
-                      ? (lang === 'bn' ? 'আমার লেনদেন তালিকা ও স্টেটমেন্ট' : 'My Transactions & Statements')
-                      : (lang === 'bn' ? 'সকল লেনদেন ও চ্যানেল স্টেটমেন্ট' : 'All Transactions & Statements')}
+                    {lang === 'bn' ? 'সকল লেনদেন ও চ্যানেল স্টেটমেন্ট' : 'All Transactions & Statements'}
                   </h1>
                 </div>
 
@@ -4379,7 +4740,7 @@ export default function App() {
                     }
                   }}
                   onOpenRecycleBin={() => {
-                    if (user?.role === 'admin') {
+                    if (user?.role === 'admin' || canAddTransactions(user)) {
                       setIsRecycleBinOpen(true);
                       pushHistoryStep();
                     } else {
@@ -4787,7 +5148,7 @@ export default function App() {
               }
             }}
             onOpenRecycleBin={() => {
-              if (user?.role === 'admin') {
+              if (user?.role === 'admin' || canAddTransactions(user)) {
                 setIsRecycleBinOpen(true);
                 pushHistoryStep();
               } else {
@@ -4857,6 +5218,7 @@ export default function App() {
             isOpen={isRecycleBinOpen}
             transactions={transactions}
             lang={lang}
+            user={user}
             onClose={() => closeOverlayViaBack(() => setIsRecycleBinOpen(false))}
             onRestore={handleRestore}
             onPermanentDelete={handlePermanentDelete}
